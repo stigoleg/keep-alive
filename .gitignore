@@ -1,0 +1,41 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go tool output
+*.out
+
+# Temporary and test files
+*.tmp
+*.temp
+*.test
+*.coverprofile
+*.coverage
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*~
+
+# macOS files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Logs and environment files
+*.log
+.env
+.env.*
+
+# Go dependencies and build directories
+vendor/
+bin/
+dist/
+go.sum
+
+# vhs file
+*.tape
