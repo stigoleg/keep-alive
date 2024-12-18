@@ -35,7 +35,6 @@
 vendor/
 bin/
 dist/
-go.sum
 
 # vhs file
 *.tape
