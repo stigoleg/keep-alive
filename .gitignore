@@ -35,6 +35,3 @@
 vendor/
 bin/
 dist/
-
-# vhs file
-*.tape
