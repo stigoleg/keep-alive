@@ -10,8 +10,7 @@ A lightweight, cross-platform utility to prevent your system from going to sleep
 
 ## Features
 
-
-- 🔄 Configurable keep-alive duration
+- 🔄 Configurable keep-alive duration with flexible time format
 - 💻 Cross-platform support (macOS, Windows, Linux)
 - ⚡ Lightweight and efficient
 - 🎯 Simple and intuitive to use
@@ -51,31 +50,44 @@ sudo mv keepalive /usr/local/bin/
 
 ## Usage
 
-1. Start the application:
+### Command-Line Options
+
+```
+Flags:
+    -d, --duration string   Duration to keep system alive (e.g., "2h30m" or "150")
+    -v, --version          Show version information
+    -h, --help            Show help message
+```
+
+The duration can be specified in two formats:
+- As a time duration (e.g., "2h30m", "1h", "45m")
+- As minutes (e.g., "150" for 2.5 hours)
+
+### Interactive Mode
+
+1. Start the application without flags to enter interactive mode:
 ```bash
 keepalive
 ```
 
 2. Use arrow keys (↑/↓) or j/k to navigate the menu
 3. Press Enter to select an option
-4. When entering minutes, use numbers only (e.g., "150" for 2.5 hours)
-5. Press q or Esc to quit
+4. Press q or Esc to quit
 
 ## How It Works
 
 Keep-Alive uses platform-specific APIs to prevent your system from entering sleep mode:
 
 - **macOS**: Uses the `caffeinate` command to prevent system and display sleep
-- **Windows**: Uses SetThreadExecutionState to prevent system sleep
+- **Windows**: Uses SetThreadExecutionState API to prevent system sleep
 - **Linux**: Uses systemd-inhibit to prevent the system from going idle/sleep
 
 The application provides three main options:
 1. Keep system awake indefinitely
-2. Keep system awake for X minutes (enter the number of minutes)
+2. Keep system awake for a specified duration
 3. Quit the application
 
 When running with a timer, the application shows a countdown of the remaining time. You can stop the keep-alive at any time by pressing Enter to return to the menu or q/Esc to quit the application.
-
 ## Dependencies
 
 ### Runtime Dependencies
@@ -100,8 +112,6 @@ cd keep-alive
 ```bash
 go build -o keepalive ./cmd/keepalive
 ```
-
-
 
 ## Contributing
 

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"keepalive/internal/keepalive"
+	"strconv"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,6 +15,7 @@ const (
 	stateMenu state = iota
 	stateTimedInput
 	stateRunning
+	stateHelp
 )
 
 // Model holds the current state of the UI, including user input and keep-alive state.
@@ -25,6 +27,7 @@ type Model struct {
 	ErrorMessage string
 	StartTime    time.Time
 	Duration     time.Duration
+	ShowHelp     bool
 }
 
 // InitialModel returns the initial model for the TUI.
@@ -34,11 +37,34 @@ func InitialModel() Model {
 		Selected:  0,
 		Input:     "",
 		KeepAlive: &keepalive.Keeper{},
+		ShowHelp:  false,
 	}
+}
+
+// InitialModelWithDuration returns a model initialized with a specific duration and starts running.
+func InitialModelWithDuration(minutes int) Model {
+	m := InitialModel()
+	m.Input = strconv.Itoa(minutes)
+	m.State = stateRunning
+	m.StartTime = time.Now()
+	m.Duration = time.Duration(minutes) * time.Minute
+
+	// Start the keep-alive process
+	err := m.KeepAlive.StartTimed(time.Duration(minutes) * time.Minute)
+	if err != nil {
+		m.ErrorMessage = err.Error()
+		m.State = stateMenu
+		return m
+	}
+
+	return m
 }
 
 // Init implements tea.Model
 func (m Model) Init() tea.Cmd {
+	if m.State == stateRunning {
+		return tick()
+	}
 	return nil
 }
 
@@ -55,7 +81,7 @@ func (m Model) View() string {
 
 // TimeRemaining returns the remaining duration for timed keep-alive
 func (m Model) TimeRemaining() time.Duration {
-	if !m.KeepAlive.IsRunning() || m.Duration == 0 {
+	if m.State != stateRunning {
 		return 0
 	}
 	elapsed := time.Since(m.StartTime)

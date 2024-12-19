@@ -4,10 +4,61 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
-// View renders the UI based on the current model state.
+var (
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FAFAFA")).
+			Background(lipgloss.Color("#7D56F4")).
+			PaddingLeft(2).
+			PaddingRight(2)
+
+	selectedStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#7D56F4")).
+			PaddingLeft(2)
+
+	unselectedStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FAFAFA")).
+			PaddingLeft(2)
+
+	awakeStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#43BF6D")).
+			PaddingLeft(2)
+
+	errorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FF0000")).
+			PaddingLeft(2)
+
+	helpStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FAFAFA")).
+			PaddingLeft(2).
+			PaddingRight(2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#7D56F4"))
+
+	inputBoxStyle = lipgloss.NewStyle().
+			Width(10).
+			PaddingLeft(2).
+			PaddingRight(2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#7D56F4"))
+)
+
+// View renders the current state of the model to a string.
 func View(m Model) string {
+	if m.ShowHelp {
+		return helpView()
+	}
+
+	var s strings.Builder
+
+	// Title
+	s.WriteString(titleStyle.Render("Keep-Alive"))
+	s.WriteString("\n\n")
+
 	switch m.State {
 	case stateMenu:
 		return menuView(m)
@@ -23,19 +74,12 @@ func View(m Model) string {
 func menuView(m Model) string {
 	var b strings.Builder
 
-	// Title
-	b.WriteString(Current.Title.Render("Keep Alive Options"))
+	b.WriteString(titleStyle.Render("Keep Alive Options"))
 	b.WriteString("\n\n")
 
-	// Status
-	if m.KeepAlive.IsRunning() {
-		b.WriteString(Current.ActiveStatus.Render("System is being kept awake"))
-	} else {
-		b.WriteString(Current.InactiveStatus.Render("System is in normal state"))
-	}
+	b.WriteString(unselectedStyle.Render("Select an option:"))
 	b.WriteString("\n\n")
 
-	// Menu options
 	menuItems := []string{
 		"Keep system awake indefinitely",
 		"Keep system awake for X minutes",
@@ -45,53 +89,52 @@ func menuView(m Model) string {
 	for i, opt := range menuItems {
 		var menuLine strings.Builder
 
-		// Cursor
 		if i == m.Selected {
-			menuLine.WriteString("> ")
+			menuLine.WriteString(selectedStyle.Render("> "))
 		} else {
-			menuLine.WriteString("  ")
+			menuLine.WriteString(unselectedStyle.Render("  "))
 		}
 
-		// Option text with styling
 		if i == m.Selected {
-			menuLine.WriteString(Current.SelectedItem.Render(opt))
-		} else if i == 2 && !m.KeepAlive.IsRunning() {
-			menuLine.WriteString(Current.DisabledItem.Render(opt))
+			menuLine.WriteString(selectedStyle.Render(opt))
 		} else {
-			menuLine.WriteString(Current.Menu.Render(opt))
+			menuLine.WriteString(unselectedStyle.Render(opt))
 		}
 
 		b.WriteString(menuLine.String() + "\n")
 	}
 
 	if m.ErrorMessage != "" {
-		b.WriteString("\n" + Current.Error.Render(m.ErrorMessage))
+		b.WriteString("\n" + errorStyle.Render(m.ErrorMessage))
 	}
 
-	b.WriteString("\n\n" + Current.Help.Render("Press j/k or ↑/↓ to select • enter to confirm • q or esc to quit"))
+	b.WriteString("\n\n" + helpStyle.Render("Press j/k or ↑/↓ to select • enter to confirm • q or esc to quit"))
 	return b.String()
 }
 
 func timedInputView(m Model) string {
 	var b strings.Builder
 
-	b.WriteString(Current.Title.Render("Enter Duration"))
+	b.WriteString(titleStyle.Render("Enter Duration"))
 	b.WriteString("\n\n")
 
+	b.WriteString(unselectedStyle.Render("Enter duration in minutes:"))
+	b.WriteString("\n")
 	input := m.Input
 	if input == "" {
 		input = " "
 	}
-	b.WriteString(Current.InputBox.Render(input))
+	b.WriteString(inputBoxStyle.Render(input))
+	// b.WriteString(Current.InputBox.Render(input))
 	b.WriteString("\n\n")
 
 	// Help text
-	b.WriteString(Current.Help.Render("Enter number of minutes"))
+	// b.WriteString(helpStyle.Render("Enter number of minutes"))
 	b.WriteString("\n")
-	b.WriteString(Current.Help.Render("Press enter to start • backspace to clear • esc to cancel"))
+	b.WriteString(helpStyle.Render("Press enter to start • backspace to clear • esc to cancel"))
 
 	if m.ErrorMessage != "" {
-		b.WriteString("\n\n" + Current.Error.Render(m.ErrorMessage))
+		b.WriteString("\n\n" + errorStyle.Render(m.ErrorMessage))
 	}
 
 	return b.String()
@@ -100,10 +143,10 @@ func timedInputView(m Model) string {
 func runningView(m Model) string {
 	var b strings.Builder
 
-	b.WriteString(Current.Title.Render("Keep Alive Active"))
+	b.WriteString(titleStyle.Render("Keep Alive Active"))
 	b.WriteString("\n\n")
 
-	b.WriteString(Current.ActiveStatus.Render("System is being kept awake"))
+	b.WriteString(awakeStyle.Render("System is being kept awake"))
 	b.WriteString("\n")
 
 	// Show countdown if this is a timed session
@@ -112,15 +155,43 @@ func runningView(m Model) string {
 		minutes := int(remaining.Minutes())
 		seconds := int(remaining.Seconds()) % 60
 		countdown := fmt.Sprintf("%d:%02d remaining", minutes, seconds)
-		b.WriteString(Current.Countdown.Render(countdown))
+		b.WriteString(unselectedStyle.Render(countdown))
 		b.WriteString("\n")
 	}
 
-	b.WriteString("\n" + Current.Help.Render("Press enter to stop and return to menu • q or esc to quit"))
+	b.WriteString("\n" + helpStyle.Render("Press enter to stop and return to menu • q or esc to quit"))
 
 	if m.ErrorMessage != "" {
-		b.WriteString("\n\n" + Current.Error.Render(m.ErrorMessage))
+		b.WriteString("\n\n" + errorStyle.Render(m.ErrorMessage))
 	}
 
 	return b.String()
+}
+
+func helpView() string {
+	help := `Keep-Alive Help
+
+Usage:
+  keepalive [flags]
+
+Flags:
+  -d, --duration string   Duration to keep system alive (e.g., "2h30m")
+  -v, --version          Show version information
+  -h, --help            Show help message
+
+Examples:
+  keepalive                    # Start with interactive TUI
+  keepalive -d 2h30m          # Keep system awake for 2 hours and 30 minutes
+  keepalive -d 150            # Keep system awake for 150 minutes
+  keepalive --version         # Show version information
+
+Navigation:
+  ↑/k, ↓/j  : Navigate menu
+  Enter      : Select option
+  h          : Show this help
+  q/Esc      : Quit/Back
+
+Press 'q' or 'Esc' to close help`
+
+	return helpStyle.Render(help)
 }

@@ -2,27 +2,47 @@ package main
 
 import (
 	"log"
-	"os"
 
+	"keepalive/internal/config"
 	"keepalive/internal/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+const appVersion = "1.0.2"
+
 func main() {
+	cfg, err := config.ParseFlags(appVersion)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	f, err := tea.LogToFile("debug.log", "debug")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer f.Close()
 
-	p := tea.NewProgram(
-		ui.InitialModel(),
-		tea.WithAltScreen(),
-		tea.WithInput(os.Stdin),
-		tea.WithOutput(os.Stdout),
-	)
+	var model ui.Model
+	if cfg.Duration > 0 {
+		model = ui.InitialModelWithDuration(cfg.Duration)
+		p := tea.NewProgram(
+			model,
+			tea.WithAltScreen(),
+			tea.WithMouseCellMotion(),
+		)
+		if _, err := p.Run(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
+	model = ui.InitialModel()
+	p := tea.NewProgram(
+		model,
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+	)
 	if _, err := p.Run(); err != nil {
 		log.Fatal(err)
 	}
