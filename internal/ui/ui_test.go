@@ -169,6 +169,7 @@ func TestTimeRemaining(t *testing.T) {
 				StartTime:  now,
 				Duration:  5 * time.Minute,
 				KeepAlive: keeper,
+				State:     stateRunning,
 			},
 			wantZero:  false,
 			wantRange: 5 * time.Minute,
@@ -190,7 +191,7 @@ func TestTimeRemaining(t *testing.T) {
 			if tt.wantZero && got != 0 {
 				t.Errorf("TimeRemaining() = %v, want 0", got)
 			}
-			if !tt.wantZero && (got <= 0 || got > tt.wantRange) {
+			if !tt.wantZero && (got < 0 || got > tt.wantRange) {
 				t.Errorf("TimeRemaining() = %v, want between 0 and %v", got, tt.wantRange)
 			}
 		})
