@@ -1,4 +1,4 @@
-module keepalive
+module github.com/stigoleg/keep-alive
 
 go 1.20
 

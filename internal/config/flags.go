@@ -4,8 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"keepalive/internal/ui"
-	"keepalive/internal/util"
+	"github.com/stigoleg/keep-alive/internal/ui"
+	"github.com/stigoleg/keep-alive/internal/util"
 )
 
 type Config struct {

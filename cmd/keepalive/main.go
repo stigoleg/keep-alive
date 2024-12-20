@@ -3,8 +3,8 @@ package main
 import (
 	"log"
 
-	"keepalive/internal/config"
-	"keepalive/internal/ui"
+	"github.com/stigoleg/keep-alive/internal/config"
+	"github.com/stigoleg/keep-alive/internal/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

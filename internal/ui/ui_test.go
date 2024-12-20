@@ -1,7 +1,7 @@
 package ui
 
 import (
-	"keepalive/internal/keepalive"
+	"github.com/stigoleg/keep-alive/internal/keepalive"
 	"strings"
 	"testing"
 	"time"
