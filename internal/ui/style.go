@@ -31,6 +31,11 @@ type Style struct {
 	Help           lipgloss.Style
 	Error          lipgloss.Style
 	Countdown      lipgloss.Style
+	Selected       lipgloss.Style
+	Unselected     lipgloss.Style
+	Awake          lipgloss.Style
+	ProgressBar    lipgloss.Style
+	ProgressBarContainer lipgloss.Style
 }
 
 // DefaultStyle returns the default style configuration
@@ -42,7 +47,10 @@ func DefaultStyle() Style {
 	return Style{
 		Title: base.Copy().
 			Bold(true).
-			Foreground(defaultColors.Highlight),
+			Foreground(lipgloss.Color("#FAFAFA")).
+			Background(defaultColors.Highlight).
+			PaddingLeft(2).
+			PaddingRight(2),
 
 		ActiveStatus: base.Copy().
 			Foreground(defaultColors.Special),
@@ -57,7 +65,8 @@ func DefaultStyle() Style {
 			Bold(true).
 			Foreground(defaultColors.Highlight),
 
-		Menu: base.Copy(),
+		Menu: base.Copy().
+			MarginLeft(2),
 
 		InputBox: base.Copy().
 			Border(lipgloss.RoundedBorder()).
@@ -65,14 +74,43 @@ func DefaultStyle() Style {
 			Padding(0, 1),
 
 		Help: base.Copy().
-			Foreground(defaultColors.Subtle),
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(defaultColors.Highlight).
+			Padding(1, 2),
 
 		Error: base.Copy().
-			Foreground(defaultColors.Error),
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(lipgloss.Color("#FF4040")).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#FF4040")).
+			MarginTop(1).
+			MarginBottom(1).
+			Padding(0, 1).
+			Bold(true),
 
 		Countdown: base.Copy().
-			Foreground(defaultColors.Highlight).
+			Foreground(defaultColors.Special).
 			Bold(true),
+
+		Selected: base.Copy().
+			Foreground(defaultColors.Highlight).
+			PaddingLeft(2),
+
+		Unselected: base.Copy().
+			Foreground(lipgloss.Color("#FAFAFA")).
+			PaddingLeft(2),
+
+		Awake: base.Copy().
+			Foreground(defaultColors.Special).
+			PaddingLeft(2),
+
+		ProgressBar: base.Copy().
+			Height(1),
+
+		ProgressBarContainer: base.Copy().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(defaultColors.Subtle).
+			Padding(0, 1),
 	}
 }
 
