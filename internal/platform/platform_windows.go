@@ -1,4 +1,5 @@
 //go:build windows
+
 package platform
 
 import (
@@ -7,7 +8,7 @@ import (
 
 const (
 	esSystemRequired = 0x00000001
-	esContinuous    = 0x80000000
+	esContinuous     = 0x80000000
 )
 
 var (

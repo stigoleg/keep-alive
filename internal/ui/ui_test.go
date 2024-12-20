@@ -1,10 +1,11 @@
 package ui
 
 import (
-	"github.com/stigoleg/keep-alive/internal/keepalive"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stigoleg/keep-alive/internal/keepalive"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -157,7 +158,7 @@ func TestTimeRemaining(t *testing.T) {
 		{
 			name: "no duration",
 			model: Model{
-				StartTime:  now,
+				StartTime: now,
 				Duration:  0,
 				KeepAlive: keeper,
 			},
@@ -166,7 +167,7 @@ func TestTimeRemaining(t *testing.T) {
 		{
 			name: "with duration",
 			model: Model{
-				StartTime:  now,
+				StartTime: now,
 				Duration:  5 * time.Minute,
 				KeepAlive: keeper,
 				State:     stateRunning,
@@ -177,7 +178,7 @@ func TestTimeRemaining(t *testing.T) {
 		{
 			name: "expired duration",
 			model: Model{
-				StartTime:  now.Add(-6 * time.Minute),
+				StartTime: now.Add(-6 * time.Minute),
 				Duration:  5 * time.Minute,
 				KeepAlive: keeper,
 			},

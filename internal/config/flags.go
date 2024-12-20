@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
 	"github.com/stigoleg/keep-alive/internal/ui"
 	"github.com/stigoleg/keep-alive/internal/util"
 )

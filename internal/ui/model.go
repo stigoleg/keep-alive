@@ -1,9 +1,10 @@
 package ui
 
 import (
-	"github.com/stigoleg/keep-alive/internal/keepalive"
 	"strconv"
 	"time"
+
+	"github.com/stigoleg/keep-alive/internal/keepalive"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
