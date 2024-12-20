@@ -108,7 +108,7 @@ func menuView(m Model) string {
 		b.WriteString("\n" + errorStyle.Render(m.ErrorMessage))
 	}
 
-	b.WriteString("\n\n" + helpStyle.Render("j/k or ↑/↓ to select • enter to confirm • q or esc to quit"))
+	b.WriteString("\n\n" + helpStyle.Render("j/k or ↑/↓ to select • enter to confirm • q to quit"))
 	return b.String()
 }
 
