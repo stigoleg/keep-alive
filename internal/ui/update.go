@@ -126,18 +126,18 @@ func handleTimedInputSubmit(m Model) (Model, tea.Cmd) {
 		m.ErrorMessage = "Duration Required • Please enter the number of minutes"
 		return m, nil
 	}
-	
+
 	minutes, err := strconv.Atoi(m.Input)
 	if err != nil || minutes <= 0 {
 		m.ErrorMessage = "Invalid Input • Please enter a positive number"
 		return m, nil
 	}
-	
+
 	if err := m.KeepAlive.StartTimed(time.Duration(minutes) * time.Minute); err != nil {
 		m.ErrorMessage = "System Error • " + err.Error()
 		return m, nil
 	}
-	
+
 	m.State = stateRunning
 	m.StartTime = time.Now()
 	m.Duration = time.Duration(minutes) * time.Minute
@@ -196,7 +196,7 @@ func handleQuit(m Model) (Model, tea.Cmd) {
 }
 
 func tick() tea.Cmd {
-	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(time.Millisecond*50, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }

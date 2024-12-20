@@ -113,43 +113,40 @@ func runningView(m Model) string {
 		progress := 1.0 - (float64(remaining) / float64(m.Duration))
 		width := 20 // Width of the progress bar - adjusted to match help text width
 
-		// Create progress bar components
-		filled := int(progress * float64(width))
-		if filled > width {
-			filled = width
-		}
-
-		// Define gradient colors (from purple to green with more steps)
+		// Define gradient colors (from purple to green with very fine steps)
 		gradientColors := []string{
-			"#7D56F4", "#7857F4", "#7359F5", "#6E5AF5", "#695CF6",
-			"#645DF6", "#5F5FF7", "#5A60F7", "#5562F8", "#5063F8",
-			"#4B65F9", "#4666F9", "#4168FA", "#3C69FA", "#376BFB",
-			"#326CFB", "#2D6EFC", "#286FFC", "#2371FD", "#1E72FD",
-			"#1974FE", "#1475FE", "#0F77FF", "#0A78FF", "#057AFF",
-			"#007BFF", "#007DFA", "#007FF5", "#0081F0", "#0083EB",
-			"#0085E6", "#0087E1", "#0089DC", "#008BD7", "#008DD2",
-			"#008FCD", "#0091C8", "#0093C3", "#0095BE", "#0097B9",
-			"#0099B4", "#009BAF", "#009DAA", "#009FA5", "#00A1A0",
-			"#00A39B", "#00A596", "#00A791", "#00A98C", "#00AB87",
-			"#00AD82", "#00AF7D", "#00B178", "#00B373", "#00B56E",
-			"#00B769", "#00B964", "#00BB5F", "#00BD5A", "#00BF55",
-			"#43BF6D",
+			"#7D56F4", "#7B57F4", "#7958F4", "#7759F4", "#755AF4", "#735BF4", "#715CF5", "#6F5DF5",
+			"#6D5EF5", "#6B5FF5", "#695FF5", "#6760F5", "#6561F6", "#6362F6", "#6163F6", "#5F64F6",
+			"#5D65F6", "#5B66F6", "#5967F7", "#5768F7", "#5569F7", "#536AF7", "#516BF7", "#4F6CF7",
+			"#4D6DF8", "#4B6EF8", "#496FF8", "#4770F8", "#4571F8", "#4372F8", "#4173F9", "#3F74F9",
+			"#3D75F9", "#3B76F9", "#3977F9", "#3778F9", "#3579FA", "#337AFA", "#317BFA", "#2F7CFA",
+			"#2D7DFA", "#2B7EFA", "#297FFB", "#2780FB", "#2581FB", "#2382FB", "#2183FB", "#1F84FB",
+			"#1D85FC", "#1B86FC", "#1987FC", "#1788FC", "#1589FC", "#138AFC", "#118BFD", "#0F8CFD",
+			"#0D8DFD", "#0B8EFD", "#098FFD", "#0790FD", "#0591FE", "#0392FE", "#0193FE", "#0094FE",
+			"#0095FA", "#0096F6", "#0097F2", "#0098EE", "#0099EA", "#009AE6", "#009BE2", "#009CDE",
+			"#009DDA", "#009ED6", "#009FD2", "#00A0CE", "#00A1CA", "#00A2C6", "#00A3C2", "#00A4BE",
+			"#00A5BA", "#00A6B6", "#00A7B2", "#00A8AE", "#00A9AA", "#00AAA6", "#00ABA2", "#00AC9E",
+			"#00AD9A", "#00AE96", "#00AF92", "#00B08E", "#00B18A", "#00B286", "#00B382", "#00B47E",
+			"#00B57A", "#00B676", "#00B772", "#00B86E", "#00B96A", "#00BA66", "#00BB62", "#00BC5E",
+			"#00BD5A", "#00BE56", "#43BF6D",
 		}
 
 		// Build the progress bar with smooth gradient
 		var bar strings.Builder
 		for i := 0; i < width; i++ {
-			if i < filled {
+			// Calculate exact position progress
+			pos := float64(i) / float64(width)
+			if pos <= progress {
 				// Calculate color index for smooth gradient
-				colorIndex := int(float64(i) / float64(width) * float64(len(gradientColors)-1))
+				colorIndex := int(pos * float64(len(gradientColors)-1))
 				if colorIndex >= len(gradientColors) {
 					colorIndex = len(gradientColors) - 1
 				}
-				blockStyle := Current.ProgressBar.Copy().
+				blockStyle := Current.ProgressBar.
 					Background(lipgloss.Color(gradientColors[colorIndex]))
 				bar.WriteString(blockStyle.Render(" "))
 			} else {
-				bar.WriteString(Current.ProgressBar.Copy().Render(" "))
+				bar.WriteString(Current.ProgressBar.Render(" "))
 			}
 		}
 
