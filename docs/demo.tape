@@ -23,7 +23,7 @@ Type "j"
 Sleep 1s
 Enter
 Sleep 1s
-Type "20"
+Type "1"
 Sleep 500ms
 Enter
 Sleep 15s
