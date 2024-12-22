@@ -21,20 +21,20 @@ var defaultColors = Colors{
 
 // Style represents a collection of styles used in the application
 type Style struct {
-	Title          lipgloss.Style
-	ActiveStatus   lipgloss.Style
-	InactiveStatus lipgloss.Style
-	DisabledItem   lipgloss.Style
-	SelectedItem   lipgloss.Style
-	Menu           lipgloss.Style
-	InputBox       lipgloss.Style
-	Help           lipgloss.Style
-	Error          lipgloss.Style
-	Countdown      lipgloss.Style
-	Selected       lipgloss.Style
-	Unselected     lipgloss.Style
-	Awake          lipgloss.Style
-	ProgressBar    lipgloss.Style
+	Title                lipgloss.Style
+	ActiveStatus         lipgloss.Style
+	InactiveStatus       lipgloss.Style
+	DisabledItem         lipgloss.Style
+	SelectedItem         lipgloss.Style
+	Menu                 lipgloss.Style
+	InputBox             lipgloss.Style
+	Help                 lipgloss.Style
+	Error                lipgloss.Style
+	Countdown            lipgloss.Style
+	Selected             lipgloss.Style
+	Unselected           lipgloss.Style
+	Awake                lipgloss.Style
+	ProgressBar          lipgloss.Style
 	ProgressBarContainer lipgloss.Style
 }
 
@@ -45,42 +45,41 @@ func DefaultStyle() Style {
 		PaddingRight(1)
 
 	return Style{
-		Title: base.Copy().
+		Title: base.
 			Bold(true).
 			Foreground(lipgloss.Color("#FAFAFA")).
 			Background(defaultColors.Highlight).
 			PaddingLeft(2).
 			PaddingRight(2),
 
-		ActiveStatus: base.Copy().
+		ActiveStatus: base.
 			Foreground(defaultColors.Special),
 
-		InactiveStatus: base.Copy().
+		InactiveStatus: base.
 			Foreground(defaultColors.Subtle),
 
-		DisabledItem: base.Copy().
+		DisabledItem: base.
 			Foreground(defaultColors.Subtle),
 
-		SelectedItem: base.Copy().
+		SelectedItem: base.
 			Bold(true).
 			Foreground(defaultColors.Highlight),
 
-		Menu: base.Copy().
+		Menu: base.
 			MarginLeft(2),
 
-		InputBox: base.Copy().
+		InputBox: base.
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(defaultColors.Highlight).
 			Padding(0, 1),
 
-		Help: base.Copy().
+		Help: base.
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(defaultColors.Highlight).
 			Padding(1, 2),
 
-		Error: base.Copy().
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Background(lipgloss.Color("#FF4040")).
+		Error: base.
+			Foreground(lipgloss.Color("#FAFAFA")).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#FF4040")).
 			MarginTop(1).
@@ -88,26 +87,26 @@ func DefaultStyle() Style {
 			Padding(0, 1).
 			Bold(true),
 
-		Countdown: base.Copy().
+		Countdown: base.
 			Foreground(defaultColors.Special).
 			Bold(true),
 
-		Selected: base.Copy().
+		Selected: base.
 			Foreground(defaultColors.Highlight).
 			PaddingLeft(2),
 
-		Unselected: base.Copy().
+		Unselected: base.
 			Foreground(lipgloss.Color("#FAFAFA")).
 			PaddingLeft(2),
 
-		Awake: base.Copy().
+		Awake: base.
 			Foreground(defaultColors.Special).
 			PaddingLeft(2),
 
-		ProgressBar: base.Copy().
+		ProgressBar: base.
 			Height(1),
 
-		ProgressBarContainer: base.Copy().
+		ProgressBarContainer: base.
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(defaultColors.Subtle).
 			Padding(0, 1),

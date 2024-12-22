@@ -4,7 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stigoleg/keep-alive/internal/ui"
 	"github.com/stigoleg/keep-alive/internal/util"
 )
@@ -12,6 +14,29 @@ import (
 type Config struct {
 	Duration    int
 	ShowVersion bool
+}
+
+func formatError(err error) string {
+	msg := err.Error()
+	if strings.Contains(msg, "Invalid duration format:") {
+		parts := strings.SplitN(msg, "\n\n", 2)
+		if len(parts) == 2 {
+			errorBox := ui.Current.Help.Copy().
+				BorderForeground(lipgloss.Color("#FF4040"))
+
+			header := lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("#FF4040")).
+				Render(parts[0])
+
+			details := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#999999")).
+				Render(parts[1])
+
+			return errorBox.Render(fmt.Sprintf("%s\n\n%s", header, details))
+		}
+	}
+	return ui.Current.Error.Render(msg)
 }
 
 func ParseFlags(version string) (*Config, error) {
@@ -43,7 +68,8 @@ func ParseFlags(version string) (*Config, error) {
 	if *duration != "" {
 		d, err := util.ParseDuration(*duration)
 		if err != nil {
-			return nil, fmt.Errorf("error parsing duration: %v", err)
+			fmt.Println(formatError(err))
+			os.Exit(1)
 		}
 		minutes = int(d.Minutes())
 	}

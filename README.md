@@ -10,7 +10,7 @@ A lightweight, cross-platform utility to prevent your system from going to sleep
 
 ## Features
 
-- 🔄 Configurable keep-alive duration with flexible time format
+- 🔄 Configurable keep-alive duration
 - 💻 Cross-platform support (macOS, Windows, Linux)
 - ⚡ Lightweight and efficient
 - 🎯 Simple and intuitive to use
