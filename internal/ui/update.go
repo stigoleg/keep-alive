@@ -179,6 +179,10 @@ func handleTick(m Model) (Model, tea.Cmd) {
 			m.ErrorMessage = err.Error()
 			return m, nil
 		}
+		m.State = stateMenu       // Reset state to menu
+		m.Input = ""              // Clear input
+		m.Duration = 0            // Reset duration
+		m.StartTime = time.Time{} // Reset start time
 		return m, tea.Quit
 	}
 	return m, tick()
@@ -186,12 +190,14 @@ func handleTick(m Model) (Model, tea.Cmd) {
 
 // handleQuit handles quitting the application
 func handleQuit(m Model) (Model, tea.Cmd) {
-	if m.KeepAlive.IsRunning() {
-		if err := m.KeepAlive.Stop(); err != nil {
-			m.ErrorMessage = err.Error()
-			return m, nil
-		}
+	if err := m.KeepAlive.Stop(); err != nil {
+		m.ErrorMessage = err.Error()
+		return m, nil
 	}
+	m.State = stateMenu       // Reset state to menu
+	m.Input = ""              // Clear input
+	m.Duration = 0            // Reset duration
+	m.StartTime = time.Time{} // Reset start time
 	return m, tea.Quit
 }
 

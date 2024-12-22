@@ -1,9 +1,12 @@
 package keepalive
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/stigoleg/keep-alive/internal/platform"
 )
 
 // Keeper manages the system's keep-alive state
@@ -11,6 +14,9 @@ type Keeper struct {
 	running bool
 	mu      sync.Mutex
 	timer   *time.Timer
+	keeper  platform.KeepAlive
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 // IsRunning returns whether the keep-alive is currently active
@@ -29,7 +35,21 @@ func (k *Keeper) StartIndefinite() error {
 		return errors.New("keep-alive already running")
 	}
 
-	if err := setWindowsKeepAlive(); err != nil {
+	// Initialize the platform-specific keeper if needed
+	if k.keeper == nil {
+		var err error
+		k.keeper, err = platform.NewKeepAlive()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Create a new context for this session
+	k.ctx, k.cancel = context.WithCancel(context.Background())
+
+	// Start the platform-specific keep-alive
+	if err := k.keeper.Start(k.ctx); err != nil {
+		k.cancel()
 		return err
 	}
 
@@ -46,7 +66,21 @@ func (k *Keeper) StartTimed(d time.Duration) error {
 		return errors.New("keep-alive already running")
 	}
 
-	if err := setWindowsKeepAlive(); err != nil {
+	// Initialize the platform-specific keeper if needed
+	if k.keeper == nil {
+		var err error
+		k.keeper, err = platform.NewKeepAlive()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Create a new context for this session
+	k.ctx, k.cancel = context.WithTimeout(context.Background(), d)
+
+	// Start the platform-specific keep-alive
+	if err := k.keeper.Start(k.ctx); err != nil {
+		k.cancel()
 		return err
 	}
 
@@ -72,8 +106,15 @@ func (k *Keeper) Stop() error {
 		k.timer = nil
 	}
 
-	if err := stopWindowsKeepAlive(); err != nil {
-		return err
+	if k.cancel != nil {
+		k.cancel()
+		k.cancel = nil
+	}
+
+	if k.keeper != nil {
+		if err := k.keeper.Stop(); err != nil {
+			return err
+		}
 	}
 
 	k.running = false
