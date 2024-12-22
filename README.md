@@ -76,18 +76,48 @@ keepalive
 
 ## How It Works
 
-Keep-Alive uses platform-specific APIs to prevent your system from entering sleep mode:
+Keep-Alive uses platform-specific APIs and techniques to prevent your system from entering sleep mode:
 
-- **macOS**: Uses the `caffeinate` command to prevent system and display sleep
-- **Windows**: Uses SetThreadExecutionState API to prevent system sleep
-- **Linux**: Uses systemd-inhibit to prevent the system from going idle/sleep
+### macOS
+- Uses the `caffeinate` command with multiple flags to prevent:
+  - System sleep (`-s`)
+  - Display sleep (`-d`)
+  - Disk idle sleep (`-m`)
+  - System idle sleep (`-i`)
+  - User activity simulation (`-u`)
+- Periodically asserts user activity using both `caffeinate -u` and `pmset touch`
+- Automatically restores system power settings on exit
 
-The application provides three main options:
+### Windows
+- Utilizes the Windows `SetThreadExecutionState` API with flags:
+  - `ES_CONTINUOUS`: Maintain the current state
+  - `ES_SYSTEM_REQUIRED`: Prevent system sleep
+  - `ES_DISPLAY_REQUIRED`: Prevent display sleep
+- Implements a PowerShell-based fallback mechanism for additional reliability
+- Restores default power settings on exit
+
+### Linux
+- Primary method: Uses `systemd-inhibit` to prevent:
+  - System idle
+  - Sleep
+  - Lid switch actions
+- Fallback methods if systemd is not available:
+  - `xset` commands to disable screen saver and DPMS
+  - GNOME settings modifications for idle prevention
+- Automatically restores all system settings on exit
+
+The application is built with reliability in mind:
+1. **Process Monitoring**: Continuously monitors the keep-alive processes and automatically restarts them if they fail
+2. **Graceful Cleanup**: Ensures all processes are properly terminated and system settings are restored on exit
+3. **Resource Efficiency**: Uses minimal system resources while maintaining effectiveness
+
+The UI provides three main options:
 1. Keep system awake indefinitely
 2. Keep system awake for a specified duration
 3. Quit the application
 
 When running with a timer, the application shows a countdown of the remaining time. You can stop the keep-alive at any time by pressing Enter to return to the menu or q/Esc to quit the application.
+
 ## Dependencies
 
 ### Runtime Dependencies
@@ -117,11 +147,19 @@ go build -o keepalive ./cmd/keepalive
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## Acknowledgments
+
+- [Bubble Tea](https://github.com/charmbracelet/bubbletea) - The terminal UI framework that powers our interactive interface
+- [Lipgloss](https://github.com/charmbracelet/lipgloss) - Provides the beautiful styling for our terminal UI
+- [x/sys](https://pkg.go.dev/golang.org/x/sys) - Go packages for making system calls, especially useful for our Windows implementation
+- Special thanks to:
+  - The `caffeinate` utility developers at Apple
+  - The systemd team for `systemd-inhibit`
+  - The X.Org Foundation for `xset`
+  - Microsoft for the Windows Power Management APIs
+
+This project builds upon these excellent tools and APIs to provide a reliable, cross-platform solution for keeping your system awake.
+
 ## License
 
 This project is licensed under the MIT License.
-
-## Acknowledgments
-
-- [Bubble Tea](https://github.com/charmbracelet/bubbletea) - The TUI framework
-- [Lipgloss](https://github.com/charmbracelet/lipgloss) - Style definitions for terminal applications
