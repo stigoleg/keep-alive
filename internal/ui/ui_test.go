@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"context"
+	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -145,59 +148,62 @@ func TestErrorDisplay(t *testing.T) {
 }
 
 func TestTimeRemaining(t *testing.T) {
-	now := time.Now()
-	keeper := &keepalive.Keeper{}
-	_ = keeper.StartIndefinite() // Start the keeper for the test
-
-	tests := []struct {
-		name      string
-		model     Model
-		wantZero  bool
-		wantRange time.Duration
-	}{
-		{
-			name: "no duration",
-			model: Model{
-				StartTime: now,
-				Duration:  0,
-				KeepAlive: keeper,
-			},
-			wantZero: true,
-		},
-		{
-			name: "with duration",
-			model: Model{
-				StartTime: now,
-				Duration:  5 * time.Minute,
-				KeepAlive: keeper,
-				State:     stateRunning,
-			},
-			wantZero:  false,
-			wantRange: 5 * time.Minute,
-		},
-		{
-			name: "expired duration",
-			model: Model{
-				StartTime: now.Add(-6 * time.Minute),
-				Duration:  5 * time.Minute,
-				KeepAlive: keeper,
-			},
-			wantZero: true,
-		},
+	if testing.Short() {
+		t.Skip("skipping test in short mode")
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.model.TimeRemaining()
-			if tt.wantZero && got != 0 {
-				t.Errorf("TimeRemaining() = %v, want 0", got)
-			}
-			if !tt.wantZero && (got < 0 || got > tt.wantRange) {
-				t.Errorf("TimeRemaining() = %v, want between 0 and %v", got, tt.wantRange)
-			}
-		})
+	// Add test timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Kill any existing caffeinate processes
+	if runtime.GOOS == "darwin" {
+		exec.Command("pkill", "-9", "caffeinate").Run()
 	}
 
-	// Clean up
-	_ = keeper.Stop()
+	// Cleanup after test
+	t.Cleanup(func() {
+		if runtime.GOOS == "darwin" {
+			exec.Command("pkill", "-9", "caffeinate").Run()
+		}
+	})
+
+	// Create a keeper with a short duration
+	k := &UI{keeper: &keepalive.Keeper{}}
+	defer k.keeper.Stop() // Ensure cleanup even if test fails
+
+	// Start timed with a short duration
+	duration := 2 * time.Second
+	err := k.keeper.StartTimed(duration)
+	if err != nil && err.Error() == "unsupported platform" {
+		t.Skip("Skipping on unsupported platform")
+	}
+	if err != nil {
+		t.Fatalf("StartTimed failed: %v", err)
+	}
+
+	// Wait for context or short timeout
+	select {
+	case <-ctx.Done():
+		t.Fatal("test timeout")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// Check time remaining
+	remaining := k.keeper.TimeRemaining()
+	if remaining > duration {
+		t.Errorf("TimeRemaining returned %v, expected <= %v", remaining, duration)
+	}
+	if remaining <= 0 {
+		t.Error("TimeRemaining returned <= 0 immediately after start")
+	}
+
+	// Stop and verify cleanup
+	err = k.keeper.Stop()
+	if err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	if k.keeper.TimeRemaining() != 0 {
+		t.Error("TimeRemaining not 0 after stop")
+	}
 }

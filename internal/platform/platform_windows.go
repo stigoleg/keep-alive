@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"context"
 	"syscall"
 )
 
@@ -30,4 +31,26 @@ func stopWindowsKeepAlive() error {
 		return err
 	}
 	return nil
+}
+
+// windowsKeepAlive implements the KeepAlive interface for Windows
+type windowsKeepAlive struct{}
+
+// Start initiates the keep-alive functionality
+func (k *windowsKeepAlive) Start(ctx context.Context) error {
+	go func() {
+		<-ctx.Done()
+		stopWindowsKeepAlive()
+	}()
+	return setWindowsKeepAlive()
+}
+
+// Stop terminates the keep-alive functionality
+func (k *windowsKeepAlive) Stop() error {
+	return stopWindowsKeepAlive()
+}
+
+// NewKeepAlive creates a new platform-specific keep-alive instance
+func NewKeepAlive() (KeepAlive, error) {
+	return &windowsKeepAlive{}, nil
 }
