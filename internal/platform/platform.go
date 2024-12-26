@@ -12,11 +12,12 @@ import (
 
 // darwinKeepAlive implements the KeepAlive interface for macOS
 type darwinKeepAlive struct {
-	mu        sync.Mutex
-	cmd       *exec.Cmd
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	isRunning bool
+	mu           sync.Mutex
+	cmd          *exec.Cmd
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	isRunning    bool
+	activityTick *time.Ticker
 }
 
 // Start initiates the keep-alive functionality
@@ -31,8 +32,8 @@ func (k *darwinKeepAlive) Start(ctx context.Context) error {
 	// Create a cancellable context
 	ctx, k.cancel = context.WithCancel(ctx)
 
-	// Start caffeinate in the background with its own process group
-	k.cmd = exec.CommandContext(ctx, "caffeinate", "-i")
+	// Start caffeinate with comprehensive flags
+	k.cmd = exec.CommandContext(ctx, "caffeinate", "-s", "-d", "-m", "-i", "-u")
 	k.cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 		Pgid:    0,
@@ -48,6 +49,26 @@ func (k *darwinKeepAlive) Start(ctx context.Context) error {
 	go func() {
 		defer k.wg.Done()
 		k.cmd.Wait()
+	}()
+
+	// Start periodic activity assertion
+	k.activityTick = time.NewTicker(30 * time.Second)
+	k.wg.Add(1)
+	go func() {
+		defer k.wg.Done()
+		defer k.activityTick.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-k.activityTick.C:
+				// Assert user activity using pmset
+				exec.Command("pmset", "touch").Run()
+				// Additional caffeinate touch
+				exec.Command("caffeinate", "-u", "-t", "1").Run()
+			}
+		}
 	}()
 
 	k.isRunning = true
@@ -97,15 +118,15 @@ func (k *darwinKeepAlive) Stop() error {
 		return nil
 	}
 
-	// Cancel context first
+	// Cancel context and stop activity ticker
 	if k.cancel != nil {
 		k.cancel()
 	}
 
-	// Kill the process and its group
+	// Kill the process if it's still running
 	k.killProcess()
 
-	// Wait for monitoring goroutine to finish
+	// Wait for all goroutines to finish
 	k.wg.Wait()
 
 	k.isRunning = false
