@@ -11,7 +11,7 @@ import (
 // View renders the current state of the model to a string.
 func View(m Model) string {
 	if m.ShowHelp {
-		return helpView()
+		return helpView(m)
 	}
 
 	switch m.State {
@@ -163,8 +163,9 @@ func runningView(m Model) string {
 	return b.String()
 }
 
-func helpView() string {
+func helpView(m Model) string {
 	help := `Keep-Alive Help
+Version: %s
 
 Usage:
   keepalive [flags]
@@ -188,5 +189,5 @@ Navigation:
 
 Press 'q' or 'Esc' to close help`
 
-	return Current.Help.Render(help)
+	return Current.Help.Render(fmt.Sprintf(help, m.Version()))
 }

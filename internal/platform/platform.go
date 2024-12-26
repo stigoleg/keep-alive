@@ -38,7 +38,7 @@ func (k *darwinKeepAlive) Start(ctx context.Context) error {
 		Setpgid: true,
 		Pgid:    0,
 	}
-	
+
 	if err := k.cmd.Start(); err != nil {
 		k.cancel()
 		return err
@@ -90,7 +90,7 @@ func (k *darwinKeepAlive) killProcess() {
 			k.cmd.Process.Wait()
 			close(done)
 		}()
-		
+
 		select {
 		case <-done:
 			return
@@ -101,10 +101,10 @@ func (k *darwinKeepAlive) killProcess() {
 
 	// Process didn't terminate with SIGTERM, try SIGKILL
 	k.cmd.Process.Kill()
-	
+
 	// Kill the process group as well
 	syscall.Kill(-pid, syscall.SIGKILL)
-	
+
 	// Use pkill as a last resort
 	exec.Command("pkill", "-9", "caffeinate").Run()
 }

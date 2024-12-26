@@ -69,7 +69,7 @@ func TestKeepAlive(t *testing.T) {
 	t.Run("Timed Operation", func(t *testing.T) {
 		k := &Keeper{}
 		defer k.Stop() // Ensure cleanup even if test fails
-		
+
 		// Start timed
 		err := k.StartTimed(2 * time.Second)
 		if err != nil && err.Error() == "unsupported platform" {

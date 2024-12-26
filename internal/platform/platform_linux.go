@@ -21,7 +21,7 @@ type linuxKeepAlive struct {
 
 // trySystemdInhibit attempts to use systemd-inhibit
 func trySystemdInhibit(ctx context.Context) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, "systemd-inhibit", "--what=idle:sleep:handle-lid-switch", 
+	cmd := exec.CommandContext(ctx, "systemd-inhibit", "--what=idle:sleep:handle-lid-switch",
 		"--who=keep-alive", "--why=Prevent system sleep", "--mode=block",
 		"sleep", "infinity")
 	err := cmd.Start()
