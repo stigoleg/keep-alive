@@ -44,5 +44,5 @@ changelog:
 release:
   github:
     owner: stigoleg
-    name: keepalive
+    name: keep-alive
 
