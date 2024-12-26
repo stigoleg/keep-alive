@@ -44,6 +44,7 @@ func ParseFlags(version string) (*Config, error) {
 	flags.Usage = func() {
 		model := ui.InitialModel()
 		model.ShowHelp = true
+		model.SetVersion(version)
 		fmt.Print(model.View())
 	}
 

@@ -180,14 +180,14 @@ func cleanup(m Model) (Model, error) {
 	if err := m.KeepAlive.Stop(); err != nil {
 		return m, err
 	}
-	
+
 	// Reset all state
 	m.State = stateMenu
 	m.Input = ""
 	m.Duration = 0
 	m.StartTime = time.Time{}
 	m.ErrorMessage = ""
-	
+
 	return m, nil
 }
 

@@ -29,6 +29,7 @@ type Model struct {
 	StartTime    time.Time
 	Duration     time.Duration
 	ShowHelp     bool
+	version      string
 }
 
 // InitialModel returns the initial model for the TUI.
@@ -91,4 +92,14 @@ func (m Model) TimeRemaining() time.Duration {
 		return 0
 	}
 	return remaining
+}
+
+// SetVersion sets the version for the help text
+func (m *Model) SetVersion(version string) {
+	m.version = version
+}
+
+// Version returns the current version
+func (m Model) Version() string {
+	return m.version
 }

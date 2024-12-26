@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const appVersion = "1.2.0"
+const appVersion = "1.2.1"
 
 func main() {
 	cfg, err := config.ParseFlags(appVersion)
@@ -36,6 +36,7 @@ func main() {
 	} else {
 		model = ui.InitialModel()
 	}
+	model.SetVersion(appVersion)
 
 	// Create program with signal handling
 	p := tea.NewProgram(

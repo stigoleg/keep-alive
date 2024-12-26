@@ -15,14 +15,14 @@ func getCaffeinateProcesses() ([]int, error) {
 	if runtime.GOOS != "darwin" {
 		return nil, nil
 	}
-	
+
 	cmd := exec.Command("pgrep", "caffeinate")
 	output, err := cmd.Output()
 	if err != nil {
 		// No processes found is not an error for our purposes
 		return nil, nil
 	}
-	
+
 	// Parse PIDs from output
 	var pids []int
 	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
@@ -50,7 +50,7 @@ func killCaffeinate() error {
 		}
 	}
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Check if any processes remain that we started
 	if pids, _ := getCaffeinateProcesses(); len(pids) > 0 {
 		// Try SIGKILL for remaining processes
@@ -105,7 +105,7 @@ func TestKeepAlive(t *testing.T) {
 
 	// Give caffeinate time to start
 	time.Sleep(200 * time.Millisecond)
-	
+
 	// Check if we have exactly one more caffeinate process than we started with
 	pids, err := getCaffeinateProcesses()
 	if err != nil {
@@ -131,7 +131,7 @@ func TestKeepAlive(t *testing.T) {
 
 	// Final check with debug info
 	if pids, _ := getCaffeinateProcesses(); len(pids) > initialCount {
-		t.Errorf("Found %d extra caffeinate processes still running after stop: %v (initial count was %d)", 
+		t.Errorf("Found %d extra caffeinate processes still running after stop: %v (initial count was %d)",
 			len(pids)-initialCount, pids, initialCount)
 	}
 }
