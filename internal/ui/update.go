@@ -162,12 +162,7 @@ func handleRunningKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 	case "q", "ctrl+c", "esc":
 		return handleQuit(m)
 	case "enter":
-		if err := m.KeepAlive.Stop(); err != nil {
-			m.ErrorMessage = err.Error()
-			return m, nil
-		}
-		m.State = stateMenu
-		m.ErrorMessage = ""
+		return handleStopAndReturn(m)
 	}
 	return m, nil
 }
@@ -175,30 +170,45 @@ func handleRunningKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 // handleTick processes timer ticks in the running state
 func handleTick(m Model) (Model, tea.Cmd) {
 	if m.Duration > 0 && time.Since(m.StartTime) >= m.Duration {
-		if err := m.KeepAlive.Stop(); err != nil {
-			m.ErrorMessage = err.Error()
-			return m, nil
-		}
-		m.State = stateMenu       // Reset state to menu
-		m.Input = ""              // Clear input
-		m.Duration = 0            // Reset duration
-		m.StartTime = time.Time{} // Reset start time
-		return m, tea.Quit
+		return handleQuit(m)
 	}
 	return m, tick()
 }
 
-// handleQuit handles quitting the application
-func handleQuit(m Model) (Model, tea.Cmd) {
+// cleanup stops the keep-alive process and resets the model state
+func cleanup(m Model) (Model, error) {
 	if err := m.KeepAlive.Stop(); err != nil {
+		return m, err
+	}
+	
+	// Reset all state
+	m.State = stateMenu
+	m.Input = ""
+	m.Duration = 0
+	m.StartTime = time.Time{}
+	m.ErrorMessage = ""
+	
+	return m, nil
+}
+
+// handleStopAndReturn stops the keep-alive and returns to the main menu
+func handleStopAndReturn(m Model) (Model, tea.Cmd) {
+	cleanedModel, err := cleanup(m)
+	if err != nil {
 		m.ErrorMessage = err.Error()
 		return m, nil
 	}
-	m.State = stateMenu       // Reset state to menu
-	m.Input = ""              // Clear input
-	m.Duration = 0            // Reset duration
-	m.StartTime = time.Time{} // Reset start time
-	return m, tea.Quit
+	return cleanedModel, nil
+}
+
+// handleQuit handles quitting the application
+func handleQuit(m Model) (Model, tea.Cmd) {
+	cleanedModel, err := cleanup(m)
+	if err != nil {
+		m.ErrorMessage = err.Error()
+		return m, nil
+	}
+	return cleanedModel, tea.Quit
 }
 
 func tick() tea.Cmd {

@@ -17,6 +17,7 @@ type Keeper struct {
 	keeper  platform.KeepAlive
 	ctx     context.Context
 	cancel  context.CancelFunc
+	endTime time.Time
 }
 
 // IsRunning returns whether the keep-alive is currently active
@@ -85,6 +86,7 @@ func (k *Keeper) StartTimed(d time.Duration) error {
 	}
 
 	k.running = true
+	k.endTime = time.Now().Add(d)
 	k.timer = time.AfterFunc(d, func() {
 		k.Stop()
 	})
@@ -119,4 +121,24 @@ func (k *Keeper) Stop() error {
 
 	k.running = false
 	return nil
+}
+
+// TimeRemaining returns the remaining duration for timed mode
+func (k *Keeper) TimeRemaining() time.Duration {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	if !k.running {
+		return 0
+	}
+
+	if k.endTime.IsZero() {
+		return 0
+	}
+
+	remaining := time.Until(k.endTime)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
 }
