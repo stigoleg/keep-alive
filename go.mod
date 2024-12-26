@@ -1,8 +1,6 @@
 module github.com/stigoleg/keep-alive
 
-go 1.22.0
-
-toolchain go1.23.4
+go 1.23.0
 
 require (
 	github.com/charmbracelet/bubbletea v1.2.4

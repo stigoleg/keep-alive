@@ -2,6 +2,9 @@ package main
 
 import (
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/stigoleg/keep-alive/internal/config"
 	"github.com/stigoleg/keep-alive/internal/ui"
@@ -23,27 +26,39 @@ func main() {
 	}
 	defer f.Close()
 
+	// Set up signal handling
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
 	var model ui.Model
 	if cfg.Duration > 0 {
 		model = ui.InitialModelWithDuration(cfg.Duration)
-		p := tea.NewProgram(
-			model,
-			tea.WithAltScreen(),
-			tea.WithMouseCellMotion(),
-		)
-		if _, err := p.Run(); err != nil {
-			log.Fatal(err)
-		}
-		return
+	} else {
+		model = ui.InitialModel()
 	}
 
-	model = ui.InitialModel()
+	// Create program with signal handling
 	p := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
+		tea.WithoutSignalHandler(),
 	)
+
+	// Handle signals in a separate goroutine
+	go func() {
+		sig := <-sigChan
+		log.Printf("Received signal: %v", sig)
+		if model.KeepAlive != nil {
+			if err := model.KeepAlive.Stop(); err != nil {
+				log.Printf("Error stopping keep-alive: %v", err)
+			}
+		}
+		p.Kill()
+	}()
+
 	if _, err := p.Run(); err != nil {
-		log.Fatal(err)
+		log.Printf("Error running program: %v", err)
+		os.Exit(1)
 	}
 }
