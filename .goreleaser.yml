@@ -16,6 +16,7 @@ builds:
       - goos: windows
         goarch: arm64
     main: ./cmd/keepalive
+    binary: keepalive
     ldflags:
       - -s -w -X main.version={{.Version}}
     mod_timestamp: '{{ .CommitTimestamp }}'
@@ -45,4 +46,3 @@ release:
   github:
     owner: stigoleg
     name: keep-alive
-
