@@ -122,7 +122,7 @@ When running with a timer, the application shows a countdown of the remaining ti
 
 ### Runtime Dependencies
 
-- **Linux**: 
+- **Linux**:
   - systemd (recommended) or X11
   - A terminal that supports TUI applications
 
@@ -149,14 +149,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Acknowledgments
 
-- [Bubble Tea](https://github.com/charmbracelet/bubbletea) - The terminal UI framework that powers our interactive interface
-- [Lipgloss](https://github.com/charmbracelet/lipgloss) - Provides the beautiful styling for our terminal UI
-- [x/sys](https://pkg.go.dev/golang.org/x/sys) - Go packages for making system calls, especially useful for our Windows implementation
-- Special thanks to:
-  - The `caffeinate` utility developers at Apple
-  - The systemd team for `systemd-inhibit`
-  - The X.Org Foundation for `xset`
-  - Microsoft for the Windows Power Management APIs
+- [Bubble Tea](https://github.com/charmbracelet/bubbletea) - The terminal UI framework that powers the interactive interface
+- [Lipgloss](https://github.com/charmbracelet/lipgloss) - Provides the beautiful styling for the terminal UI
+- [x/sys](https://pkg.go.dev/golang.org/x/sys) - Go packages for making system calls, especially useful for the Windows implementation
 
 This project builds upon these excellent tools and APIs to provide a reliable, cross-platform solution for keeping your system awake.
 
