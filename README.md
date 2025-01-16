@@ -55,13 +55,32 @@ sudo mv keepalive /usr/local/bin/
 ```
 Flags:
     -d, --duration string   Duration to keep system alive (e.g., "2h30m" or "150")
+    -c, --clock string     Time to keep system alive until (e.g., "22:00" or "10:00PM")
     -v, --version          Show version information
     -h, --help            Show help message
 ```
 
-The duration can be specified in two formats:
-- As a time duration (e.g., "2h30m", "1h", "45m")
-- As minutes (e.g., "150" for 2.5 hours)
+The duration can be specified in two ways:
+1. Using the duration flag (-d/--duration):
+   - As a time duration (e.g., "2h30m", "1h", "45m")
+   - As minutes (e.g., "150" for 2.5 hours)
+
+2. Using the clock flag (-c/--clock):
+   - 24-hour format: "HH:MM" (e.g., "22:00", "09:45")
+   - 12-hour format: "HH:MM[AM|PM]" (e.g., "11:30PM", "9:45 AM")
+   - If the specified time is in the past, it's assumed to be for the next day
+
+Note: You cannot use both duration and clock flags at the same time.
+
+### Examples:
+```bash
+keepalive                    # Start with interactive TUI
+keepalive -d 2h30m          # Keep system awake for 2 hours and 30 minutes
+keepalive -d 150            # Keep system awake for 150 minutes
+keepalive -c 22:00          # Keep system awake until 10:00 PM
+keepalive -c 10:00PM        # Keep system awake until 10:00 PM
+keepalive --version         # Show version information
+```
 
 ### Interactive Mode
 
