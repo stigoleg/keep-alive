@@ -171,7 +171,8 @@ Usage:
   keepalive [flags]
 
 Flags:
-  -d, --duration string   Duration to keep system alive (e.g., "2h30m")
+  -d, --duration string   Duration to keep system alive (e.g., "2h30m" or "150")
+  -c, --clock string     Time to keep system alive until (e.g., "22:00" or "10:00PM")
   -v, --version          Show version information
   -h, --help            Show help message
 
@@ -179,6 +180,8 @@ Examples:
   keepalive                    # Start with interactive TUI
   keepalive -d 2h30m          # Keep system awake for 2 hours and 30 minutes
   keepalive -d 150            # Keep system awake for 150 minutes
+  keepalive -c 22:00          # Keep system awake until 10:00 PM
+  keepalive -c 10:00PM        # Keep system awake until 10:00 PM
   keepalive --version         # Show version information
 
 Navigation:
