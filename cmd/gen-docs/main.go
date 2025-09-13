@@ -154,7 +154,7 @@ func writeMan(flags []flagDef) error {
     b.WriteString(".TH \"" + strings.ToUpper(appName) + "\" \"1\" \"\" \"keep-alive\" \"User Commands\"\n")
     b.WriteString(".SH NAME\n" + appName + " - " + appDescription + "\n")
     b.WriteString(".SH SYNOPSIS\n.B " + appName + "\n")
-    b.WriteString("[\-d|\-\-duration <string>] [\-c|\-\-clock <string>] [\-v|\-\-version] [\-h|\-\-help]\n")
+    b.WriteString("[\\-d|\\-\\-duration <string>] [\\-c|\\-\\-clock <string>] [\\-v|\\-\\-version] [\\-h|\\-\\-help]\\n")
     b.WriteString(".SH DESCRIPTION\n" + appDescription + "\n")
     b.WriteString(".SH OPTIONS\n")
     for _, f := range flags {
