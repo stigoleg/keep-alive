@@ -5,6 +5,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -32,8 +33,12 @@ func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
 // handleHelpState handles messages when help is being displayed
 func handleHelpState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		switch keyMsg.String() {
-		case "q", "esc", "ctrl+c":
+		switch {
+		case key.Matches(keyMsg, m.Keys.ToggleHelp):
+			m.ShowHelp = false
+		case key.Matches(keyMsg, m.Keys.Quit):
+			m.ShowHelp = false
+		case key.Matches(keyMsg, m.Keys.Back):
 			m.ShowHelp = false
 		}
 	}
@@ -51,20 +56,23 @@ func handleMenuState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 
 // handleMenuKeyMsg handles keyboard input in the menu state
 func handleMenuKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
-	switch msg.String() {
-	case "h", "?":
+	switch {
+	case key.Matches(msg, m.Keys.ToggleHelp):
 		m.ShowHelp = true
-	case "up", "k":
+	case key.Matches(msg, m.Keys.Up):
 		if m.Selected > 0 {
 			m.Selected--
 		}
-	case "down", "j":
+	case key.Matches(msg, m.Keys.Down):
 		if m.Selected < 2 {
 			m.Selected++
 		}
-	case "enter", " ":
+	case key.Matches(msg, m.Keys.Select):
 		return handleMenuSelection(m)
-	case "q", "ctrl+c":
+	case msg.Type == tea.KeyEnter:
+		// Fallback for tests sending KeyEnter type
+		return handleMenuSelection(m)
+	case key.Matches(msg, m.Keys.Quit):
 		return handleQuit(m)
 	}
 	return m, nil
@@ -101,14 +109,19 @@ func handleTimedInputState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 
 // handleTimedInputKeyMsg handles keyboard input in the timed input state
 func handleTimedInputKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
+	switch {
+	case key.Matches(msg, m.Keys.ToggleHelp):
+		m.ShowHelp = true
+	case key.Matches(msg, m.Keys.Back):
 		m.State = stateMenu
 		m.Input = ""
 		m.ErrorMessage = ""
-	case "enter":
+	case key.Matches(msg, m.Keys.Submit):
 		return handleTimedInputSubmit(m)
-	case "backspace":
+	case msg.Type == tea.KeyEnter:
+		// Fallback for tests sending KeyEnter type
+		return handleTimedInputSubmit(m)
+	case key.Matches(msg, m.Keys.Backspace):
 		if len(m.Input) > 0 {
 			m.Input = m.Input[:len(m.Input)-1]
 		}
@@ -158,10 +171,12 @@ func handleRunningState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 
 // handleRunningKeyMsg handles keyboard input in the running state
 func handleRunningKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "ctrl+c", "esc":
+	switch {
+	case key.Matches(msg, m.Keys.Quit):
 		return handleQuit(m)
-	case "enter":
+	case key.Matches(msg, m.Keys.ToggleHelp):
+		m.ShowHelp = true
+	case key.Matches(msg, m.Keys.Stop):
 		return handleStopAndReturn(m)
 	}
 	return m, nil

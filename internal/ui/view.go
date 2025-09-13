@@ -63,7 +63,9 @@ func menuView(m Model) string {
 		b.WriteString("\n" + Current.Error.Render(m.ErrorMessage))
 	}
 
-	b.WriteString("\n\n" + Current.Help.Render("j/k or ↑/↓ to select • enter to confirm • q to quit"))
+	// contextual help footer
+	footer := m.Help.View(m.Keys.ForState(stateMenu))
+	b.WriteString("\n\n" + footer)
 	return b.String()
 }
 
@@ -82,11 +84,13 @@ func timedInputView(m Model) string {
 	b.WriteString(Current.InputBox.Render(input))
 	b.WriteString("\n\n")
 
-	b.WriteString("\n" + Current.Help.Render("Press enter to start • backspace to clear • esc to cancel"))
-
 	if m.ErrorMessage != "" {
 		b.WriteString("\n\n" + Current.Error.Render(m.ErrorMessage))
 	}
+
+	// contextual help footer
+	footer := m.Help.View(m.Keys.ForState(stateTimedInput))
+	b.WriteString("\n" + footer)
 
 	return b.String()
 }
@@ -154,7 +158,8 @@ func runningView(m Model) string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString("\n" + Current.Help.Render("Press enter to stop and return to menu • q or esc to quit"))
+	footer := m.Help.View(m.Keys.ForState(stateRunning))
+	b.WriteString("\n" + footer)
 
 	if m.ErrorMessage != "" {
 		b.WriteString("\n\n" + Current.Error.Render(m.ErrorMessage))
@@ -163,8 +168,9 @@ func runningView(m Model) string {
 	return b.String()
 }
 
+// Help overlay with version and CLI usage
 func helpView(m Model) string {
-	help := `Keep-Alive Help
+	help := `Keep-Alive — Help
 Version: %s
 
 Usage:
@@ -187,10 +193,8 @@ Examples:
 Navigation:
   ↑/k, ↓/j  : Navigate menu
   Enter      : Select option
-  h          : Show this help
+  h/?        : Toggle help overlay
   q/Esc      : Quit/Back
-
-Press 'q' or 'Esc' to close help`
-
+`
 	return Current.Help.Render(fmt.Sprintf(help, m.Version()))
 }

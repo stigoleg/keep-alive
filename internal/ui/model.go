@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/stigoleg/keep-alive/internal/keepalive"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,7 +17,6 @@ const (
 	stateMenu state = iota
 	stateTimedInput
 	stateRunning
-	stateHelp
 )
 
 // Model holds the current state of the UI, including user input and keep-alive state.
@@ -30,6 +30,8 @@ type Model struct {
 	Duration     time.Duration
 	ShowHelp     bool
 	version      string
+	Keys         KeyMap
+	Help         help.Model
 }
 
 // InitialModel returns the initial model for the TUI.
@@ -40,6 +42,8 @@ func InitialModel() Model {
 		Input:     "",
 		KeepAlive: &keepalive.Keeper{},
 		ShowHelp:  false,
+		Keys:      DefaultKeys(),
+		Help:      NewHelpModel(),
 	}
 }
 

@@ -78,6 +78,9 @@ func DefaultStyle() Style {
 			BorderForeground(defaultColors.Highlight).
 			Padding(1, 2),
 
+		// Note: Bubbles help footer has its own styling; keep a light border
+		// and spacing consistent with the rest of the UI via Current.Help.
+
 		Error: base.
 			Foreground(lipgloss.Color("#FAFAFA")).
 			Border(lipgloss.RoundedBorder()).
