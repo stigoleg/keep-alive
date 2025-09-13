@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/timer"
 	"github.com/stigoleg/keep-alive/internal/keepalive"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -34,6 +36,8 @@ type Model struct {
 	version            string
 	Keys               KeyMap
 	Help               help.Model
+	timer              timer.Model
+	progress           progress.Model
 }
 
 // InitialModel returns the initial model for the TUI.
@@ -47,6 +51,7 @@ func InitialModel() Model {
 		ShowHelp:           false,
 		Keys:               DefaultKeys(),
 		Help:               NewHelpModel(),
+		progress:           progress.New(progress.WithDefaultGradient(), progress.WithWidth(48)),
 	}
 }
 
@@ -57,6 +62,7 @@ func InitialModelWithDuration(minutes int) Model {
 	m.State = stateRunning
 	m.StartTime = time.Now()
 	m.Duration = time.Duration(minutes) * time.Minute
+	m.timer = timer.NewWithInterval(m.Duration, time.Second/10)
 
 	// Start the keep-alive process
 	err := m.KeepAlive.StartTimed(time.Duration(minutes) * time.Minute)
@@ -72,7 +78,12 @@ func InitialModelWithDuration(minutes int) Model {
 // Init implements tea.Model
 func (m Model) Init() tea.Cmd {
 	if m.State == stateRunning {
-		return tick()
+		if m.Duration > 0 {
+			return tea.Batch(
+				m.timer.Init(),
+				m.progress.SetPercent(0),
+			)
+		}
 	}
 	return nil
 }

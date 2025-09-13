@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/timer"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stigoleg/keep-alive/internal/util"
 )
@@ -14,6 +16,11 @@ type tickMsg time.Time
 // Update handles messages and updates the model accordingly.
 func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
 	if m.ShowHelp {
+		// Still process timer messages so progress and timeout continue under the overlay
+		switch msg.(type) {
+		case timer.TickMsg, timer.TimeoutMsg:
+			return handleRunningState(msg, m)
+		}
 		return handleHelpState(msg, m)
 	}
 
@@ -158,17 +165,61 @@ func handleTimedInputSubmit(m Model) (Model, tea.Cmd) {
 	m.State = stateRunning
 	m.StartTime = time.Now()
 	m.Duration = dur
+	m.timer = timer.NewWithInterval(dur, time.Second/10)
 	m.ErrorMessage = "" // Clear any previous error message
-	return m, tick()
+	return m, tea.Batch(
+		m.timer.Init(),
+		m.progress.SetPercent(0),
+	)
 }
 
 // handleRunningState handles messages in the running state
 func handleRunningState(msg tea.Msg, m Model) (Model, tea.Cmd) {
+	// Always let progress process messages so SetPercent's internal messages are applied
+	var cmds []tea.Cmd
+	if pm := msg; pm != nil {
+		var pc tea.Cmd
+		var newProg tea.Model
+		newProg, pc = m.progress.Update(pm)
+		if pc != nil {
+			cmds = append(cmds, pc)
+		}
+		if np, ok := newProg.(progress.Model); ok {
+			m.progress = np
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return handleRunningKeyMsg(msg, m)
 	case tickMsg:
 		return handleTick(m)
+	case timer.TickMsg:
+		var tcmd tea.Cmd
+		m.timer, tcmd = m.timer.Update(msg)
+		if tcmd != nil {
+			cmds = append(cmds, tcmd)
+		}
+		if m.Duration > 0 {
+			remaining := time.Until(m.StartTime.Add(m.Duration))
+			if remaining < 0 {
+				remaining = 0
+			}
+			percent := 1 - (float64(remaining) / float64(m.Duration))
+			if percent < 0 {
+				percent = 0
+			}
+			if percent > 1 {
+				percent = 1
+			}
+			cmds = append(cmds, m.progress.SetPercent(percent))
+		}
+		return m, tea.Batch(cmds...)
+	case timer.TimeoutMsg:
+		return handleQuit(m)
+	}
+	if len(cmds) > 0 {
+		return m, tea.Batch(cmds...)
 	}
 	return m, nil
 }
@@ -191,7 +242,7 @@ func handleTick(m Model) (Model, tea.Cmd) {
 	if m.Duration > 0 && time.Since(m.StartTime) >= m.Duration {
 		return handleQuit(m)
 	}
-	return m, tick()
+	return m, nil
 }
 
 // cleanup stops the keep-alive process and resets the model state
@@ -205,6 +256,9 @@ func cleanup(m Model) (Model, error) {
 	m.Duration = 0
 	m.StartTime = time.Time{}
 	m.ErrorMessage = ""
+	// Reset timer and progress models
+	m.timer = timer.Model{}
+	m.progress = progress.New(progress.WithDefaultGradient(), progress.WithWidth(64))
 
 	return m, nil
 }
@@ -229,8 +283,6 @@ func handleQuit(m Model) (Model, tea.Cmd) {
 	return cleanedModel, tea.Quit
 }
 
-func tick() tea.Cmd {
-	return tea.Tick(time.Millisecond*50, func(t time.Time) tea.Msg {
-		return tickMsg(t)
-	})
+func tick() tea.Cmd { // deprecated
+	return nil
 }
