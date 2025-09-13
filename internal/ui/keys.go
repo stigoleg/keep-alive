@@ -90,7 +90,7 @@ func (s stateKeyMap) ShortHelp() []key.Binding {
 	case stateMenu:
 		return []key.Binding{s.keys.Up, s.keys.Down, s.keys.Select, s.keys.ToggleHelp, s.keys.Quit}
 	case stateTimedInput:
-		return []key.Binding{s.keys.Submit, s.keys.Backspace, s.keys.Back, s.keys.ToggleHelp, s.keys.Quit}
+		return []key.Binding{s.keys.Submit, s.keys.Backspace, s.keys.Back, s.keys.Quit}
 	case stateRunning:
 		return []key.Binding{s.keys.Stop, s.keys.Quit, s.keys.ToggleHelp}
 	default:
@@ -104,7 +104,7 @@ func (s stateKeyMap) FullHelp() [][]key.Binding {
 	case stateMenu:
 		return [][]key.Binding{{s.keys.Up, s.keys.Down, s.keys.Select}, {s.keys.ToggleHelp, s.keys.Quit}}
 	case stateTimedInput:
-		return [][]key.Binding{{s.keys.Submit, s.keys.Backspace, s.keys.Back}, {s.keys.ToggleHelp, s.keys.Quit}}
+		return [][]key.Binding{{s.keys.Submit, s.keys.Backspace, s.keys.Back}, {s.keys.Quit}}
 	case stateRunning:
 		return [][]key.Binding{{s.keys.Stop, s.keys.Quit}, {s.keys.ToggleHelp}}
 	default:

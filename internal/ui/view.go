@@ -75,13 +75,15 @@ func timedInputView(m Model) string {
 	b.WriteString(Current.Title.Render("Enter Duration"))
 	b.WriteString("\n\n")
 
-	b.WriteString(Current.Unselected.Render("Enter duration in minutes:"))
+	b.WriteString(Current.Unselected.Render("Enter minutes or duration (e.g., 30 or 2h30m):"))
 	b.WriteString("\n")
-	input := m.Input
-	if input == "" {
-		input = " "
+
+	// Render input component
+	inputView := m.textInput.View()
+	if strings.TrimSpace(inputView) == "" {
+		inputView = " "
 	}
-	b.WriteString(Current.InputBox.Render(input))
+	b.WriteString(Current.InputBox.Render(inputView))
 	b.WriteString("\n\n")
 
 	if m.ErrorMessage != "" {

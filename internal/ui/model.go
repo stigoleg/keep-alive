@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/stigoleg/keep-alive/internal/keepalive"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,36 +22,38 @@ const (
 
 // Model holds the current state of the UI, including user input and keep-alive state.
 type Model struct {
-	State        state
-	Selected     int
-	Input        string
-	KeepAlive    *keepalive.Keeper
-	ErrorMessage string
-	StartTime    time.Time
-	Duration     time.Duration
-	ShowHelp     bool
-	version      string
-	Keys         KeyMap
-	Help         help.Model
+	State              state
+	Selected           int
+	textInput          textinput.Model
+	durationStringMode bool
+	KeepAlive          *keepalive.Keeper
+	ErrorMessage       string
+	StartTime          time.Time
+	Duration           time.Duration
+	ShowHelp           bool
+	version            string
+	Keys               KeyMap
+	Help               help.Model
 }
 
 // InitialModel returns the initial model for the TUI.
 func InitialModel() Model {
 	return Model{
-		State:     stateMenu,
-		Selected:  0,
-		Input:     "",
-		KeepAlive: &keepalive.Keeper{},
-		ShowHelp:  false,
-		Keys:      DefaultKeys(),
-		Help:      NewHelpModel(),
+		State:              stateMenu,
+		Selected:           0,
+		textInput:          newMinutesTextInput(),
+		durationStringMode: false,
+		KeepAlive:          &keepalive.Keeper{},
+		ShowHelp:           false,
+		Keys:               DefaultKeys(),
+		Help:               NewHelpModel(),
 	}
 }
 
 // InitialModelWithDuration returns a model initialized with a specific duration and starts running.
 func InitialModelWithDuration(minutes int) Model {
 	m := InitialModel()
-	m.Input = strconv.Itoa(minutes)
+	m.textInput.SetValue(strconv.Itoa(minutes))
 	m.State = stateRunning
 	m.StartTime = time.Now()
 	m.Duration = time.Duration(minutes) * time.Minute
@@ -106,4 +109,14 @@ func (m *Model) SetVersion(version string) {
 // Version returns the current version
 func (m Model) Version() string {
 	return m.version
+}
+
+// newMinutesTextInput constructs a focused text input configured for minute entry.
+func newMinutesTextInput() textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = "e.g. 30 or 2h30m"
+	ti.CharLimit = 16
+	ti.Width = 20
+	ti.Focus()
+	return ti
 }

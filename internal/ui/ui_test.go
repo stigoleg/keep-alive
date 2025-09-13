@@ -21,9 +21,6 @@ func TestInitialModel(t *testing.T) {
 	if m.Selected != 0 {
 		t.Error("expected initial selected to be 0")
 	}
-	if m.Input != "" {
-		t.Error("expected initial input to be empty")
-	}
 	if m.ErrorMessage != "" {
 		t.Error("expected initial error message to be empty")
 	}
@@ -101,9 +98,10 @@ func TestUpdate(t *testing.T) {
 func TestTimedInputView(t *testing.T) {
 	m := Model{
 		State:     stateTimedInput,
-		Input:     "5",
 		KeepAlive: &keepalive.Keeper{},
 	}
+	m.textInput = newMinutesTextInput()
+	m.textInput.SetValue("5")
 	view := View(m)
 
 	if !strings.Contains(view, "minutes") {
@@ -111,6 +109,26 @@ func TestTimedInputView(t *testing.T) {
 	}
 	if !strings.Contains(view, "5") {
 		t.Error("expected view to show input value")
+	}
+}
+
+func TestTimedInputValidationErrors(t *testing.T) {
+	// Empty input
+	m := Model{State: stateTimedInput, KeepAlive: &keepalive.Keeper{}}
+	m.textInput = newMinutesTextInput()
+	m.textInput.SetValue("")
+	got, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
+	if got.ErrorMessage == "" {
+		t.Error("expected error for empty input")
+	}
+
+	// Zero minutes
+	m2 := Model{State: stateTimedInput, KeepAlive: &keepalive.Keeper{}}
+	m2.textInput = newMinutesTextInput()
+	m2.textInput.SetValue("0")
+	got2, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m2)
+	if !strings.Contains(got2.ErrorMessage, "Invalid Input") {
+		t.Error("expected invalid input error for zero")
 	}
 }
 

@@ -1,12 +1,11 @@
 package ui
 
 import (
-	"strconv"
 	"time"
-	"unicode"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stigoleg/keep-alive/internal/util"
 )
 
 // tickMsg is sent when the countdown timer ticks
@@ -90,8 +89,8 @@ func handleMenuSelection(m Model) (Model, tea.Cmd) {
 		m.Duration = 0
 	case 1:
 		m.State = stateTimedInput
-		m.Input = ""
 		m.ErrorMessage = ""
+		m.textInput = newMinutesTextInput()
 	case 2:
 		return handleQuit(m)
 	}
@@ -110,50 +109,55 @@ func handleTimedInputState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 // handleTimedInputKeyMsg handles keyboard input in the timed input state
 func handleTimedInputKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 	switch {
-	case key.Matches(msg, m.Keys.ToggleHelp):
-		m.ShowHelp = true
 	case key.Matches(msg, m.Keys.Back):
 		m.State = stateMenu
-		m.Input = ""
 		m.ErrorMessage = ""
-	case key.Matches(msg, m.Keys.Submit):
+		return m, nil
+	case key.Matches(msg, m.Keys.Submit) || msg.Type == tea.KeyEnter:
 		return handleTimedInputSubmit(m)
-	case msg.Type == tea.KeyEnter:
-		// Fallback for tests sending KeyEnter type
-		return handleTimedInputSubmit(m)
-	case key.Matches(msg, m.Keys.Backspace):
-		if len(m.Input) > 0 {
-			m.Input = m.Input[:len(m.Input)-1]
-		}
-	default:
-		if len(msg.String()) == 1 && unicode.IsDigit(rune(msg.String()[0])) {
-			m.Input += msg.String()
-		}
 	}
-	return m, nil
+
+	// Route remaining input to text input component (allow letters like h/m)
+	var cmd tea.Cmd
+	m.textInput, cmd = m.textInput.Update(msg)
+
+	// Minimal realtime feedback
+	value := m.textInput.Value()
+	if value == "" {
+		m.ErrorMessage = "Duration Required • Enter minutes or duration (e.g., 30 or 2h30m)"
+	} else {
+		m.ErrorMessage = ""
+	}
+
+	return m, cmd
 }
 
 // handleTimedInputSubmit processes the submitted duration
 func handleTimedInputSubmit(m Model) (Model, tea.Cmd) {
-	if m.Input == "" {
-		m.ErrorMessage = "Duration Required • Please enter the number of minutes"
+	value := m.textInput.Value()
+	if value == "" {
+		m.ErrorMessage = "Duration Required • Enter minutes or duration (e.g., 30 or 2h30m)"
 		return m, nil
 	}
 
-	minutes, err := strconv.Atoi(m.Input)
-	if err != nil || minutes <= 0 {
+	dur, err := util.ParseDuration(value)
+	if err != nil {
+		m.ErrorMessage = err.Error()
+		return m, nil
+	}
+	if dur <= 0 {
 		m.ErrorMessage = "Invalid Input • Please enter a positive number"
 		return m, nil
 	}
 
-	if err := m.KeepAlive.StartTimed(time.Duration(minutes) * time.Minute); err != nil {
+	if err := m.KeepAlive.StartTimed(dur); err != nil {
 		m.ErrorMessage = "System Error • " + err.Error()
 		return m, nil
 	}
 
 	m.State = stateRunning
 	m.StartTime = time.Now()
-	m.Duration = time.Duration(minutes) * time.Minute
+	m.Duration = dur
 	m.ErrorMessage = "" // Clear any previous error message
 	return m, tick()
 }
@@ -198,7 +202,6 @@ func cleanup(m Model) (Model, error) {
 
 	// Reset all state
 	m.State = stateMenu
-	m.Input = ""
 	m.Duration = 0
 	m.StartTime = time.Time{}
 	m.ErrorMessage = ""
