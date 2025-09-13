@@ -4,6 +4,7 @@ package platform
 
 import (
 	"context"
+	"log"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -18,6 +19,7 @@ type darwinKeepAlive struct {
 	wg           sync.WaitGroup
 	isRunning    bool
 	activityTick *time.Ticker
+	activeMethod string
 }
 
 // Start initiates the keep-alive functionality
@@ -31,6 +33,17 @@ func (k *darwinKeepAlive) Start(ctx context.Context) error {
 
 	// Create a cancellable context
 	ctx, k.cancel = context.WithCancel(ctx)
+
+	// Capability probes
+	if _, err := exec.LookPath("caffeinate"); err != nil {
+		k.cancel()
+		return err
+	}
+	pmsetAvailable := true
+	if _, err := exec.LookPath("pmset"); err != nil {
+		pmsetAvailable = false
+		log.Printf("darwin: pmset not available; proceeding without pmset touch assertion")
+	}
 
 	// Start caffeinate with comprehensive flags
 	k.cmd = exec.CommandContext(ctx, "caffeinate", "-s", "-d", "-m", "-i", "-u")
@@ -63,13 +76,30 @@ func (k *darwinKeepAlive) Start(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-k.activityTick.C:
-				// Assert user activity using pmset
-				exec.Command("pmset", "touch").Run()
+				// Assert user activity using pmset when available
+				if pmsetAvailable {
+					exec.Command("pmset", "touch").Run()
+				}
 				// Additional caffeinate touch
 				exec.Command("caffeinate", "-u", "-t", "1").Run()
 			}
 		}
 	}()
+
+	if pmsetAvailable {
+		// Best-effort verification of assertion presence
+		if out, err := exec.Command("pmset", "-g", "assertions").CombinedOutput(); err == nil {
+			log.Printf("darwin: started keep-alive; pmset assertions bytes=%d", len(out))
+		} else {
+			log.Printf("darwin: pmset assertions check failed: %v", err)
+		}
+	}
+
+	k.activeMethod = "caffeinate"
+	if pmsetAvailable {
+		k.activeMethod = "caffeinate+pmset"
+	}
+	log.Printf("darwin: active method: %s", k.activeMethod)
 
 	k.isRunning = true
 	return nil
@@ -84,18 +114,21 @@ func (k *darwinKeepAlive) killProcess() {
 
 	// Try SIGTERM first
 	if err := k.cmd.Process.Signal(syscall.SIGTERM); err == nil {
-		// Give it a short time to terminate gracefully
+		// Give it time to terminate gracefully with backoff
 		done := make(chan struct{})
 		go func() {
 			k.cmd.Process.Wait()
 			close(done)
 		}()
 
-		select {
-		case <-done:
-			return
-		case <-time.After(100 * time.Millisecond):
-			// Process didn't terminate gracefully
+		timeouts := []time.Duration{100 * time.Millisecond, 200 * time.Millisecond, 200 * time.Millisecond}
+		for _, to := range timeouts {
+			select {
+			case <-done:
+				return
+			case <-time.After(to):
+				// continue waiting/backing off
+			}
 		}
 	}
 
@@ -130,6 +163,7 @@ func (k *darwinKeepAlive) Stop() error {
 	k.wg.Wait()
 
 	k.isRunning = false
+	log.Printf("darwin: stopped; cleanup complete")
 	return nil
 }
 

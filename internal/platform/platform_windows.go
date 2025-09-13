@@ -4,6 +4,7 @@ package platform
 
 import (
 	"context"
+	"log"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -28,6 +29,7 @@ type windowsKeepAlive struct {
 	wg           sync.WaitGroup
 	isRunning    bool
 	activityTick *time.Ticker
+	activeMethod string
 }
 
 func setWindowsKeepAlive() error {
@@ -87,7 +89,11 @@ func (k *windowsKeepAlive) Start(ctx context.Context) error {
 			k.cancel()
 			return err
 		}
+		k.activeMethod = "PowerShell"
+	} else {
+		k.activeMethod = "SetThreadExecutionState"
 	}
+	log.Printf("windows: active method: %s", k.activeMethod)
 
 	// Start periodic activity simulation
 	k.activityTick = time.NewTicker(30 * time.Second)

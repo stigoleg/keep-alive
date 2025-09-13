@@ -3,6 +3,7 @@ package keepalive
 import (
 	"context"
 	"errors"
+	"log"
 	"sync"
 	"time"
 
@@ -55,6 +56,7 @@ func (k *Keeper) StartIndefinite() error {
 	}
 
 	k.running = true
+	log.Printf("keeper: started (indefinite)")
 	return nil
 }
 
@@ -91,6 +93,7 @@ func (k *Keeper) StartTimed(d time.Duration) error {
 		k.Stop()
 	})
 
+	log.Printf("keeper: started (timed=%s)", d)
 	return nil
 }
 
@@ -120,6 +123,7 @@ func (k *Keeper) Stop() error {
 	}
 
 	k.running = false
+	log.Printf("keeper: stopped")
 	return nil
 }
 

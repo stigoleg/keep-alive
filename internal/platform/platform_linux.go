@@ -4,19 +4,30 @@ package platform
 
 import (
 	"context"
+	"fmt"
+	"log"
+	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
 
 // linuxKeepAlive implements the KeepAlive interface for Linux
 type linuxKeepAlive struct {
-	mu           sync.Mutex
-	cmd          *exec.Cmd
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
-	isRunning    bool
-	activityTick *time.Ticker
+	mu               sync.Mutex
+	cmd              *exec.Cmd
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
+	isRunning        bool
+	activityTick     *time.Ticker
+	activeMethod     string
+	prevDPMS         string
+	prevTimeout      int
+	prevCycle        int
+	prevGSettings    map[string]string
+	xdotoolAvailable bool
+	xsetAvailable    bool
 }
 
 // trySystemdInhibit attempts to use systemd-inhibit
@@ -44,23 +55,45 @@ func tryXsetMethod() error {
 	return nil
 }
 
-// tryGnomeMethod attempts to use gsettings to prevent idle
-func tryGnomeMethod() error {
-	settings := []struct {
-		key   string
-		value string
-	}{
-		{"org.gnome.desktop.session idle-delay", "0"},
-		{"org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type", "nothing"},
-		{"org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type", "nothing"},
-	}
+func hasCommand(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
 
-	for _, s := range settings {
-		if err := exec.Command("gsettings", "set", s.key, s.value).Run(); err != nil {
-			return err
+func readXsetState() (dpms string, timeout int, cycle int, err error) {
+	out, err := exec.Command("xset", "-q").CombinedOutput()
+	if err != nil {
+		return "", 0, 0, err
+	}
+	lines := strings.Split(string(out), "\n")
+	dpms = "on"
+	timeout = -1
+	cycle = -1
+	for _, line := range lines {
+		if strings.Contains(line, "DPMS is") {
+			if strings.Contains(line, "Disabled") {
+				dpms = "off"
+			} else {
+				dpms = "on"
+			}
+		}
+		if strings.Contains(line, "timeout:") && strings.Contains(line, "cycle:") {
+			var t, c int
+			_, _ = fmt.Sscanf(line, "%*s %*s %d %*s %d", &t, &c)
+			if t > 0 || c > 0 {
+				timeout, cycle = t, c
+			}
 		}
 	}
-	return nil
+	return dpms, timeout, cycle, nil
+}
+
+func gsettingsGet(schema, key string) (string, error) {
+	out, err := exec.Command("gsettings", "get", schema, key).CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // Start initiates the keep-alive functionality
@@ -75,24 +108,66 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 	// Create a cancellable context
 	ctx, k.cancel = context.WithCancel(ctx)
 
-	// Try systemd-inhibit first
-	cmd, err := trySystemdInhibit(ctx)
-	if err == nil {
-		k.cmd = cmd
-		k.wg.Add(1)
-		go func() {
-			defer k.wg.Done()
-			k.cmd.Wait()
-		}()
-	} else {
-		// Fallback to xset and GNOME methods
-		if err := tryXsetMethod(); err != nil {
-			// If xset fails, try GNOME method
-			if err := tryGnomeMethod(); err != nil {
+	// Capability probing and selection
+	hasSystemd := hasCommand("systemd-inhibit")
+	hasXset := hasCommand("xset") && os.Getenv("DISPLAY") != ""
+	hasGsettings := hasCommand("gsettings")
+	k.xdotoolAvailable = hasCommand("xdotool")
+	k.xsetAvailable = hasXset
+
+	if hasSystemd {
+		cmd, err := trySystemdInhibit(ctx)
+		if err == nil {
+			k.cmd = cmd
+			k.activeMethod = "systemd-inhibit"
+			log.Printf("linux: active method: %s", k.activeMethod)
+			k.wg.Add(1)
+			go func() {
+				defer k.wg.Done()
+				k.cmd.Wait()
+			}()
+		} else {
+			log.Printf("linux: systemd-inhibit failed: %v", err)
+		}
+	}
+
+	if k.cmd == nil && hasXset {
+		if dpms, t, c, err := readXsetState(); err == nil {
+			k.prevDPMS, k.prevTimeout, k.prevCycle = dpms, t, c
+		} else {
+			log.Printf("linux: failed reading xset state: %v", err)
+		}
+		if err := tryXsetMethod(); err == nil {
+			k.activeMethod = "xset"
+			log.Printf("linux: active method: %s (DISPLAY=%s, xdotool=%v)", k.activeMethod, os.Getenv("DISPLAY"), k.xdotoolAvailable)
+		} else {
+			log.Printf("linux: xset method failed: %v", err)
+		}
+	}
+
+	if k.activeMethod == "" && hasGsettings {
+		k.prevGSettings = make(map[string]string)
+		toSet := []struct{ schema, key, value string }{
+			{"org.gnome.desktop.session", "idle-delay", "0"},
+			{"org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-type", "'nothing'"},
+			{"org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-type", "'nothing'"},
+		}
+		for _, s := range toSet {
+			if prev, err := gsettingsGet(s.schema, s.key); err == nil {
+				k.prevGSettings[s.schema+" "+s.key] = prev
+			}
+			if err := exec.Command("gsettings", "set", s.schema, s.key, s.value).Run(); err != nil {
 				k.cancel()
-				return err
+				return fmt.Errorf("linux: failed to set gsettings %s %s: %w", s.schema, s.key, err)
 			}
 		}
+		k.activeMethod = "gsettings"
+		log.Printf("linux: active method: %s", k.activeMethod)
+	}
+
+	if k.cmd == nil && k.activeMethod == "" {
+		k.cancel()
+		return fmt.Errorf("linux: no keep-alive method available (systemd-inhibit, xset with X11, or GNOME gsettings)")
 	}
 
 	// Start periodic activity simulation
@@ -107,9 +182,11 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-k.activityTick.C:
-				// Simulate user activity
-				exec.Command("xdotool", "mousemove_relative", "1", "0").Run()
-				exec.Command("xdotool", "mousemove_relative", "-1", "0").Run()
+				// Simulate user activity if available
+				if k.xdotoolAvailable {
+					exec.Command("xdotool", "mousemove_relative", "1", "0").Run()
+					exec.Command("xdotool", "mousemove_relative", "-1", "0").Run()
+				}
 			}
 		}
 	}()
@@ -135,9 +212,32 @@ func (k *linuxKeepAlive) Stop() error {
 		k.cmd.Process.Kill()
 	}
 
-	// Restore default settings
-	exec.Command("xset", "s", "on").Run()
-	exec.Command("xset", "+dpms").Run()
+	// Restore previous settings based on active method
+	if k.activeMethod == "xset" && k.xsetAvailable {
+		// Restore DPMS state
+		if k.prevDPMS == "off" {
+			exec.Command("xset", "-dpms").Run()
+		} else if k.prevDPMS == "on" {
+			exec.Command("xset", "+dpms").Run()
+		}
+		// Restore saver timeout when known
+		if k.prevTimeout > 0 {
+			exec.Command("xset", "s", fmt.Sprintf("%d", k.prevTimeout), fmt.Sprintf("%d", k.prevCycle)).Run()
+		}
+	} else if k.xsetAvailable {
+		// Best-effort defaults when not using xset
+		exec.Command("xset", "s", "on").Run()
+		exec.Command("xset", "+dpms").Run()
+	}
+
+	if k.activeMethod == "gsettings" {
+		for key, val := range k.prevGSettings {
+			parts := strings.SplitN(key, " ", 2)
+			if len(parts) == 2 {
+				exec.Command("gsettings", "set", parts[0], parts[1], val).Run()
+			}
+		}
+	}
 
 	// Wait for all goroutines to finish
 	k.wg.Wait()
