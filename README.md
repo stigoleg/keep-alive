@@ -18,7 +18,21 @@ A lightweight, cross-platform utility to prevent your system from going to sleep
 
 ## Installation
 
-Download the latest binary for your platform from the [GitHub releases page](https://github.com/stigoleg/keep-alive/releases/latest).
+Download the latest binary for your platform from the [GitHub releases page](https://github.com/stigoleg/keep-alive/releases/latest), or install via package managers below.
+
+### Homebrew (macOS/Linux)
+
+```bash
+brew tap stigoleg/homebrew-tap
+brew install keepalive
+```
+
+### Scoop (Windows)
+
+```powershell
+scoop bucket add stigoleg https://github.com/stigoleg/scoop-bucket.git
+scoop install keepalive
+```
 
 ### macOS and Linux
 
@@ -58,6 +72,28 @@ Flags:
     -c, --clock string     Time to keep system alive until (e.g., "22:00" or "10:00PM")
     -v, --version          Show version information
     -h, --help            Show help message
+```
+
+### Shell Completions
+
+Generated completions are included in release archives under `docs/completions/`:
+
+- Bash: source the file or place it into `/etc/bash_completion.d/`
+  ```bash
+  source docs/completions/keepalive.bash
+  ```
+- Zsh: copy `_keepalive` into a directory listed in `$fpath`, then `compinit`
+- Fish: copy `keepalive.fish` to `~/.config/fish/completions/`
+
+### Man Page
+
+A minimal man page is included as `man/keepalive.1` in the archives:
+
+```bash
+sudo mkdir -p /usr/local/share/man/man1
+sudo cp man/keepalive.1 /usr/local/share/man/man1/
+sudo mandb || true
+man keepalive
 ```
 
 The duration can be specified in two ways:

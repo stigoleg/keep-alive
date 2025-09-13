@@ -82,7 +82,9 @@ func assertWindowsBehavior(t *testing.T) {
 	cmd := exec.Command("powercfg", "/requests")
 	output, err := cmd.Output()
 	require.NoError(t, err, "should get power requests")
-	assert.Contains(t, string(output), "keep-alive")
+	out := string(output)
+	assert.Contains(t, out, "DISPLAY:")
+	assert.Contains(t, out, "SYSTEM:")
 }
 
 func assertLinuxBehavior(t *testing.T) {

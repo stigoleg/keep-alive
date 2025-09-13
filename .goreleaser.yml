@@ -1,6 +1,7 @@
 before:
   hooks:
     - go mod tidy
+    - go run ./cmd/gen-docs
 
 builds:
   - env:
@@ -29,9 +30,14 @@ archives:
       {{- if eq .Arch "amd64" }}x86_64
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - docs/completions/**
+      - man/keepalive.1
     format_overrides:
       - goos: windows
         format: zip
+
+checksum: {}
 
 changelog:
   sort: asc
@@ -46,3 +52,44 @@ release:
   github:
     owner: stigoleg
     name: keep-alive
+
+brews:
+  - name: keepalive
+    description: A lightweight, cross-platform utility to prevent system sleep
+    homepage: https://github.com/stigoleg/keep-alive
+    license: MIT
+    repository:
+      owner: stigoleg
+      name: homebrew-tap
+      token: '{{ .Env.GH_PAT }}'
+    directory: Formula
+    commit_author:
+      name: GoReleaser Bot
+      email: bot@goreleaser.com
+    install: |
+      bin.install "keepalive"
+    disable: '{{ ne .Env.PUBLISH_PACKAGE_MANAGERS "true" }}'
+
+scoops:
+  - name: keepalive
+    description: A lightweight, cross-platform utility to prevent system sleep
+    homepage: https://github.com/stigoleg/keep-alive
+    license: MIT
+    repository:
+      owner: stigoleg
+      name: scoop-bucket
+      token: '{{ .Env.GH_PAT }}'
+    disable: '{{ ne .Env.PUBLISH_PACKAGE_MANAGERS "true" }}'
+
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      sign:
+        certificate: '{{ .Env.MACOS_SIGN_P12 }}'
+        password: '{{ .Env.MACOS_SIGN_PASSWORD }}'
+      notarize:
+        issuer_id: '{{ .Env.MACOS_NOTARY_ISSUER_ID }}'
+        key_id: '{{ .Env.MACOS_NOTARY_KEY_ID }}'
+        key: '{{ .Env.MACOS_NOTARY_KEY }}'
+        wait: true
+        timeout: 20m

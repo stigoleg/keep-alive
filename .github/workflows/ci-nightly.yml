@@ -1,14 +1,13 @@
-name: CI
+name: CI Nightly (Full)
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch: {}
 
 jobs:
-  test:
-    name: Test (${{ matrix.os }})
+  test-full:
+    name: Full Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -23,5 +22,6 @@ jobs:
           cache: true
       - name: Build
         run: go build ./...
-      - name: Test (short)
-        run: go test -v -short ./...
+      - name: Test (full)
+        run: go test -v ./...
+
