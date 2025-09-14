@@ -52,7 +52,7 @@ release:
   github:
     owner: stigoleg
     name: keep-alive
-  mode: replace
+  replace_existing_artifacts: true
 
 brews:
   - name: keepalive
