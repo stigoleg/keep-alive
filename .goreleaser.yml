@@ -68,7 +68,7 @@ brews:
       email: bot@goreleaser.com
     install: |
       bin.install "keepalive"
-    skip_upload: '{{ ne .Env.PUBLISH_PACKAGE_MANAGERS "true" }}'
+    skip_upload: '{{ not (isEnvSet "PUBLISH_PACKAGE_MANAGERS") }}'
 
 scoops:
   - name: keepalive
@@ -79,7 +79,7 @@ scoops:
       owner: stigoleg
       name: scoop-bucket
       token: '{{ .Env.GH_PAT }}'
-    skip_upload: '{{ ne .Env.PUBLISH_PACKAGE_MANAGERS "true" }}'
+    skip_upload: '{{ not (isEnvSet "PUBLISH_PACKAGE_MANAGERS") }}'
 
 notarize:
   macos:
