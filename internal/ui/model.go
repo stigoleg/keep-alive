@@ -51,7 +51,7 @@ func InitialModel() Model {
 		ShowHelp:           false,
 		Keys:               DefaultKeys(),
 		Help:               NewHelpModel(),
-		progress:           progress.New(progress.WithDefaultGradient(), progress.WithWidth(48)),
+		progress:           progress.New(progress.WithDefaultGradient(), progress.WithWidth(34)),
 	}
 }
 

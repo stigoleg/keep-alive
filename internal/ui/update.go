@@ -258,7 +258,7 @@ func cleanup(m Model) (Model, error) {
 	m.ErrorMessage = ""
 	// Reset timer and progress models
 	m.timer = timer.Model{}
-	m.progress = progress.New(progress.WithDefaultGradient(), progress.WithWidth(64))
+	m.progress = progress.New(progress.WithDefaultGradient(), progress.WithWidth(34))
 
 	return m, nil
 }

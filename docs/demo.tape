@@ -4,7 +4,7 @@ Require echo
 
 Set Framerate 60
 Set TypingSpeed 0.1
-Set PlaybackSpeed 0.5
+Set PlaybackSpeed 1
 Set Shell "bash"
 Set FontSize 26
 Set Width 1200
