@@ -52,6 +52,7 @@ release:
   github:
     owner: stigoleg
     name: keep-alive
+  mode: replace
 
 brews:
   - name: keepalive
