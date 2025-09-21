@@ -11,6 +11,18 @@ import (
 	"time"
 )
 
+// runBestEffort executes a command ignoring any errors (best-effort)
+func runBestEffort(name string, args ...string) {
+	if err := exec.Command(name, args...).Run(); err != nil {
+		log.Printf("darwin: best-effort command %s failed: %v", name, err)
+	}
+}
+
+// run executes a command and returns any error
+func run(name string, args ...string) error {
+	return exec.Command(name, args...).Run()
+}
+
 // darwinKeepAlive implements the KeepAlive interface for macOS
 type darwinKeepAlive struct {
 	mu           sync.Mutex
@@ -78,10 +90,10 @@ func (k *darwinKeepAlive) Start(ctx context.Context) error {
 			case <-k.activityTick.C:
 				// Assert user activity using pmset when available
 				if pmsetAvailable {
-					exec.Command("pmset", "touch").Run()
+					runBestEffort("pmset", "touch")
 				}
 				// Additional caffeinate touch
-				exec.Command("caffeinate", "-u", "-t", "1").Run()
+				runBestEffort("caffeinate", "-u", "-t", "1")
 			}
 		}
 	}()
@@ -130,16 +142,19 @@ func (k *darwinKeepAlive) killProcess() {
 				// continue waiting/backing off
 			}
 		}
+	} else {
+		log.Printf("darwin: failed to send SIGTERM to process %d: %v", pid, err)
 	}
 
-	// Process didn't terminate with SIGTERM, try SIGKILL
-	k.cmd.Process.Kill()
+	// Process didn't terminate with SIGTERM, try SIGKILL on the process
+	if err := k.cmd.Process.Kill(); err != nil {
+		log.Printf("darwin: failed to kill process %d: %v", pid, err)
+	}
 
-	// Kill the process group as well
-	syscall.Kill(-pid, syscall.SIGKILL)
-
-	// Use pkill as a last resort
-	exec.Command("pkill", "-9", "caffeinate").Run()
+	// Kill the process group as well using negative pgid
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+		log.Printf("darwin: failed to kill process group %d: %v", pid, err)
+	}
 }
 
 // Stop terminates the keep-alive functionality

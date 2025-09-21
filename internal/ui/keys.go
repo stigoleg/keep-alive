@@ -61,8 +61,8 @@ func DefaultKeys() KeyMap {
 			key.WithHelp("⌫", "delete"),
 		),
 		Stop: key.NewBinding(
-			key.WithKeys("enter"),
-			key.WithHelp("enter", "stop"),
+			key.WithKeys("s", "esc"),
+			key.WithHelp("s/esc", "stop"),
 		),
 	}
 }

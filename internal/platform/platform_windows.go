@@ -11,6 +11,18 @@ import (
 	"time"
 )
 
+// runBestEffort executes a command ignoring any errors (best-effort)
+func runBestEffort(name string, args ...string) {
+	if err := exec.Command(name, args...).Run(); err != nil {
+		log.Printf("windows: best-effort command %s failed: %v", name, err)
+	}
+}
+
+// run executes a command and returns any error
+func run(name string, args ...string) error {
+	return exec.Command(name, args...).Run()
+}
+
 const (
 	esSystemRequired  = 0x00000001
 	esDisplayRequired = 0x00000002
@@ -51,7 +63,7 @@ func stopWindowsKeepAlive() error {
 }
 
 func setPowerShellKeepAlive() error {
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", `
+	return run("powershell", "-NoProfile", "-NonInteractive", "-Command", `
 		$code = @"
 		using System;
 		using System.Runtime.InteropServices;
@@ -65,7 +77,6 @@ func setPowerShellKeepAlive() error {
 		Add-Type -TypeDefinition $code
 		[Sleep]::SetThreadExecutionState(0x80000003)
 	`)
-	return cmd.Run()
 }
 
 // Start initiates the keep-alive functionality
