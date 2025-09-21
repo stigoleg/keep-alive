@@ -13,6 +13,18 @@ import (
 	"time"
 )
 
+// runBestEffort executes a command ignoring any errors (best-effort)
+func runBestEffort(name string, args ...string) {
+	if err := exec.Command(name, args...).Run(); err != nil {
+		log.Printf("linux: best-effort command %s failed: %v", name, err)
+	}
+}
+
+// run executes a command and returns any error
+func run(name string, args ...string) error {
+	return exec.Command(name, args...).Run()
+}
+
 // linuxKeepAlive implements the KeepAlive interface for Linux
 type linuxKeepAlive struct {
 	mu               sync.Mutex
@@ -45,11 +57,11 @@ func trySystemdInhibit(ctx context.Context) (*exec.Cmd, error) {
 // tryXsetMethod attempts to use xset to prevent screen sleep
 func tryXsetMethod() error {
 	// Disable screen saver
-	if err := exec.Command("xset", "s", "off").Run(); err != nil {
+	if err := run("xset", "s", "off"); err != nil {
 		return err
 	}
 	// Disable DPMS (Display Power Management Signaling)
-	if err := exec.Command("xset", "-dpms").Run(); err != nil {
+	if err := run("xset", "-dpms"); err != nil {
 		return err
 	}
 	return nil
@@ -156,7 +168,7 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 			if prev, err := gsettingsGet(s.schema, s.key); err == nil {
 				k.prevGSettings[s.schema+" "+s.key] = prev
 			}
-			if err := exec.Command("gsettings", "set", s.schema, s.key, s.value).Run(); err != nil {
+			if err := run("gsettings", "set", s.schema, s.key, s.value); err != nil {
 				k.cancel()
 				return fmt.Errorf("linux: failed to set gsettings %s %s: %w", s.schema, s.key, err)
 			}
@@ -184,8 +196,8 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 			case <-k.activityTick.C:
 				// Simulate user activity if available
 				if k.xdotoolAvailable {
-					exec.Command("xdotool", "mousemove_relative", "1", "0").Run()
-					exec.Command("xdotool", "mousemove_relative", "-1", "0").Run()
+					runBestEffort("xdotool", "mousemove_relative", "1", "0")
+					runBestEffort("xdotool", "mousemove_relative", "-1", "0")
 				}
 			}
 		}
@@ -216,25 +228,25 @@ func (k *linuxKeepAlive) Stop() error {
 	if k.activeMethod == "xset" && k.xsetAvailable {
 		// Restore DPMS state
 		if k.prevDPMS == "off" {
-			exec.Command("xset", "-dpms").Run()
+			runBestEffort("xset", "-dpms")
 		} else if k.prevDPMS == "on" {
-			exec.Command("xset", "+dpms").Run()
+			runBestEffort("xset", "+dpms")
 		}
 		// Restore saver timeout when known
 		if k.prevTimeout > 0 {
-			exec.Command("xset", "s", fmt.Sprintf("%d", k.prevTimeout), fmt.Sprintf("%d", k.prevCycle)).Run()
+			runBestEffort("xset", "s", fmt.Sprintf("%d", k.prevTimeout), fmt.Sprintf("%d", k.prevCycle))
 		}
 	} else if k.xsetAvailable {
 		// Best-effort defaults when not using xset
-		exec.Command("xset", "s", "on").Run()
-		exec.Command("xset", "+dpms").Run()
+		runBestEffort("xset", "s", "on")
+		runBestEffort("xset", "+dpms")
 	}
 
 	if k.activeMethod == "gsettings" {
 		for key, val := range k.prevGSettings {
 			parts := strings.SplitN(key, " ", 2)
 			if len(parts) == 2 {
-				exec.Command("gsettings", "set", parts[0], parts[1], val).Run()
+				runBestEffort("gsettings", "set", parts[0], parts[1], val)
 			}
 		}
 	}

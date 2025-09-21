@@ -187,12 +187,12 @@ func TestTimeRemaining(t *testing.T) {
 	})
 
 	// Create a keeper with a short duration
-	k := &UI{keeper: &keepalive.Keeper{}}
-	defer k.keeper.Stop() // Ensure cleanup even if test fails
+	k := &keepalive.Keeper{}
+	defer k.Stop() // Ensure cleanup even if test fails
 
 	// Start timed with a short duration
 	duration := 2 * time.Second
-	err := k.keeper.StartTimed(duration)
+	err := k.StartTimed(duration)
 	if err != nil && err.Error() == "unsupported platform" {
 		t.Skip("Skipping on unsupported platform")
 	}
@@ -208,7 +208,7 @@ func TestTimeRemaining(t *testing.T) {
 	}
 
 	// Check time remaining
-	remaining := k.keeper.TimeRemaining()
+	remaining := k.TimeRemaining()
 	if remaining > duration {
 		t.Errorf("TimeRemaining returned %v, expected <= %v", remaining, duration)
 	}
@@ -217,11 +217,11 @@ func TestTimeRemaining(t *testing.T) {
 	}
 
 	// Stop and verify cleanup
-	err = k.keeper.Stop()
+	err = k.Stop()
 	if err != nil {
 		t.Fatalf("Stop failed: %v", err)
 	}
-	if k.keeper.TimeRemaining() != 0 {
+	if k.TimeRemaining() != 0 {
 		t.Error("TimeRemaining not 0 after stop")
 	}
 }

@@ -10,9 +10,6 @@ import (
 	"github.com/stigoleg/keep-alive/internal/util"
 )
 
-// tickMsg is sent when the countdown timer ticks
-type tickMsg time.Time
-
 // Update handles messages and updates the model accordingly.
 func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
 	if m.ShowHelp {
@@ -192,8 +189,6 @@ func handleRunningState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return handleRunningKeyMsg(msg, m)
-	case tickMsg:
-		return handleTick(m)
 	case timer.TickMsg:
 		var tcmd tea.Cmd
 		m.timer, tcmd = m.timer.Update(msg)
@@ -237,14 +232,6 @@ func handleRunningKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleTick processes timer ticks in the running state
-func handleTick(m Model) (Model, tea.Cmd) {
-	if m.Duration > 0 && time.Since(m.StartTime) >= m.Duration {
-		return handleQuit(m)
-	}
-	return m, nil
-}
-
 // cleanup stops the keep-alive process and resets the model state
 func cleanup(m Model) (Model, error) {
 	if err := m.KeepAlive.Stop(); err != nil {
@@ -281,8 +268,4 @@ func handleQuit(m Model) (Model, tea.Cmd) {
 		return m, nil
 	}
 	return cleanedModel, tea.Quit
-}
-
-func tick() tea.Cmd { // deprecated
-	return nil
 }
