@@ -77,15 +77,6 @@ Flags:
 
 ### Man Page
 
-A minimal man page is included as `man/keepalive.1` in the archives:
-
-```bash
-sudo mkdir -p /usr/local/share/man/man1
-sudo cp man/keepalive.1 /usr/local/share/man/man1/
-sudo mandb || true
-man keepalive
-```
-
 The duration can be specified in two ways:
 1. Using the duration flag (-d/--duration):
    - As a time duration (e.g., "2h30m", "1h", "45m")
