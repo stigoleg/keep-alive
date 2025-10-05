@@ -74,16 +74,6 @@ Flags:
     -h, --help            Show help message
 ```
 
-### Shell Completions
-
-Generated completions are included in release archives under `docs/completions/`:
-
-- Bash: source the file or place it into `/etc/bash_completion.d/`
-  ```bash
-  source docs/completions/keepalive.bash
-  ```
-- Zsh: copy `_keepalive` into a directory listed in `$fpath`, then `compinit`
-- Fish: copy `keepalive.fish` to `~/.config/fish/completions/`
 
 ### Man Page
 
