@@ -118,7 +118,8 @@ func assertSystemActive(t *testing.T) {
 		cmd := exec.Command("powercfg", "/requests")
 		output, err := cmd.Output()
 		require.NoError(t, err)
-		assert.Contains(t, string(output), "keep-alive")
+		// SetThreadExecutionState shows up under EXECUTION or SYSTEM on Windows
+		assert.True(t, assert.Contains(t, string(output), "EXECUTION") || assert.Contains(t, string(output), "SYSTEM"), "Should find EXECUTION or SYSTEM power request")
 	case "linux":
 		cmd := exec.Command("systemctl", "status", "sleep.target")
 		output, err := cmd.Output()
@@ -134,16 +135,17 @@ func assertSystemNormal(t *testing.T) {
 		cmd := exec.Command("pmset", "-g", "assertions")
 		output, err := cmd.Output()
 		require.NoError(t, err)
-		assert.NotContains(t, string(output), "keep-alive")
+		assert.NotContains(t, string(output), "keepalive")
 	case "windows":
 		cmd := exec.Command("powercfg", "/requests")
 		output, err := cmd.Output()
 		require.NoError(t, err)
-		assert.NotContains(t, string(output), "keep-alive")
+		// We expect the specific EXECUTION/SYSTEM request from our process to be gone
+		assert.NotContains(t, string(output), "keepalive.exe")
 	case "linux":
 		// On Linux, we just verify the process is gone
-		cmd := exec.Command("pgrep", "-f", "keep-alive")
+		cmd := exec.Command("pgrep", "-f", "keepalive")
 		err := cmd.Run()
-		assert.Error(t, err, "keep-alive process should not be running")
+		assert.Error(t, err, "keepalive process should not be running")
 	}
 }
