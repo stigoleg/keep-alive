@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const appVersion = "1.3.5"
+const appVersion = "1.3.6"
 
 func main() {
 	cfg, err := config.ParseFlags(appVersion)

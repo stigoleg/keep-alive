@@ -133,14 +133,19 @@ Keep-Alive uses platform-specific APIs and techniques to prevent your system fro
 - Restores default power settings on exit
 
 ### Linux
-- Primary method: Uses `systemd-inhibit` to prevent:
-  - System idle
-  - Sleep
-  - Lid switch actions
-- Fallback methods if systemd is not available:
-  - `xset` commands to disable screen saver and DPMS
-  - GNOME settings modifications for idle prevention
-- Automatically restores all system settings on exit
+Keep-Alive uses a multi-layered approach to ensure compatibility across distributions and desktop environments:
+- **Systemd**: Uses `systemd-inhibit` (preferred) to block idle, sleep, and lid-switch actions.
+- **Desktop DBus**: Native inhibition for major desktop environments via `dbus-send` or `gdbus`:
+  - **GNOME**: via `org.gnome.SessionManager`
+  - **KDE**: via `org.freedesktop.PowerManagement.Inhibit`
+  - **XFCE**: via `org.xfce.PowerManager`
+  - **MATE**: via `org.mate.SessionManager`
+- **Freedesktop Standard**: Fallback via `org.freedesktop.ScreenSaver` for other compliant environments.
+- **Persistent Fallbacks**:
+  - **GSettings**: Temporarily adjusts GNOME power settings as a deep fallback.
+  - **X11 (xset)**: Legacy screen saver and DPMS control for X11 sessions.
+
+The application automatically restores all system settings and releases all acquired inhibitors on exit.
 
 The application is built with reliability in mind:
 1. **Process Monitoring**: Continuously monitors the keep-alive processes and automatically restarts them if they fail
@@ -159,7 +164,9 @@ When running with a timer, the application shows a countdown of the remaining ti
 ### Runtime Dependencies
 
 - **Linux**:
-  - systemd (recommended) or X11
+  - systemd (recommended)
+  - `dbus-send` or `gdbus` (typically pre-installed on Ubuntu, Fedora, etc.)
+  - `xdotool` (optional, for periodic activity simulation)
   - A terminal that supports TUI applications
 
 ### Build Dependencies

@@ -3,68 +3,40 @@
 package platform
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
+// inhibitor defines the common interface for various Linux sleep prevention methods.
+type inhibitor interface {
+	Name() string
+	Activate(ctx context.Context) error
+	Deactivate() error
+}
+
+// runVerbose executes a command, returns error and combined output (stdout+stderr)
+func runVerbose(name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	err := cmd.Run()
+	return strings.TrimSpace(buf.String()), err
+}
+
 // runBestEffort executes a command ignoring any errors (best-effort)
 func runBestEffort(name string, args ...string) {
-	if err := exec.Command(name, args...).Run(); err != nil {
-		log.Printf("linux: best-effort command %s failed: %v", name, err)
+	if out, err := runVerbose(name, args...); err != nil {
+		log.Printf("linux: best-effort command %s %s failed: %v (output: %q)", name, strings.Join(args, " "), err, out)
 	}
-}
-
-// run executes a command and returns any error
-func run(name string, args ...string) error {
-	return exec.Command(name, args...).Run()
-}
-
-// linuxKeepAlive implements the KeepAlive interface for Linux
-type linuxKeepAlive struct {
-	mu               sync.Mutex
-	cmd              *exec.Cmd
-	cancel           context.CancelFunc
-	wg               sync.WaitGroup
-	isRunning        bool
-	activityTick     *time.Ticker
-	activeMethod     string
-	prevDPMS         string
-	prevTimeout      int
-	prevCycle        int
-	prevGSettings    map[string]string
-	xdotoolAvailable bool
-	xsetAvailable    bool
-}
-
-// trySystemdInhibit attempts to use systemd-inhibit
-func trySystemdInhibit(ctx context.Context) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, "systemd-inhibit", "--what=idle:sleep:handle-lid-switch",
-		"--who=keep-alive", "--why=Prevent system sleep", "--mode=block",
-		"sleep", "infinity")
-	err := cmd.Start()
-	if err != nil {
-		return nil, err
-	}
-	return cmd, nil
-}
-
-// tryXsetMethod attempts to use xset to prevent screen sleep
-func tryXsetMethod() error {
-	// Disable screen saver
-	if err := run("xset", "s", "off"); err != nil {
-		return err
-	}
-	// Disable DPMS (Display Power Management Signaling)
-	if err := run("xset", "-dpms"); err != nil {
-		return err
-	}
-	return nil
 }
 
 func hasCommand(name string) bool {
@@ -72,43 +44,160 @@ func hasCommand(name string) bool {
 	return err == nil
 }
 
-func readXsetState() (dpms string, timeout int, cycle int, err error) {
-	out, err := exec.Command("xset", "-q").CombinedOutput()
-	if err != nil {
-		return "", 0, 0, err
-	}
-	lines := strings.Split(string(out), "\n")
-	dpms = "on"
-	timeout = -1
-	cycle = -1
-	for _, line := range lines {
-		if strings.Contains(line, "DPMS is") {
-			if strings.Contains(line, "Disabled") {
-				dpms = "off"
-			} else {
-				dpms = "on"
-			}
-		}
-		if strings.Contains(line, "timeout:") && strings.Contains(line, "cycle:") {
-			var t, c int
-			_, _ = fmt.Sscanf(line, "%*s %*s %d %*s %d", &t, &c)
-			if t > 0 || c > 0 {
-				timeout, cycle = t, c
-			}
-		}
-	}
-	return dpms, timeout, cycle, nil
+// --- systemd-inhibit strategy ---
+
+type systemdInhibitor struct {
+	cmd *exec.Cmd
 }
 
-func gsettingsGet(schema, key string) (string, error) {
-	out, err := exec.Command("gsettings", "get", schema, key).CombinedOutput()
-	if err != nil {
-		return "", err
+func (s *systemdInhibitor) Name() string { return "systemd-inhibit" }
+func (s *systemdInhibitor) Activate(ctx context.Context) error {
+	if !hasCommand("systemd-inhibit") {
+		return fmt.Errorf("systemd-inhibit command not found")
 	}
-	return strings.TrimSpace(string(out)), nil
+	s.cmd = exec.CommandContext(ctx, "systemd-inhibit",
+		"--what=idle:sleep:handle-lid-switch",
+		"--who=keep-alive",
+		"--why=User requested keep-alive",
+		"--mode=block",
+		"sleep", "infinity")
+	return s.cmd.Start()
+}
+func (s *systemdInhibitor) Deactivate() error {
+	if s.cmd != nil && s.cmd.Process != nil {
+		return s.cmd.Process.Kill()
+	}
+	return nil
 }
 
-// Start initiates the keep-alive functionality
+// --- DBus Base strategy ---
+
+type dbusStrategy struct {
+	dest   string
+	path   string
+	iface  string
+	method string
+	args   []string
+	cookie uint32
+}
+
+func (d *dbusStrategy) call(method string, args ...string) (string, error) {
+	if hasCommand("dbus-send") {
+		fullArgs := append([]string{"--print-reply", "--dest=" + d.dest, d.path, d.iface + "." + method}, args...)
+		return runVerbose("dbus-send", fullArgs...)
+	}
+	if hasCommand("gdbus") {
+		fullArgs := append([]string{"call", "--session", "--dest", d.dest, "--object-path", d.path, "--method", d.iface + "." + method}, args...)
+		return runVerbose("gdbus", fullArgs...)
+	}
+	return "", fmt.Errorf("no dbus client (dbus-send/gdbus) found")
+}
+
+func (d *dbusStrategy) parseCookie(out string) (uint32, error) {
+	// Simple parsing for both dbus-send and gdbus output (returns a uint32)
+	parts := strings.Fields(out)
+	if len(parts) > 0 {
+		lastPart := strings.TrimRight(parts[len(parts)-1], ")")
+		if val, err := strconv.ParseUint(lastPart, 10, 32); err == nil {
+			return uint32(val), nil
+		}
+	}
+	return 0, fmt.Errorf("failed to parse cookie from: %q", out)
+}
+
+type dbusInhibitor struct {
+	dbusStrategy
+	name         string
+	unInhibitArg string
+}
+
+func (d *dbusInhibitor) Name() string { return d.name }
+func (d *dbusInhibitor) Activate(ctx context.Context) error {
+	out, err := d.call(d.method, d.args...)
+	if err != nil {
+		return err
+	}
+	cookie, err := d.parseCookie(out)
+	if err != nil {
+		return err
+	}
+	d.cookie = cookie
+	return nil
+}
+
+func (d *dbusInhibitor) Deactivate() error {
+	if d.cookie == 0 {
+		return nil
+	}
+	_, err := d.call(d.unInhibitArg, "uint32:"+strconv.FormatUint(uint64(d.cookie), 10))
+	return err
+}
+
+// --- GNOME specific fallback logic ---
+
+type gsettingsInhibitor struct {
+	prevSettings map[string]string
+}
+
+func (g *gsettingsInhibitor) Name() string { return "gsettings" }
+func (g *gsettingsInhibitor) Activate(ctx context.Context) error {
+	if !hasCommand("gsettings") {
+		return fmt.Errorf("gsettings command not found")
+	}
+	g.prevSettings = make(map[string]string)
+	settings := []struct{ schema, key, value string }{
+		{"org.gnome.desktop.session", "idle-delay", "0"},
+		{"org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-type", "'nothing'"},
+		{"org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-type", "'nothing'"},
+	}
+	for _, s := range settings {
+		if out, err := runVerbose("gsettings", "get", s.schema, s.key); err == nil {
+			g.prevSettings[s.schema+" "+s.key] = out
+		}
+		if out, err := runVerbose("gsettings", "set", s.schema, s.key, s.value); err != nil {
+			return fmt.Errorf("gsettings set failed: %v (out: %q)", err, out)
+		}
+	}
+	return nil
+}
+func (g *gsettingsInhibitor) Deactivate() error {
+	for k, v := range g.prevSettings {
+		parts := strings.SplitN(k, " ", 2)
+		runBestEffort("gsettings", "set", parts[0], parts[1], v)
+	}
+	return nil
+}
+
+// --- X11 strategy ---
+
+type xsetInhibitor struct{}
+
+func (x *xsetInhibitor) Name() string { return "xset" }
+func (x *xsetInhibitor) Activate(ctx context.Context) error {
+	if !hasCommand("xset") || os.Getenv("DISPLAY") == "" {
+		return fmt.Errorf("xset not available or DISPLAY not set")
+	}
+	runBestEffort("xset", "s", "off")
+	runBestEffort("xset", "-dpms")
+	return nil
+}
+func (x *xsetInhibitor) Deactivate() error {
+	runBestEffort("xset", "s", "on")
+	runBestEffort("xset", "+dpms")
+	return nil
+}
+
+// --- Platform Implementation ---
+
+type linuxKeepAlive struct {
+	mu           sync.Mutex
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	isRunning    bool
+	activityTick *time.Ticker
+	inhibitors   []inhibitor
+}
+
 func (k *linuxKeepAlive) Start(ctx context.Context) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -117,85 +206,102 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 		return nil
 	}
 
-	// Create a cancellable context
 	ctx, k.cancel = context.WithCancel(ctx)
 
-	// Capability probing and selection
-	hasSystemd := hasCommand("systemd-inhibit")
-	hasXset := hasCommand("xset") && os.Getenv("DISPLAY") != ""
-	hasGsettings := hasCommand("gsettings")
-	k.xdotoolAvailable = hasCommand("xdotool")
-	k.xsetAvailable = hasXset
+	// Define all possible inhibitors in priority order
+	allInhibitors := []inhibitor{
+		&systemdInhibitor{},
+		&dbusInhibitor{
+			name: "dbus-gnome",
+			dbusStrategy: dbusStrategy{
+				dest:   "org.gnome.SessionManager",
+				path:   "/org/gnome/SessionManager",
+				iface:  "org.gnome.SessionManager",
+				method: "Inhibit",
+				args:   []string{"string:keep-alive", "uint32:0", "string:User requested keep-alive", "uint32:4"},
+			},
+			unInhibitArg: "Uninhibit",
+		},
+		&dbusInhibitor{
+			name: "dbus-freedesktop",
+			dbusStrategy: dbusStrategy{
+				dest:   "org.freedesktop.ScreenSaver",
+				path:   "/org/freedesktop/ScreenSaver",
+				iface:  "org.freedesktop.ScreenSaver",
+				method: "Inhibit",
+				args:   []string{"string:keep-alive", "string:Keep system awake"},
+			},
+			unInhibitArg: "UnInhibit",
+		},
+		&dbusInhibitor{
+			name: "dbus-kde",
+			dbusStrategy: dbusStrategy{
+				dest:   "org.freedesktop.PowerManagement.Inhibit",
+				path:   "/org/freedesktop/PowerManagement/Inhibit",
+				iface:  "org.freedesktop.PowerManagement.Inhibit",
+				method: "Inhibit",
+				args:   []string{"string:keep-alive", "string:Keep system awake"},
+			},
+			unInhibitArg: "UnInhibit",
+		},
+		&dbusInhibitor{
+			name: "dbus-xfce",
+			dbusStrategy: dbusStrategy{
+				dest:   "org.xfce.PowerManager",
+				path:   "/org/xfce/PowerManager",
+				iface:  "org.xfce.PowerManager",
+				method: "Inhibit",
+				args:   []string{"string:keep-alive", "string:Keep system awake"},
+			},
+			unInhibitArg: "UnInhibit",
+		},
+		&dbusInhibitor{
+			name: "dbus-mate",
+			dbusStrategy: dbusStrategy{
+				dest:   "org.mate.SessionManager",
+				path:   "/org/mate/SessionManager",
+				iface:  "org.mate.SessionManager",
+				method: "Inhibit",
+				args:   []string{"string:keep-alive", "uint32:0", "string:Keep system awake", "uint32:4"},
+			},
+			unInhibitArg: "Uninhibit",
+		},
+		&gsettingsInhibitor{},
+		&xsetInhibitor{},
+	}
 
-	if hasSystemd {
-		cmd, err := trySystemdInhibit(ctx)
-		if err == nil {
-			k.cmd = cmd
-			k.activeMethod = "systemd-inhibit"
-			log.Printf("linux: active method: %s", k.activeMethod)
-			k.wg.Add(1)
-			go func() {
-				defer k.wg.Done()
-				k.cmd.Wait()
-			}()
+	activeCount := 0
+	for _, inh := range allInhibitors {
+		if err := inh.Activate(ctx); err == nil {
+			k.inhibitors = append(k.inhibitors, inh)
+			log.Printf("linux: activated inhibitor: %s", inh.Name())
+			activeCount++
 		} else {
-			log.Printf("linux: systemd-inhibit failed: %v", err)
+			log.Printf("linux: inhibitor %s skipped: %v", inh.Name(), err)
 		}
 	}
 
-	if k.cmd == nil && hasXset {
-		if dpms, t, c, err := readXsetState(); err == nil {
-			k.prevDPMS, k.prevTimeout, k.prevCycle = dpms, t, c
-		} else {
-			log.Printf("linux: failed reading xset state: %v", err)
-		}
-		if err := tryXsetMethod(); err == nil {
-			k.activeMethod = "xset"
-			log.Printf("linux: active method: %s (DISPLAY=%s, xdotool=%v)", k.activeMethod, os.Getenv("DISPLAY"), k.xdotoolAvailable)
-		} else {
-			log.Printf("linux: xset method failed: %v", err)
-		}
-	}
-
-	if k.activeMethod == "" && hasGsettings {
-		k.prevGSettings = make(map[string]string)
-		toSet := []struct{ schema, key, value string }{
-			{"org.gnome.desktop.session", "idle-delay", "0"},
-			{"org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-type", "'nothing'"},
-			{"org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-type", "'nothing'"},
-		}
-		for _, s := range toSet {
-			if prev, err := gsettingsGet(s.schema, s.key); err == nil {
-				k.prevGSettings[s.schema+" "+s.key] = prev
-			}
-			if err := run("gsettings", "set", s.schema, s.key, s.value); err != nil {
-				k.cancel()
-				return fmt.Errorf("linux: failed to set gsettings %s %s: %w", s.schema, s.key, err)
-			}
-		}
-		k.activeMethod = "gsettings"
-		log.Printf("linux: active method: %s", k.activeMethod)
-	}
-
-	if k.cmd == nil && k.activeMethod == "" {
+	if activeCount == 0 {
 		k.cancel()
-		return fmt.Errorf("linux: no keep-alive method available (systemd-inhibit, xset with X11, or GNOME gsettings)")
+		return fmt.Errorf("linux: no keep-alive method successfully activated")
 	}
 
-	// Start periodic activity simulation
+	log.Printf("linux: started; active inhibitors: %d (Wayland=%v, DISPLAY=%q)", activeCount, os.Getenv("WAYLAND_DISPLAY") != "", os.Getenv("DISPLAY"))
+
+	// Activity simulation (best-effort movement)
 	k.activityTick = time.NewTicker(30 * time.Second)
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
 		defer k.activityTick.Stop()
 
+		xdotoolAvailable := hasCommand("xdotool")
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-k.activityTick.C:
-				// Simulate user activity if available
-				if k.xdotoolAvailable {
+				if xdotoolAvailable {
 					runBestEffort("xdotool", "mousemove_relative", "1", "0")
 					runBestEffort("xdotool", "mousemove_relative", "-1", "0")
 				}
@@ -207,7 +313,6 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop terminates the keep-alive functionality
 func (k *linuxKeepAlive) Stop() error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -220,45 +325,23 @@ func (k *linuxKeepAlive) Stop() error {
 		k.cancel()
 	}
 
-	if k.cmd != nil && k.cmd.Process != nil {
-		k.cmd.Process.Kill()
-	}
-
-	// Restore previous settings based on active method
-	if k.activeMethod == "xset" && k.xsetAvailable {
-		// Restore DPMS state
-		if k.prevDPMS == "off" {
-			runBestEffort("xset", "-dpms")
-		} else if k.prevDPMS == "on" {
-			runBestEffort("xset", "+dpms")
-		}
-		// Restore saver timeout when known
-		if k.prevTimeout > 0 {
-			runBestEffort("xset", "s", fmt.Sprintf("%d", k.prevTimeout), fmt.Sprintf("%d", k.prevCycle))
-		}
-	} else if k.xsetAvailable {
-		// Best-effort defaults when not using xset
-		runBestEffort("xset", "s", "on")
-		runBestEffort("xset", "+dpms")
-	}
-
-	if k.activeMethod == "gsettings" {
-		for key, val := range k.prevGSettings {
-			parts := strings.SplitN(key, " ", 2)
-			if len(parts) == 2 {
-				runBestEffort("gsettings", "set", parts[0], parts[1], val)
-			}
+	// Deactivate all inhibitors in reverse order
+	for i := len(k.inhibitors) - 1; i >= 0; i-- {
+		inh := k.inhibitors[i]
+		if err := inh.Deactivate(); err != nil {
+			log.Printf("linux: error deactivating inhibitor %s: %v", inh.Name(), err)
+		} else {
+			log.Printf("linux: deactivated inhibitor %s", inh.Name())
 		}
 	}
+	k.inhibitors = nil
 
-	// Wait for all goroutines to finish
 	k.wg.Wait()
-
 	k.isRunning = false
+	log.Printf("linux: stopped; cleanup complete")
 	return nil
 }
 
-// NewKeepAlive creates a new platform-specific keep-alive instance
 func NewKeepAlive() (KeepAlive, error) {
 	return &linuxKeepAlive{}, nil
 }
