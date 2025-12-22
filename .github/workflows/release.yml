@@ -48,6 +48,16 @@ jobs:
           xcrun notarytool store-credentials "$MACOS_NOTARY_PROFILE_NAME" --key "$KEY_PATH" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER_ID" --keychain $KEYCHAIN_PATH
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >>$GITHUB_ENV
 
+      - name: Verify Secret Presence
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "$GH_PAT" ]; then
+            echo "::error::GH_PAT secret is missing or empty. Please add it to your repository secrets."
+            exit 1
+          fi
+          echo "GH_PAT is set, proceeding with release..."
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
         with:
