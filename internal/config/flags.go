@@ -13,9 +13,10 @@ import (
 )
 
 type Config struct {
-	Duration    int
-	Clock       time.Time
-	ShowVersion bool
+	Duration         int
+	Clock            time.Time
+	ShowVersion      bool
+	SimulateActivity bool
 }
 
 func formatError(err error) string {
@@ -66,6 +67,9 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 	showVersion := flags.Bool("version", false, "Show version information")
 	flags.BoolVar(showVersion, "v", false, "Show version information")
 
+	simulateActivity := flags.Bool("active", false, "Simulate activity to keep chat apps active")
+	flags.BoolVar(simulateActivity, "a", false, "Simulate activity to keep chat apps active")
+
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		if err == flag.ErrHelp {
 			os.Exit(0)
@@ -109,8 +113,9 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 	}
 
 	return &Config{
-		Duration:    minutes,
-		Clock:       clockTime,
-		ShowVersion: *showVersion,
+		Duration:         minutes,
+		Clock:            clockTime,
+		ShowVersion:      *showVersion,
+		SimulateActivity: *simulateActivity,
 	}, nil
 }

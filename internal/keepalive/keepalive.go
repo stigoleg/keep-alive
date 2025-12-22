@@ -19,6 +19,8 @@ type Keeper struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	endTime time.Time
+
+	simulateActivity bool
 }
 
 // IsRunning returns whether the keep-alive is currently active
@@ -50,6 +52,7 @@ func (k *Keeper) StartIndefinite() error {
 	k.ctx, k.cancel = context.WithCancel(context.Background())
 
 	// Start the platform-specific keep-alive
+	k.keeper.SetSimulateActivity(k.simulateActivity)
 	if err := k.keeper.Start(k.ctx); err != nil {
 		k.cancel()
 		return err
@@ -82,6 +85,7 @@ func (k *Keeper) StartTimed(d time.Duration) error {
 	k.ctx, k.cancel = context.WithTimeout(context.Background(), d)
 
 	// Start the platform-specific keep-alive
+	k.keeper.SetSimulateActivity(k.simulateActivity)
 	if err := k.keeper.Start(k.ctx); err != nil {
 		k.cancel()
 		return err
@@ -145,4 +149,10 @@ func (k *Keeper) TimeRemaining() time.Duration {
 		return 0
 	}
 	return remaining
+}
+
+func (k *Keeper) SetSimulateActivity(simulate bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.simulateActivity = simulate
 }

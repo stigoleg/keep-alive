@@ -38,6 +38,7 @@ type Model struct {
 	Help               help.Model
 	timer              timer.Model
 	progress           progress.Model
+	SimulateActivity   bool
 }
 
 // InitialModel returns the initial model for the TUI.
@@ -52,6 +53,7 @@ func InitialModel() Model {
 		Keys:               DefaultKeys(),
 		Help:               NewHelpModel(),
 		progress:           progress.New(progress.WithDefaultGradient(), progress.WithWidth(34)),
+		SimulateActivity:   false,
 	}
 }
 

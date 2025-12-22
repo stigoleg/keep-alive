@@ -6,4 +6,5 @@ import "context"
 type KeepAlive interface {
 	Start(ctx context.Context) error
 	Stop() error
+	SetSimulateActivity(simulate bool)
 }

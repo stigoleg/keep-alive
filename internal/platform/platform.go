@@ -32,6 +32,8 @@ type darwinKeepAlive struct {
 	isRunning    bool
 	activityTick *time.Ticker
 	activeMethod string
+
+	simulateActivity bool
 }
 
 // Start initiates the keep-alive functionality
@@ -94,6 +96,17 @@ func (k *darwinKeepAlive) Start(ctx context.Context) error {
 				}
 				// Additional caffeinate touch
 				runBestEffort("caffeinate", "-u", "-t", "1")
+
+				if k.simulateActivity {
+					// Use osascript to jitter the mouse by 1 pixel (non-intrusive)
+					// This is a zero-dependency way to simulate HID activity on macOS
+					script := `tell application "System Events"
+						set {x, y} to mouse location of (mouse location)
+						move mouse to {x + 1, y}
+						move mouse to {x, y}
+					end tell`
+					runBestEffort("osascript", "-e", script)
+				}
 			}
 		}
 	}()
@@ -180,6 +193,12 @@ func (k *darwinKeepAlive) Stop() error {
 	k.isRunning = false
 	log.Printf("darwin: stopped; cleanup complete")
 	return nil
+}
+
+func (k *darwinKeepAlive) SetSimulateActivity(simulate bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.simulateActivity = simulate
 }
 
 // NewKeepAlive creates a new platform-specific keep-alive instance

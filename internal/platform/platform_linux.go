@@ -196,6 +196,8 @@ type linuxKeepAlive struct {
 	isRunning    bool
 	activityTick *time.Ticker
 	inhibitors   []inhibitor
+
+	simulateActivity bool
 }
 
 func (k *linuxKeepAlive) Start(ctx context.Context) error {
@@ -301,7 +303,7 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-k.activityTick.C:
-				if xdotoolAvailable {
+				if xdotoolAvailable && k.simulateActivity {
 					runBestEffort("xdotool", "mousemove_relative", "1", "0")
 					runBestEffort("xdotool", "mousemove_relative", "-1", "0")
 				}
@@ -340,6 +342,12 @@ func (k *linuxKeepAlive) Stop() error {
 	k.isRunning = false
 	log.Printf("linux: stopped; cleanup complete")
 	return nil
+}
+
+func (k *linuxKeepAlive) SetSimulateActivity(simulate bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.simulateActivity = simulate
 }
 
 func NewKeepAlive() (KeepAlive, error) {

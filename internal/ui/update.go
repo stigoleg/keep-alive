@@ -77,6 +77,9 @@ func handleMenuKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 		return handleMenuSelection(m)
 	case key.Matches(msg, m.Keys.Quit):
 		return handleQuit(m)
+	case msg.String() == "a":
+		m.SimulateActivity = !m.SimulateActivity
+		return m, nil
 	}
 	return m, nil
 }
@@ -85,6 +88,7 @@ func handleMenuKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 func handleMenuSelection(m Model) (Model, tea.Cmd) {
 	switch m.Selected {
 	case 0:
+		m.KeepAlive.SetSimulateActivity(m.SimulateActivity)
 		if err := m.KeepAlive.StartIndefinite(); err != nil {
 			m.ErrorMessage = err.Error()
 			return m, nil
@@ -154,6 +158,7 @@ func handleTimedInputSubmit(m Model) (Model, tea.Cmd) {
 		return m, nil
 	}
 
+	m.KeepAlive.SetSimulateActivity(m.SimulateActivity)
 	if err := m.KeepAlive.StartTimed(dur); err != nil {
 		m.ErrorMessage = "System Error • " + err.Error()
 		return m, nil

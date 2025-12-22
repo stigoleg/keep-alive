@@ -9,6 +9,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 // runBestEffort executes a command ignoring any errors (best-effort)
@@ -27,11 +28,30 @@ const (
 	esSystemRequired  = 0x00000001
 	esDisplayRequired = 0x00000002
 	esContinuous      = 0x80000000
+
+	inputMouse     = 0
+	mouseEventMove = 0x0001
 )
+
+type mouseInput struct {
+	dx          int32
+	dy          int32
+	mouseData   uint32
+	dwFlags     uint32
+	time        uint32
+	dwExtraInfo uintptr
+}
+
+type input struct {
+	inputType uint32
+	mi        mouseInput
+}
 
 var (
 	kernel32                    = syscall.NewLazyDLL("kernel32.dll")
 	procSetThreadExecutionState = kernel32.NewProc("SetThreadExecutionState")
+	user32                      = syscall.NewLazyDLL("user32.dll")
+	procSendInput               = user32.NewProc("SendInput")
 )
 
 // windowsKeepAlive implements the KeepAlive interface for Windows
@@ -42,6 +62,8 @@ type windowsKeepAlive struct {
 	isRunning    bool
 	activityTick *time.Ticker
 	activeMethod string
+
+	simulateActivity bool
 }
 
 func setWindowsKeepAlive() error {
@@ -82,50 +104,67 @@ func setPowerShellKeepAlive() error {
 // Start initiates the keep-alive functionality
 func (k *windowsKeepAlive) Start(ctx context.Context) error {
 	k.mu.Lock()
-	defer k.mu.Unlock()
+	while_locked := func() error {
+		if k.isRunning {
+			return nil
+		}
 
-	if k.isRunning {
+		// Create a cancellable context
+		ctx, k.cancel = context.WithCancel(ctx)
+
+		// Try primary method first
+		err := setWindowsKeepAlive()
+		if err != nil {
+			// Fall back to PowerShell method
+			err = setPowerShellKeepAlive()
+			if err != nil {
+				k.cancel()
+				return err
+			}
+			k.activeMethod = "PowerShell"
+		} else {
+			k.activeMethod = "SetThreadExecutionState"
+		}
+		log.Printf("windows: active method: %s", k.activeMethod)
+
+		// Start periodic activity simulation
+		k.activityTick = time.NewTicker(30 * time.Second)
+		k.wg.Add(1)
+		go func() {
+			defer k.wg.Done()
+			defer k.activityTick.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-k.activityTick.C:
+					// Refresh the keep-alive state
+					setWindowsKeepAlive()
+
+					if k.simulateActivity {
+						// Simulate tiny mouse move: 1 pixel right, then 1 pixel left
+						var i [2]input
+						i[0].inputType = inputMouse
+						i[0].mi = mouseInput{dx: 1, dy: 0, dwFlags: mouseEventMove}
+						i[1].inputType = inputMouse
+						i[1].mi = mouseInput{dx: -1, dy: 0, dwFlags: mouseEventMove}
+
+						procSendInput.Call(
+							uintptr(2),
+							uintptr(unsafe.Pointer(&i[0])),
+							uintptr(unsafe.Sizeof(i[0])),
+						)
+					}
+				}
+			}
+		}()
+
+		k.isRunning = true
 		return nil
 	}
-
-	// Create a cancellable context
-	ctx, k.cancel = context.WithCancel(ctx)
-
-	// Try primary method first
-	err := setWindowsKeepAlive()
-	if err != nil {
-		// Fall back to PowerShell method
-		err = setPowerShellKeepAlive()
-		if err != nil {
-			k.cancel()
-			return err
-		}
-		k.activeMethod = "PowerShell"
-	} else {
-		k.activeMethod = "SetThreadExecutionState"
-	}
-	log.Printf("windows: active method: %s", k.activeMethod)
-
-	// Start periodic activity simulation
-	k.activityTick = time.NewTicker(30 * time.Second)
-	k.wg.Add(1)
-	go func() {
-		defer k.wg.Done()
-		defer k.activityTick.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-k.activityTick.C:
-				// Refresh the keep-alive state
-				setWindowsKeepAlive()
-			}
-		}
-	}()
-
-	k.isRunning = true
-	return nil
+	defer k.mu.Unlock()
+	return while_locked()
 }
 
 // Stop terminates the keep-alive functionality
@@ -146,6 +185,12 @@ func (k *windowsKeepAlive) Stop() error {
 
 	k.isRunning = false
 	return stopWindowsKeepAlive()
+}
+
+func (k *windowsKeepAlive) SetSimulateActivity(simulate bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.simulateActivity = simulate
 }
 
 // NewKeepAlive creates a new platform-specific keep-alive instance
