@@ -7,12 +7,15 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+	"unsafe"
 )
 
 // inhibitor defines the common interface for various Linux sleep prevention methods.
@@ -187,31 +190,157 @@ func (x *xsetInhibitor) Deactivate() error {
 	return nil
 }
 
+// getLinuxIdleTime returns the system idle time on Linux using xprintidle (best-effort)
+func getLinuxIdleTime() (time.Duration, error) {
+	if !hasCommand("xprintidle") {
+		return 0, fmt.Errorf("xprintidle not found")
+	}
+	out, err := runVerbose("xprintidle")
+	if err != nil {
+		return 0, err
+	}
+	millis, err := strconv.ParseInt(out, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse xprintidle output %q: %v", out, err)
+	}
+	return time.Duration(millis) * time.Millisecond, nil
+}
+
+// --- Native uinput Simulator ---
+
+const (
+	uinputDevicePath = "/dev/uinput"
+	evSyn            = 0x00
+	evRel            = 0x02
+	relX             = 0x00
+	relY             = 0x01
+	uiSetEvbit       = 0x40045564 // _IOW('U', 100, int)
+	uiSetRelbit      = 0x40045565 // _IOW('U', 101, int)
+	uiDevCreate      = 0x5501     // _IO('U', 1)
+	uiDevDestroy     = 0x5502     // _IO('U', 2)
+)
+
+type uinputUserDev struct {
+	name [80]byte
+	id   struct {
+		bustype uint16
+		vendor  uint16
+		product uint16
+		version uint16
+	}
+	ffEffectsMax uint32
+	absmax       [64]int32
+	absmin       [64]int32
+	absfuzz      [64]int32
+	absflat      [64]int32
+}
+
+type inputEvent struct {
+	time  syscall.Timeval
+	etype uint16
+	code  uint16
+	value int32
+}
+
+type uinputSimulator struct {
+	fd uintptr
+}
+
+func (u *uinputSimulator) setup() error {
+	f, err := os.OpenFile(uinputDevicePath, os.O_WRONLY|syscall.O_NONBLOCK, 0660)
+	if err != nil {
+		return err
+	}
+	u.fd = f.Fd()
+
+	// Enable relative axes
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetEvbit), uintptr(evRel)); errno != 0 {
+		f.Close()
+		return errno
+	}
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetRelbit), uintptr(relX)); errno != 0 {
+		f.Close()
+		return errno
+	}
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetRelbit), uintptr(relY)); errno != 0 {
+		f.Close()
+		return errno
+	}
+
+	// Create device
+	var dev uinputUserDev
+	copy(dev.name[:], "keep-alive-mouse")
+	dev.id.bustype = 0x03 // BUS_USB
+	dev.id.vendor = 0x1234
+	dev.id.product = 0x5678
+
+	if _, _, errno := syscall.Syscall(syscall.SYS_WRITE, u.fd, uintptr(unsafe.Pointer(&dev)), unsafe.Sizeof(dev)); errno != 0 {
+		f.Close()
+		return errno
+	}
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiDevCreate), 0); errno != 0 {
+		f.Close()
+		return errno
+	}
+
+	return nil
+}
+
+func (u *uinputSimulator) move(dx, dy int32) {
+	events := []inputEvent{
+		{etype: evRel, code: relX, value: dx},
+		{etype: evRel, code: relY, value: dy},
+		{etype: evSyn, code: 0, value: 0},
+	}
+	for _, ev := range events {
+		syscall.Write(int(u.fd), (*[unsafe.Sizeof(ev)]byte)(unsafe.Pointer(&ev))[:])
+	}
+}
+
+func (u *uinputSimulator) close() {
+	if u.fd != 0 {
+		syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiDevDestroy), 0)
+		syscall.Close(int(u.fd))
+		u.fd = 0
+	}
+}
+
 // --- Platform Implementation ---
+
+type linuxCapabilities struct {
+	xdotoolAvailable    bool
+	xprintidleAvailable bool
+	uinputAvailable     bool
+}
 
 type linuxKeepAlive struct {
 	mu           sync.Mutex
+	ctx          context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
 	isRunning    bool
 	activityTick *time.Ticker
+	chatAppTick  *time.Ticker
 	inhibitors   []inhibitor
+	uinput       *uinputSimulator
 
 	simulateActivity bool
+
+	// random source and pattern generator for natural mouse movements
+	rnd        *rand.Rand
+	patternGen *MousePatternGenerator
 }
 
-func (k *linuxKeepAlive) Start(ctx context.Context) error {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-
-	if k.isRunning {
-		return nil
+func detectLinuxCapabilities() linuxCapabilities {
+	return linuxCapabilities{
+		xdotoolAvailable:    hasCommand("xdotool"),
+		xprintidleAvailable: hasCommand("xprintidle"),
+		uinputAvailable:     true, // Will be tested during setup
 	}
+}
 
-	ctx, k.cancel = context.WithCancel(ctx)
-
-	// Define all possible inhibitors in priority order
-	allInhibitors := []inhibitor{
+func buildLinuxInhibitors() []inhibitor {
+	return []inhibitor{
 		&systemdInhibitor{},
 		&dbusInhibitor{
 			name: "dbus-gnome",
@@ -220,7 +349,7 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 				path:   "/org/gnome/SessionManager",
 				iface:  "org.gnome.SessionManager",
 				method: "Inhibit",
-				args:   []string{"string:keep-alive", "uint32:0", "string:User requested keep-alive", "uint32:4"},
+				args:   []string{"string:keep-alive", "uint32:0", "string:User requested keep-alive", "uint32:12"},
 			},
 			unInhibitArg: "Uninhibit",
 		},
@@ -264,15 +393,19 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 				path:   "/org/mate/SessionManager",
 				iface:  "org.mate.SessionManager",
 				method: "Inhibit",
-				args:   []string{"string:keep-alive", "uint32:0", "string:Keep system awake", "uint32:4"},
+				args:   []string{"string:keep-alive", "uint32:0", "string:Keep system awake", "uint32:12"},
 			},
 			unInhibitArg: "Uninhibit",
 		},
 		&gsettingsInhibitor{},
 		&xsetInhibitor{},
 	}
+}
 
+func (k *linuxKeepAlive) activateInhibitors(ctx context.Context) (int, error) {
+	allInhibitors := buildLinuxInhibitors()
 	activeCount := 0
+
 	for _, inh := range allInhibitors {
 		if err := inh.Activate(ctx); err == nil {
 			k.inhibitors = append(k.inhibitors, inh)
@@ -284,32 +417,192 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 	}
 
 	if activeCount == 0 {
-		k.cancel()
-		return fmt.Errorf("linux: no keep-alive method successfully activated")
+		return 0, fmt.Errorf("linux: no keep-alive method successfully activated")
 	}
 
-	log.Printf("linux: started; active inhibitors: %d (Wayland=%v, DISPLAY=%q)", activeCount, os.Getenv("WAYLAND_DISPLAY") != "", os.Getenv("DISPLAY"))
+	return activeCount, nil
+}
 
-	// Activity simulation (best-effort movement)
-	k.activityTick = time.NewTicker(30 * time.Second)
+func (k *linuxKeepAlive) setupUinput() {
+	k.uinput = &uinputSimulator{}
+	if err := k.uinput.setup(); err != nil {
+		log.Printf("linux: uinput setup failed (likely permissions): %v", err)
+		k.uinput = nil
+	} else {
+		log.Printf("linux: native uinput mouse simulation activated")
+	}
+}
+
+func (k *linuxKeepAlive) startActivityTickerLocked(ctx context.Context) {
+	k.activityTick = time.NewTicker(ActivityInterval)
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
 		defer k.activityTick.Stop()
 
-		xdotoolAvailable := hasCommand("xdotool")
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-k.activityTick.C:
-				if xdotoolAvailable && k.simulateActivity {
-					runBestEffort("xdotool", "mousemove_relative", "1", "0")
-					runBestEffort("xdotool", "mousemove_relative", "-1", "0")
-				}
+				// System keep-alive refresh (no activity simulation here)
 			}
 		}
 	}()
+}
+
+func (k *linuxKeepAlive) startChatAppTickerLocked(ctx context.Context, caps linuxCapabilities) {
+	if !k.simulateActivity {
+		return
+	}
+
+	k.chatAppTick = time.NewTicker(ChatAppActivityInterval)
+	k.wg.Add(1)
+	go func() {
+		defer k.wg.Done()
+		defer k.chatAppTick.Stop()
+
+		if !caps.xprintidleAvailable {
+			log.Printf("linux: xprintidle not found; will simulate activity without idle check")
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-k.chatAppTick.C:
+				k.simulateChatAppActivity(ctx, caps)
+			}
+		}
+	}()
+}
+
+func (k *linuxKeepAlive) simulateChatAppActivity(ctx context.Context, caps linuxCapabilities) {
+	shouldSimulate := true
+	if caps.xprintidleAvailable {
+		idle, err := getLinuxIdleTime()
+		if err == nil && idle <= IdleThreshold {
+			shouldSimulate = false
+		}
+	}
+
+	if !shouldSimulate {
+		return
+	}
+
+	points := k.patternGen.GenerateShapePoints()
+	k.executeMousePattern(points, caps)
+}
+
+func (k *linuxKeepAlive) executeMousePattern(points []MousePoint, caps linuxCapabilities) {
+	// Execute pattern using available methods
+	if k.uinput != nil {
+		k.executePatternUinput(points)
+	}
+
+	if caps.xdotoolAvailable {
+		k.executePatternXdotool(points)
+	}
+
+	// Soft simulation via DBus
+	runBestEffort("dbus-send", "--dest=org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver.SimulateUserActivity")
+	runBestEffort("dbus-send", "--dest=org.gnome.ScreenSaver", "/org/gnome/ScreenSaver", "org.gnome.ScreenSaver.SimulateUserActivity")
+}
+
+func (k *linuxKeepAlive) executePatternUinput(points []MousePoint) {
+	if k.uinput == nil {
+		return
+	}
+
+	// Execute pattern with natural timing
+	for i, pt := range points {
+		dx := int32(pt.X)
+		dy := int32(pt.Y)
+		k.uinput.move(dx, dy)
+
+		distance := SegmentDistance(points, i)
+		delay := k.patternGen.MovementDelay(distance)
+		time.Sleep(delay)
+
+		if k.patternGen.ShouldPause() {
+			time.Sleep(k.patternGen.PauseDelay())
+		}
+
+		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
+			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
+			k.uinput.move(int32(midPt.X), int32(midPt.Y))
+			time.Sleep(midDelay)
+		}
+	}
+
+	// Return to origin
+	lastPt := points[len(points)-1]
+	returnDelay := k.patternGen.ReturnDelay()
+	k.uinput.move(-int32(lastPt.X), -int32(lastPt.Y))
+	time.Sleep(returnDelay)
+}
+
+func (k *linuxKeepAlive) executePatternXdotool(points []MousePoint) {
+	for i, pt := range points {
+		dx := int(pt.X)
+		dy := int(pt.Y)
+		runBestEffort("xdotool", "mousemove_relative", "--", fmt.Sprintf("%d", dx), fmt.Sprintf("%d", dy))
+
+		distance := SegmentDistance(points, i)
+		delay := k.patternGen.MovementDelay(distance)
+		time.Sleep(delay)
+
+		if k.patternGen.ShouldPause() {
+			time.Sleep(k.patternGen.PauseDelay())
+		}
+
+		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
+			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
+			runBestEffort("xdotool", "mousemove_relative", "--", fmt.Sprintf("%d", int(midPt.X)), fmt.Sprintf("%d", int(midPt.Y)))
+			time.Sleep(midDelay)
+		}
+	}
+
+	// Return to origin
+	lastPt := points[len(points)-1]
+	returnDelay := k.patternGen.ReturnDelay()
+	runBestEffort("xdotool", "mousemove_relative", "--", fmt.Sprintf("%d", -int(lastPt.X)), fmt.Sprintf("%d", -int(lastPt.Y)))
+	time.Sleep(returnDelay)
+}
+
+func (k *linuxKeepAlive) Start(ctx context.Context) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	if k.isRunning {
+		return nil
+	}
+
+	k.ctx, k.cancel = context.WithCancel(ctx)
+
+	// Initialize random source and pattern generator
+	k.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
+	k.patternGen = NewMousePatternGenerator(k.rnd)
+
+	// Activate inhibitors
+	activeCount, err := k.activateInhibitors(k.ctx)
+	if err != nil {
+		k.cancel()
+		return err
+	}
+
+	// Setup uinput if available
+	k.setupUinput()
+
+	caps := detectLinuxCapabilities()
+	if k.uinput != nil {
+		caps.uinputAvailable = true
+	}
+
+	log.Printf("linux: started; active inhibitors: %d (Wayland=%v, DISPLAY=%q)", activeCount, os.Getenv("WAYLAND_DISPLAY") != "", os.Getenv("DISPLAY"))
+
+	k.startActivityTickerLocked(k.ctx)
+	k.startChatAppTickerLocked(k.ctx, caps)
 
 	k.isRunning = true
 	return nil
@@ -338,6 +631,16 @@ func (k *linuxKeepAlive) Stop() error {
 	}
 	k.inhibitors = nil
 
+	if k.uinput != nil {
+		k.uinput.close()
+		k.uinput = nil
+	}
+
+	if k.chatAppTick != nil {
+		k.chatAppTick.Stop()
+		k.chatAppTick = nil
+	}
+
 	k.wg.Wait()
 	k.isRunning = false
 	log.Printf("linux: stopped; cleanup complete")
@@ -347,7 +650,29 @@ func (k *linuxKeepAlive) Stop() error {
 func (k *linuxKeepAlive) SetSimulateActivity(simulate bool) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
+
 	k.simulateActivity = simulate
+
+	if !k.isRunning {
+		return
+	}
+
+	if simulate {
+		// Start chat app ticker if not already running
+		if k.chatAppTick == nil {
+			caps := detectLinuxCapabilities()
+			if k.uinput != nil {
+				caps.uinputAvailable = true
+			}
+			k.startChatAppTickerLocked(k.ctx, caps)
+		}
+	} else {
+		// Stop chat app ticker
+		if k.chatAppTick != nil {
+			k.chatAppTick.Stop()
+			k.chatAppTick = nil
+		}
+	}
 }
 
 func NewKeepAlive() (KeepAlive, error) {

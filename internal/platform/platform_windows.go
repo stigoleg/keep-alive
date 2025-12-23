@@ -5,6 +5,7 @@ package platform
 import (
 	"context"
 	"log"
+	"math/rand"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -52,18 +53,52 @@ var (
 	procSetThreadExecutionState = kernel32.NewProc("SetThreadExecutionState")
 	user32                      = syscall.NewLazyDLL("user32.dll")
 	procSendInput               = user32.NewProc("SendInput")
+	procGetLastInputInfo        = user32.NewProc("GetLastInputInfo")
+	procGetTickCount            = kernel32.NewProc("GetTickCount")
 )
+
+type lastInputInfo struct {
+	cbSize uint32
+	dwTime uint32
+}
+
+func getIdleTime() (time.Duration, error) {
+	var lii lastInputInfo
+	lii.cbSize = uint32(unsafe.Sizeof(lii))
+	r1, _, err := procGetLastInputInfo.Call(uintptr(unsafe.Pointer(&lii)))
+	if r1 == 0 {
+		return 0, err
+	}
+
+	r1, _, _ = procGetTickCount.Call()
+	now := uint32(r1)
+
+	// tick count wraps every 49.7 days, this subtraction handles it correctly for uint32
+	idleMillis := now - lii.dwTime
+	return time.Duration(idleMillis) * time.Millisecond, nil
+}
+
+type windowsCapabilities struct {
+	nativeAPIAvailable  bool
+	powerShellAvailable bool
+}
 
 // windowsKeepAlive implements the KeepAlive interface for Windows
 type windowsKeepAlive struct {
 	mu           sync.Mutex
+	ctx          context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
 	isRunning    bool
 	activityTick *time.Ticker
+	chatAppTick  *time.Ticker
 	activeMethod string
 
 	simulateActivity bool
+
+	// random source and pattern generator for natural mouse movements
+	rnd        *rand.Rand
+	patternGen *MousePatternGenerator
 }
 
 func setWindowsKeepAlive() error {
@@ -101,70 +136,167 @@ func setPowerShellKeepAlive() error {
 	`)
 }
 
+func detectWindowsCapabilities() windowsCapabilities {
+	return windowsCapabilities{
+		nativeAPIAvailable:  true, // Always available on Windows
+		powerShellAvailable: hasCommandWindows("powershell"),
+	}
+}
+
+func hasCommandWindows(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func (k *windowsKeepAlive) activateKeepAliveMethod() error {
+	err := setWindowsKeepAlive()
+	if err != nil {
+		// Fall back to PowerShell method
+		err = setPowerShellKeepAlive()
+		if err != nil {
+			return err
+		}
+		k.activeMethod = "PowerShell"
+	} else {
+		k.activeMethod = "SetThreadExecutionState"
+	}
+	log.Printf("windows: active method: %s", k.activeMethod)
+	return nil
+}
+
+func (k *windowsKeepAlive) startActivityTickerLocked(ctx context.Context) {
+	k.activityTick = time.NewTicker(ActivityInterval)
+	k.wg.Add(1)
+	go func() {
+		defer k.wg.Done()
+		defer k.activityTick.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-k.activityTick.C:
+				// Refresh the keep-alive state
+				setWindowsKeepAlive()
+			}
+		}
+	}()
+}
+
+func (k *windowsKeepAlive) startChatAppTickerLocked(ctx context.Context) {
+	if !k.simulateActivity {
+		return
+	}
+
+	k.chatAppTick = time.NewTicker(ChatAppActivityInterval)
+	k.wg.Add(1)
+	go func() {
+		defer k.wg.Done()
+		defer k.chatAppTick.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-k.chatAppTick.C:
+				k.simulateChatAppActivity()
+			}
+		}
+	}()
+}
+
+func (k *windowsKeepAlive) simulateChatAppActivity() {
+	idle, err := getIdleTime()
+	if err != nil {
+		log.Printf("windows: idle detection failed: %v", err)
+		return
+	}
+
+	if idle <= IdleThreshold {
+		return
+	}
+
+	points := k.patternGen.GenerateShapePoints()
+	k.executeMousePattern(points)
+}
+
+func (k *windowsKeepAlive) executeMousePattern(points []MousePoint) {
+	for i, pt := range points {
+		dx := int32(pt.X)
+		dy := int32(pt.Y)
+
+		var inputEv input
+		inputEv.inputType = inputMouse
+		inputEv.mi = mouseInput{dx: dx, dy: dy, dwFlags: mouseEventMove}
+
+		procSendInput.Call(
+			uintptr(1),
+			uintptr(unsafe.Pointer(&inputEv)),
+			uintptr(unsafe.Sizeof(inputEv)),
+		)
+
+		distance := SegmentDistance(points, i)
+		delay := k.patternGen.MovementDelay(distance)
+		time.Sleep(delay)
+
+		if k.patternGen.ShouldPause() {
+			time.Sleep(k.patternGen.PauseDelay())
+		}
+
+		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
+			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
+			var midInput input
+			midInput.inputType = inputMouse
+			midInput.mi = mouseInput{dx: int32(midPt.X), dy: int32(midPt.Y), dwFlags: mouseEventMove}
+			procSendInput.Call(
+				uintptr(1),
+				uintptr(unsafe.Pointer(&midInput)),
+				uintptr(unsafe.Sizeof(midInput)),
+			)
+			time.Sleep(midDelay)
+		}
+	}
+
+	// Return to origin
+	lastPt := points[len(points)-1]
+	returnDelay := k.patternGen.ReturnDelay()
+	var returnInput input
+	returnInput.inputType = inputMouse
+	returnInput.mi = mouseInput{dx: -int32(lastPt.X), dy: -int32(lastPt.Y), dwFlags: mouseEventMove}
+	procSendInput.Call(
+		uintptr(1),
+		uintptr(unsafe.Pointer(&returnInput)),
+		uintptr(unsafe.Sizeof(returnInput)),
+	)
+	time.Sleep(returnDelay)
+}
+
 // Start initiates the keep-alive functionality
 func (k *windowsKeepAlive) Start(ctx context.Context) error {
 	k.mu.Lock()
-	while_locked := func() error {
-		if k.isRunning {
-			return nil
-		}
+	defer k.mu.Unlock()
 
-		// Create a cancellable context
-		ctx, k.cancel = context.WithCancel(ctx)
-
-		// Try primary method first
-		err := setWindowsKeepAlive()
-		if err != nil {
-			// Fall back to PowerShell method
-			err = setPowerShellKeepAlive()
-			if err != nil {
-				k.cancel()
-				return err
-			}
-			k.activeMethod = "PowerShell"
-		} else {
-			k.activeMethod = "SetThreadExecutionState"
-		}
-		log.Printf("windows: active method: %s", k.activeMethod)
-
-		// Start periodic activity simulation
-		k.activityTick = time.NewTicker(30 * time.Second)
-		k.wg.Add(1)
-		go func() {
-			defer k.wg.Done()
-			defer k.activityTick.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-k.activityTick.C:
-					// Refresh the keep-alive state
-					setWindowsKeepAlive()
-
-					if k.simulateActivity {
-						// Simulate tiny mouse move: 1 pixel right, then 1 pixel left
-						var i [2]input
-						i[0].inputType = inputMouse
-						i[0].mi = mouseInput{dx: 1, dy: 0, dwFlags: mouseEventMove}
-						i[1].inputType = inputMouse
-						i[1].mi = mouseInput{dx: -1, dy: 0, dwFlags: mouseEventMove}
-
-						procSendInput.Call(
-							uintptr(2),
-							uintptr(unsafe.Pointer(&i[0])),
-							uintptr(unsafe.Sizeof(i[0])),
-						)
-					}
-				}
-			}
-		}()
-
-		k.isRunning = true
+	if k.isRunning {
 		return nil
 	}
-	defer k.mu.Unlock()
-	return while_locked()
+
+	k.ctx, k.cancel = context.WithCancel(ctx)
+
+	// Initialize random source and pattern generator
+	k.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
+	k.patternGen = NewMousePatternGenerator(k.rnd)
+
+	// Activate keep-alive method
+	if err := k.activateKeepAliveMethod(); err != nil {
+		k.cancel()
+		return err
+	}
+
+	k.startActivityTickerLocked(k.ctx)
+	k.startChatAppTickerLocked(k.ctx)
+
+	k.isRunning = true
+	return nil
 }
 
 // Stop terminates the keep-alive functionality
@@ -180,7 +312,12 @@ func (k *windowsKeepAlive) Stop() error {
 		k.cancel()
 	}
 
-	// Wait for activity goroutine to finish
+	if k.chatAppTick != nil {
+		k.chatAppTick.Stop()
+		k.chatAppTick = nil
+	}
+
+	// Wait for activity goroutines to finish
 	k.wg.Wait()
 
 	k.isRunning = false
@@ -190,7 +327,25 @@ func (k *windowsKeepAlive) Stop() error {
 func (k *windowsKeepAlive) SetSimulateActivity(simulate bool) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
+
 	k.simulateActivity = simulate
+
+	if !k.isRunning {
+		return
+	}
+
+	if simulate {
+		// Start chat app ticker if not already running
+		if k.chatAppTick == nil {
+			k.startChatAppTickerLocked(k.ctx)
+		}
+	} else {
+		// Stop chat app ticker
+		if k.chatAppTick != nil {
+			k.chatAppTick.Stop()
+			k.chatAppTick = nil
+		}
+	}
 }
 
 // NewKeepAlive creates a new platform-specific keep-alive instance
