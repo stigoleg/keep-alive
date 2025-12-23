@@ -145,7 +145,8 @@ func TestSIGQUITHelper(t *testing.T) {
 
 	// Set up signal handling
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	signals := getUnixSignals()
+	signal.Notify(sigChan, signals...)
 
 	keeper := &keepalive.Keeper{}
 	err := keeper.StartIndefinite()
@@ -181,7 +182,7 @@ func TestCleanupOnSIGTSTP(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	// Send SIGTSTP
-	err = cmd.Process.Signal(syscall.SIGTSTP)
+	err = sendSIGTSTP(cmd.Process)
 	require.NoError(t, err, "should send SIGTSTP")
 
 	// Wait for process to exit
@@ -207,7 +208,8 @@ func TestSIGTSTPHelper(t *testing.T) {
 
 	// Set up signal handling
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGTSTP)
+	signals := getUnixSignalsWithSIGTSTP()
+	signal.Notify(sigChan, signals...)
 
 	keeper := &keepalive.Keeper{}
 	err := keeper.StartIndefinite()
@@ -327,7 +329,8 @@ func TestCleanupHelper(t *testing.T) {
 
 	// Set up signal handling
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	signals := getUnixSignals()
+	signal.Notify(sigChan, signals...)
 
 	keeper := &keepalive.Keeper{}
 	err := keeper.StartIndefinite()
