@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/stigoleg/keep-alive/internal/config"
@@ -58,7 +57,8 @@ func main() {
 
 	// Set up signal handling
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGTSTP)
+	signals := getSignals()
+	signal.Notify(sigChan, signals...)
 
 	// Create program with signal handling
 	p := tea.NewProgram(
@@ -74,7 +74,7 @@ func main() {
 			log.Printf("Received signal: %v", sig)
 
 			// Handle SIGTSTP (Ctrl+Z) - prevent suspension and initiate shutdown
-			if sig == syscall.SIGTSTP {
+			if isSIGTSTP(sig) {
 				log.Printf("SIGTSTP received: preventing suspension and initiating graceful shutdown")
 			}
 
@@ -123,4 +123,14 @@ func executeCleanup(p *tea.Program) {
 			p.Kill()
 		}
 	})
+}
+
+// getSignals returns the list of signals to handle based on the platform
+func getSignals() []os.Signal {
+	return getSignalsForPlatform()
+}
+
+// isSIGTSTP checks if the signal is SIGTSTP (only available on Unix)
+func isSIGTSTP(sig os.Signal) bool {
+	return isSIGTSTPForPlatform(sig)
 }
