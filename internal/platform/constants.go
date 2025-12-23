@@ -35,15 +35,14 @@ const (
 	MouseIntermediateDistanceMin = 8.0
 
 	// Movement speed factors
-	MouseSpeedFactorMin     = 0.7
-	MouseSpeedFactorMax     = 1.3
-	MouseSpeedFactorLongDist = 1.2
+	MouseSpeedFactorMin        = 0.7
+	MouseSpeedFactorMax        = 1.3
+	MouseSpeedFactorLongDist   = 1.2
 	MouseLongDistanceThreshold = 10.0
 
 	// Intermediate point parameters
 	MouseIntermediatePositionFactor = 0.4
-	MouseIntermediateJitter          = 1.5
-	MouseIntermediateSpeedMin        = 0.6
-	MouseIntermediateSpeedMax        = 1.4
+	MouseIntermediateJitter         = 1.5
+	MouseIntermediateSpeedMin       = 0.6
+	MouseIntermediateSpeedMax       = 1.4
 )
-

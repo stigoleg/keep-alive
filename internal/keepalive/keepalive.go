@@ -103,6 +103,11 @@ func (k *Keeper) StartTimed(d time.Duration) error {
 
 // Stop stops keeping the system alive
 func (k *Keeper) Stop() error {
+	return k.StopWithTimeout(0)
+}
+
+// StopWithTimeout stops keeping the system alive with a timeout
+func (k *Keeper) StopWithTimeout(timeout time.Duration) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
@@ -110,25 +115,52 @@ func (k *Keeper) Stop() error {
 		return nil
 	}
 
-	if k.timer != nil {
-		k.timer.Stop()
-		k.timer = nil
+	if timeout <= 0 {
+		timeout = 5 * time.Second
 	}
 
-	if k.cancel != nil {
-		k.cancel()
-		k.cancel = nil
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-	if k.keeper != nil {
-		if err := k.keeper.Stop(); err != nil {
+	done := make(chan error, 1)
+	go func() {
+		var err error
+		defer func() {
+			done <- err
+		}()
+
+		if k.timer != nil {
+			k.timer.Stop()
+			k.timer = nil
+		}
+
+		if k.cancel != nil {
+			k.cancel()
+			k.cancel = nil
+		}
+
+		if k.keeper != nil {
+			if stopErr := k.keeper.Stop(); stopErr != nil {
+				err = stopErr
+			}
+		}
+
+		k.running = false
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			log.Printf("keeper: stopped with error: %v", err)
 			return err
 		}
+		log.Printf("keeper: stopped")
+		return nil
+	case <-ctx.Done():
+		log.Printf("keeper: stop timeout exceeded after %v", timeout)
+		k.running = false
+		return ctx.Err()
 	}
-
-	k.running = false
-	log.Printf("keeper: stopped")
-	return nil
 }
 
 // TimeRemaining returns the remaining duration for timed mode

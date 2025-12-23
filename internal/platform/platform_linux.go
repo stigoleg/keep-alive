@@ -610,9 +610,8 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 
 func (k *linuxKeepAlive) Stop() error {
 	k.mu.Lock()
-	defer k.mu.Unlock()
-
 	if !k.isRunning {
+		k.mu.Unlock()
 		return nil
 	}
 
@@ -620,29 +619,76 @@ func (k *linuxKeepAlive) Stop() error {
 		k.cancel()
 	}
 
-	// Deactivate all inhibitors in reverse order
-	for i := len(k.inhibitors) - 1; i >= 0; i-- {
-		inh := k.inhibitors[i]
-		if err := inh.Deactivate(); err != nil {
-			log.Printf("linux: error deactivating inhibitor %s: %v", inh.Name(), err)
-		} else {
-			log.Printf("linux: deactivated inhibitor %s", inh.Name())
-		}
+	// Stop tickers first to prevent new operations
+	if k.activityTick != nil {
+		k.activityTick.Stop()
 	}
-	k.inhibitors = nil
-
-	if k.uinput != nil {
-		k.uinput.close()
-		k.uinput = nil
-	}
-
 	if k.chatAppTick != nil {
 		k.chatAppTick.Stop()
 		k.chatAppTick = nil
 	}
 
-	k.wg.Wait()
+	// Deactivate all inhibitors in reverse order, tracking failures
+	var deactivateErrors []error
+	inhibitors := make([]inhibitor, len(k.inhibitors))
+	copy(inhibitors, k.inhibitors)
+	
+	k.mu.Unlock()
+
+	// Wait for goroutines with timeout
+	done := make(chan struct{})
+	go func() {
+		k.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Printf("linux: all goroutines completed")
+	case <-time.After(2 * time.Second):
+		log.Printf("linux: warning: some goroutines did not complete within timeout")
+	}
+
+	// Deactivate inhibitors (best effort - continue even if some fail)
+	for i := len(inhibitors) - 1; i >= 0; i-- {
+		inh := inhibitors[i]
+		if err := inh.Deactivate(); err != nil {
+			log.Printf("linux: error deactivating inhibitor %s: %v", inh.Name(), err)
+			deactivateErrors = append(deactivateErrors, err)
+		} else {
+			log.Printf("linux: deactivated inhibitor %s", inh.Name())
+		}
+	}
+
+	k.mu.Lock()
+	
+	// Cleanup uinput device
+	if k.uinput != nil {
+		fdBeforeClose := k.uinput.fd
+		k.uinput.close()
+		// Verify uinput is closed by checking if fd was non-zero before close
+		if fdBeforeClose != 0 {
+			if k.uinput.fd == 0 {
+				log.Printf("linux: uinput device closed successfully")
+			} else {
+				log.Printf("linux: warning: uinput device may not have closed properly (fd=%d)", k.uinput.fd)
+			}
+		}
+		k.uinput = nil
+	}
+
+	k.inhibitors = nil
 	k.isRunning = false
+	k.ctx = nil
+	k.cancel = nil
+	k.activityTick = nil
+	k.mu.Unlock()
+
+	if len(deactivateErrors) > 0 {
+		log.Printf("linux: stopped with %d inhibitor deactivation errors", len(deactivateErrors))
+		return fmt.Errorf("linux: %d inhibitors failed to deactivate", len(deactivateErrors))
+	}
+
 	log.Printf("linux: stopped; cleanup complete")
 	return nil
 }

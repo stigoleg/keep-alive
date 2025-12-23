@@ -412,7 +412,9 @@ func (k *darwinKeepAlive) killProcessLocked() {
 	pid := k.cmd.Process.Pid
 
 	// Try SIGTERM first
-	_ = k.cmd.Process.Signal(syscall.SIGTERM)
+	if err := k.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		log.Printf("darwin: failed to send SIGTERM to caffeinate (pid %d): %v", pid, err)
+	}
 
 	// Wait briefly for clean shutdown
 	if k.waitDone != nil {
@@ -420,22 +422,56 @@ func (k *darwinKeepAlive) killProcessLocked() {
 		for _, to := range timeouts {
 			select {
 			case <-k.waitDone:
+				log.Printf("darwin: caffeinate process (pid %d) terminated cleanly", pid)
 				return
 			case <-time.After(to):
 			}
 		}
 	}
 
-	// Escalate
-	_ = k.cmd.Process.Kill()
-	_ = syscall.Kill(-pid, syscall.SIGKILL)
+	// Escalate to SIGKILL
+	log.Printf("darwin: caffeinate process (pid %d) did not terminate, sending SIGKILL", pid)
+	if err := k.cmd.Process.Kill(); err != nil {
+		log.Printf("darwin: failed to kill caffeinate process (pid %d): %v", pid, err)
+	}
+	
+	// Also try killing the process group
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+		log.Printf("darwin: failed to kill caffeinate process group (pgid %d): %v", pid, err)
+	}
 
 	if k.waitDone != nil {
 		select {
 		case <-k.waitDone:
+			log.Printf("darwin: caffeinate process (pid %d) terminated after SIGKILL", pid)
 		case <-time.After(500 * time.Millisecond):
+			log.Printf("darwin: warning: caffeinate process (pid %d) may still be running", pid)
 		}
 	}
+}
+
+// verifyProcessTerminated checks if the caffeinate process has actually terminated
+func (k *darwinKeepAlive) verifyProcessTerminated() bool {
+	if k.cmd == nil || k.cmd.Process == nil {
+		return true
+	}
+
+	pid := k.cmd.Process.Pid
+	
+	// Check if process still exists by sending signal 0 (doesn't kill, just checks)
+	err := syscall.Kill(pid, 0)
+	if err == nil {
+		log.Printf("darwin: warning: caffeinate process (pid %d) still exists", pid)
+		return false
+	}
+	
+	if err == syscall.ESRCH {
+		log.Printf("darwin: verified caffeinate process (pid %d) has terminated", pid)
+		return true
+	}
+	
+	log.Printf("darwin: could not verify caffeinate process (pid %d) status: %v", pid, err)
+	return false
 }
 
 // Stop terminates the keep alive functionality
@@ -450,21 +486,44 @@ func (k *darwinKeepAlive) Stop() error {
 		k.cancel()
 	}
 
+	// Stop tickers first to prevent new operations
+	if k.activityTick != nil {
+		k.activityTick.Stop()
+	}
+	if k.chatAppActivityTick != nil {
+		k.chatAppActivityTick.Stop()
+	}
+
 	k.killProcessLocked()
 	k.mu.Unlock()
 
-	k.wg.Wait()
+	// Wait for goroutines with timeout
+	done := make(chan struct{})
+	go func() {
+		k.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Printf("darwin: all goroutines completed")
+	case <-time.After(2 * time.Second):
+		log.Printf("darwin: warning: some goroutines did not complete within timeout")
+	}
 
 	k.mu.Lock()
+	
+	// Verify process termination
+	if !k.verifyProcessTerminated() {
+		log.Printf("darwin: warning: caffeinate process may still be running")
+	}
+
 	k.isRunning = false
 	k.cmd = nil
 	k.ctx = nil
 	k.cancel = nil
 	k.activityTick = nil
-	if k.chatAppActivityTick != nil {
-		k.chatAppActivityTick.Stop()
-		k.chatAppActivityTick = nil
-	}
+	k.chatAppActivityTick = nil
 	k.waitDone = nil
 	k.mu.Unlock()
 

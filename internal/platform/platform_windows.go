@@ -302,9 +302,8 @@ func (k *windowsKeepAlive) Start(ctx context.Context) error {
 // Stop terminates the keep-alive functionality
 func (k *windowsKeepAlive) Stop() error {
 	k.mu.Lock()
-	defer k.mu.Unlock()
-
 	if !k.isRunning {
+		k.mu.Unlock()
 		return nil
 	}
 
@@ -312,16 +311,49 @@ func (k *windowsKeepAlive) Stop() error {
 		k.cancel()
 	}
 
+	// Stop tickers first to prevent new operations
+	if k.activityTick != nil {
+		k.activityTick.Stop()
+	}
 	if k.chatAppTick != nil {
 		k.chatAppTick.Stop()
 		k.chatAppTick = nil
 	}
 
-	// Wait for activity goroutines to finish
-	k.wg.Wait()
+	k.mu.Unlock()
 
+	// Wait for activity goroutines to finish with timeout
+	done := make(chan struct{})
+	go func() {
+		k.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Printf("windows: all goroutines completed")
+	case <-time.After(2 * time.Second):
+		log.Printf("windows: warning: some goroutines did not complete within timeout")
+	}
+
+	// Reset keep-alive state
+	var stopErr error
+	if err := stopWindowsKeepAlive(); err != nil {
+		log.Printf("windows: error resetting keep-alive state: %v", err)
+		stopErr = err
+	} else {
+		log.Printf("windows: keep-alive state reset successfully")
+	}
+
+	k.mu.Lock()
 	k.isRunning = false
-	return stopWindowsKeepAlive()
+	k.ctx = nil
+	k.cancel = nil
+	k.activityTick = nil
+	k.mu.Unlock()
+
+	log.Printf("windows: stopped; cleanup complete")
+	return stopErr
 }
 
 func (k *windowsKeepAlive) SetSimulateActivity(simulate bool) {
