@@ -258,6 +258,10 @@ func handleRunningKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 		return handleQuit(m)
 	case key.Matches(msg, m.Keys.ToggleHelp):
 		m.ShowHelp = true
+	case key.Matches(msg, m.Keys.ToggleDependencyInfo):
+		if m.DependencyWarning != "" {
+			m.ShowDependencyInfo = true
+		}
 	case key.Matches(msg, m.Keys.Stop):
 		return handleStopAndReturn(m)
 	}
