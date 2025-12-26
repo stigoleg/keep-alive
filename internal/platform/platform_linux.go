@@ -183,7 +183,7 @@ func getPackageName(tool string, distro string) string {
 	// distro parameter is kept for potential future distro-specific variations
 
 	switch tool {
-	case "ydotool", "xdotool", "wtype":
+	case "ydotool", "xdotool", "wtype", "xprintidle":
 		// Package names are consistent across distributions
 		return tool
 	default:
@@ -307,6 +307,21 @@ func checkMissingDependencies(caps linuxCapabilities, displayServer string, hasU
 		if note != "" {
 			missing[len(missing)-1].Alternative = note + "\n" + alt
 		}
+	}
+
+	// Check xprintidle (X11 only, optional - used for idle detection)
+	if displayServer == "x11" && !caps.xprintidleAvailable {
+		installCmd, _ := generateInstallCommand("xprintidle", distro, pkgManager)
+		whyNeeded := "Provides idle time detection on X11 (optional, activity simulation works without it)"
+		alt := "Not needed on Wayland or if you don't need idle detection"
+		missing = append(missing, DependencyInfo{
+			Name:        "xprintidle",
+			WhyNeeded:   whyNeeded,
+			InstallCmd:  installCmd,
+			Optional:    true,
+			Available:   true,
+			Alternative: alt,
+		})
 	}
 
 	return missing
@@ -555,7 +570,12 @@ func (x *xsetInhibitor) Deactivate() error {
 }
 
 // getLinuxIdleTime returns the system idle time on Linux using xprintidle (best-effort)
+// Note: xprintidle only works on X11, not Wayland
 func getLinuxIdleTime() (time.Duration, error) {
+	displayServer := detectDisplayServer()
+	if displayServer == "wayland" {
+		return 0, fmt.Errorf("xprintidle does not work on Wayland (only X11)")
+	}
 	if !hasCommand("xprintidle") {
 		return 0, fmt.Errorf("xprintidle not found")
 	}
@@ -607,7 +627,8 @@ type inputEvent struct {
 }
 
 type uinputSimulator struct {
-	fd uintptr
+	fd   uintptr
+	file *os.File
 }
 
 func (u *uinputSimulator) setup() error {
@@ -615,21 +636,25 @@ func (u *uinputSimulator) setup() error {
 	if err != nil {
 		return err
 	}
+	u.file = f
 	u.fd = f.Fd()
 
 	// Enable relative axes
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetEvbit), uintptr(evRel)); errno != 0 {
 		f.Close()
+		u.file = nil
 		u.fd = 0
 		return errno
 	}
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetRelbit), uintptr(relX)); errno != 0 {
 		f.Close()
+		u.file = nil
 		u.fd = 0
 		return errno
 	}
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetRelbit), uintptr(relY)); errno != 0 {
 		f.Close()
+		u.file = nil
 		u.fd = 0
 		return errno
 	}
@@ -643,11 +668,13 @@ func (u *uinputSimulator) setup() error {
 
 	if _, _, errno := syscall.Syscall(syscall.SYS_WRITE, u.fd, uintptr(unsafe.Pointer(&dev)), unsafe.Sizeof(dev)); errno != 0 {
 		f.Close()
+		u.file = nil
 		u.fd = 0
 		return errno
 	}
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiDevCreate), 0); errno != 0 {
 		f.Close()
+		u.file = nil
 		u.fd = 0
 		return errno
 	}
@@ -673,9 +700,12 @@ func (u *uinputSimulator) move(dx, dy int32) error {
 func (u *uinputSimulator) close() {
 	if u.fd != 0 {
 		syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiDevDestroy), 0)
-		syscall.Close(int(u.fd))
-		u.fd = 0
 	}
+	if u.file != nil {
+		u.file.Close()
+		u.file = nil
+	}
+	u.fd = 0
 }
 
 // --- Platform Implementation ---
@@ -722,13 +752,16 @@ type linuxKeepAlive struct {
 }
 
 func detectLinuxCapabilities() linuxCapabilities {
+	displayServer := detectDisplayServer()
+	// xprintidle only works on X11, not Wayland
+	xprintidleAvailable := hasCommand("xprintidle") && displayServer == "x11"
 	return linuxCapabilities{
 		xdotoolAvailable:    hasCommand("xdotool"),
-		xprintidleAvailable: hasCommand("xprintidle"),
+		xprintidleAvailable: xprintidleAvailable,
 		uinputAvailable:     true, // Will be tested during setup
 		ydotoolAvailable:    hasCommand("ydotool"),
 		wtypeAvailable:      hasCommand("wtype"),
-		displayServer:       detectDisplayServer(),
+		displayServer:       displayServer,
 		desktopEnvironment:  detectDesktopEnvironment(),
 	}
 }
@@ -916,6 +949,60 @@ func (k *linuxKeepAlive) setupUinput() {
 		k.uinput = nil
 	} else {
 		log.Printf("linux: native uinput mouse simulation activated")
+	}
+}
+
+func (k *linuxKeepAlive) startInhibitorHealthCheck(ctx context.Context) {
+	healthCheckTicker := time.NewTicker(30 * time.Second)
+	k.wg.Add(1)
+	go func() {
+		defer k.wg.Done()
+		defer healthCheckTicker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-healthCheckTicker.C:
+				k.verifyInhibitors()
+			}
+		}
+	}()
+}
+
+func (k *linuxKeepAlive) verifyInhibitors() {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	if !k.isRunning {
+		return
+	}
+
+	for _, inh := range k.inhibitors {
+		switch v := inh.(type) {
+		case *systemdInhibitor:
+			// Verify systemd-inhibit process is still running
+			if v.cmd != nil && v.cmd.Process != nil {
+				if err := v.cmd.Process.Signal(syscall.Signal(0)); err != nil {
+					log.Printf("linux: warning: systemd-inhibit process (pid %d) is not running: %v", v.cmd.Process.Pid, err)
+					// Attempt to reactivate
+					if k.ctx != nil {
+						if reactivateErr := v.Activate(k.ctx); reactivateErr != nil {
+							log.Printf("linux: error: failed to reactivate systemd-inhibit: %v", reactivateErr)
+						} else {
+							log.Printf("linux: successfully reactivated systemd-inhibit")
+						}
+					}
+				}
+			}
+		case *dbusInhibitor:
+			// DBus inhibitors don't need periodic checks as they're session-based
+			// The cookie remains valid until explicitly uninhibited
+		case *gsettingsInhibitor:
+			// gsettings inhibitors are persistent until deactivated
+		case *xsetInhibitor:
+			// xset inhibitors are persistent until deactivated
+		}
 	}
 }
 
@@ -1123,8 +1210,9 @@ func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint) bool {
 	for i, pt := range points {
 		dx := int(pt.X)
 		dy := int(pt.Y)
-		// ydotool mousemove uses absolute coordinates by default; use -x and -y flags for relative movement
-		_, err := runVerbose("ydotool", "mousemove", "-x", fmt.Sprintf("%d", dx), "-y", fmt.Sprintf("%d", dy))
+		// ydotool mousemove with -- separator for relative movement
+		// Format: ydotool mousemove -- <dx> <dy>
+		_, err := runVerbose("ydotool", "mousemove", "--", fmt.Sprintf("%d", dx), fmt.Sprintf("%d", dy))
 		if err != nil {
 			log.Printf("linux: ydotool move failed: %v", err)
 			return false
@@ -1140,7 +1228,7 @@ func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint) bool {
 
 		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
 			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
-			_, err := runVerbose("ydotool", "mousemove", "-x", fmt.Sprintf("%d", int(midPt.X)), "-y", fmt.Sprintf("%d", int(midPt.Y)))
+			_, err := runVerbose("ydotool", "mousemove", "--", fmt.Sprintf("%d", int(midPt.X)), fmt.Sprintf("%d", int(midPt.Y)))
 			if err != nil {
 				log.Printf("linux: ydotool move failed: %v", err)
 				return false
@@ -1152,7 +1240,7 @@ func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint) bool {
 	// Return to origin
 	lastPt := points[len(points)-1]
 	returnDelay := k.patternGen.ReturnDelay()
-	_, err := runVerbose("ydotool", "mousemove", "-x", fmt.Sprintf("%d", -int(lastPt.X)), "-y", fmt.Sprintf("%d", -int(lastPt.Y)))
+	_, err := runVerbose("ydotool", "mousemove", "--", fmt.Sprintf("%d", -int(lastPt.X)), fmt.Sprintf("%d", -int(lastPt.Y)))
 	if err != nil {
 		log.Printf("linux: ydotool move failed: %v", err)
 		return false
@@ -1256,6 +1344,9 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 
 	log.Printf("linux: === End Diagnostics ===")
 	log.Printf("linux: started successfully; active inhibitors: %d", activeCount)
+
+	// Start periodic inhibitor health checks
+	k.startInhibitorHealthCheck(k.ctx)
 
 	// Activity ticker removed - inhibitors maintain state without periodic refresh
 	k.startChatAppTickerLocked(k.ctx, caps)
