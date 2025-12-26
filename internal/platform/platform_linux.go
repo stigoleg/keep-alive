@@ -20,6 +20,51 @@ import (
 	"unsafe"
 )
 
+const (
+	// Display server types
+	displayServerWayland = "wayland"
+	displayServerX11     = "x11"
+	displayServerUnknown = "unknown"
+
+	// Desktop environment types
+	desktopCosmic  = "cosmic"
+	desktopGNOME   = "gnome"
+	desktopKDE     = "kde"
+	desktopXFCE    = "xfce"
+	desktopMATE    = "mate"
+	desktopUnknown = "unknown"
+
+	// GNOME SessionManager inhibit flags
+	gnomeInhibitSuspend = 4  // Inhibit suspending the session
+	gnomeInhibitIdle    = 8  // Inhibit the session being marked as idle
+	gnomeInhibitBoth    = 12 // Inhibit both suspend and idle
+
+	// Health check and verification intervals
+	healthCheckInterval  = 30 * time.Second
+	inhibitorVerifyDelay = 100 * time.Millisecond
+	stopTimeout          = 2 * time.Second
+	activeLogInterval    = 2 * time.Minute
+
+	// uinput constants
+	uinputDevicePath = "/dev/uinput"
+	uinputBusTypeUSB = 0x03
+	uinputVendorID   = 0x1234
+	uinputProductID  = 0x5678
+	uinputDeviceName = "keep-alive-mouse"
+
+	// Linux input event types
+	evSyn = 0x00
+	evRel = 0x02
+	relX  = 0x00
+	relY  = 0x01
+
+	// uinput ioctl commands
+	uiSetEvbit   = 0x40045564 // _IOW('U', 100, int)
+	uiSetRelbit  = 0x40045565 // _IOW('U', 101, int)
+	uiDevCreate  = 0x5501     // _IO('U', 1)
+	uiDevDestroy = 0x5502     // _IO('U', 2)
+)
+
 // inhibitor defines the common interface for various Linux sleep prevention methods.
 type inhibitor interface {
 	Name() string
@@ -27,7 +72,7 @@ type inhibitor interface {
 	Deactivate() error
 }
 
-// runVerbose executes a command, returns error and combined output (stdout+stderr)
+// runVerbose executes a command and returns the combined output (stdout+stderr) and any error.
 func runVerbose(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	var buf bytes.Buffer
@@ -37,70 +82,69 @@ func runVerbose(name string, args ...string) (string, error) {
 	return strings.TrimSpace(buf.String()), err
 }
 
-// runBestEffort executes a command ignoring any errors (best-effort)
+// runBestEffort executes a command and logs any errors but does not return them (best-effort operation).
 func runBestEffort(name string, args ...string) {
 	if out, err := runVerbose(name, args...); err != nil {
 		log.Printf("linux: best-effort command %s %s failed: %v (output: %q)", name, strings.Join(args, " "), err, out)
 	}
 }
 
+// hasCommand checks if a command is available in the system PATH.
 func hasCommand(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
 }
 
-// detectDesktopEnvironment detects the current desktop environment
-// Returns: "cosmic", "gnome", "kde", "xfce", "mate", "unknown"
+// detectDesktopEnvironment detects the current desktop environment.
 func detectDesktopEnvironment() string {
 	xdgDesktop := strings.ToLower(os.Getenv("XDG_CURRENT_DESKTOP"))
 	desktopSession := strings.ToLower(os.Getenv("DESKTOP_SESSION"))
 
 	// Check for Cosmic (Pop OS)
-	if strings.Contains(xdgDesktop, "cosmic") || strings.Contains(xdgDesktop, "pop") ||
-		strings.Contains(desktopSession, "cosmic") || strings.Contains(desktopSession, "pop") {
-		return "cosmic"
+	if strings.Contains(xdgDesktop, desktopCosmic) || strings.Contains(xdgDesktop, "pop") ||
+		strings.Contains(desktopSession, desktopCosmic) || strings.Contains(desktopSession, "pop") {
+		return desktopCosmic
 	}
 
 	// Check for GNOME
-	if strings.Contains(xdgDesktop, "gnome") || strings.Contains(desktopSession, "gnome") {
-		return "gnome"
+	if strings.Contains(xdgDesktop, desktopGNOME) || strings.Contains(desktopSession, desktopGNOME) {
+		return desktopGNOME
 	}
 
 	// Check for KDE
-	if strings.Contains(xdgDesktop, "kde") || strings.Contains(desktopSession, "kde") ||
+	if strings.Contains(xdgDesktop, desktopKDE) || strings.Contains(desktopSession, desktopKDE) ||
 		strings.Contains(xdgDesktop, "plasma") {
-		return "kde"
+		return desktopKDE
 	}
 
 	// Check for XFCE
-	if strings.Contains(xdgDesktop, "xfce") || strings.Contains(desktopSession, "xfce") {
-		return "xfce"
+	if strings.Contains(xdgDesktop, desktopXFCE) || strings.Contains(desktopSession, desktopXFCE) {
+		return desktopXFCE
 	}
 
 	// Check for MATE
-	if strings.Contains(xdgDesktop, "mate") || strings.Contains(desktopSession, "mate") {
-		return "mate"
+	if strings.Contains(xdgDesktop, desktopMATE) || strings.Contains(desktopSession, desktopMATE) {
+		return desktopMATE
 	}
 
-	return "unknown"
+	return desktopUnknown
 }
 
-// detectDisplayServer detects whether running on Wayland or X11
-// Returns: "wayland", "x11", or "unknown"
+// detectDisplayServer detects whether running on Wayland or X11.
 func detectDisplayServer() string {
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
-		return "wayland"
+		return displayServerWayland
 	}
-	if os.Getenv("XDG_SESSION_TYPE") == "wayland" {
-		return "wayland"
+	if os.Getenv("XDG_SESSION_TYPE") == displayServerWayland {
+		return displayServerWayland
 	}
 	if os.Getenv("DISPLAY") != "" {
-		return "x11"
+		return displayServerX11
 	}
-	if os.Getenv("XDG_SESSION_TYPE") == "x11" {
-		return "x11"
+	if os.Getenv("XDG_SESSION_TYPE") == displayServerX11 {
+		return displayServerX11
 	}
-	return "unknown"
+	return displayServerUnknown
 }
 
 // detectLinuxDistribution detects the Linux distribution and package manager by parsing /etc/os-release.
@@ -133,7 +177,7 @@ func detectLinuxDistribution() (string, string, error) {
 	// Normalize distribution name
 	distro := strings.ToLower(id)
 	if distro == "" {
-		distro = "unknown"
+		distro = desktopUnknown
 	}
 
 	// Determine package manager based on distribution
@@ -245,7 +289,7 @@ func checkMissingDependencies(caps linuxCapabilities, displayServer string, hasU
 	distro, pkgManager, err := detectLinuxDistribution()
 	if err != nil {
 		log.Printf("linux: failed to detect distribution: %v", err)
-		distro = "unknown"
+		distro = desktopUnknown
 		pkgManager = "unknown"
 	}
 
@@ -253,7 +297,7 @@ func checkMissingDependencies(caps linuxCapabilities, displayServer string, hasU
 	if !caps.ydotoolAvailable {
 		installCmd, note := generateInstallCommand("ydotool", distro, pkgManager)
 		whyNeeded := "Provides reliable mouse simulation on both X11 and Wayland (recommended)"
-		if displayServer == "wayland" {
+		if displayServer == displayServerWayland {
 			whyNeeded = "Provides reliable mouse simulation on Wayland display server (highly recommended)"
 		}
 		alt := "Use uinput instead (requires permissions: sudo usermod -aG input $USER, then logout/login)"
@@ -274,7 +318,7 @@ func checkMissingDependencies(caps linuxCapabilities, displayServer string, hasU
 	}
 
 	// Check xdotool (X11 only)
-	if displayServer == "x11" && !caps.xdotoolAvailable {
+	if displayServer == displayServerX11 && !caps.xdotoolAvailable {
 		installCmd, _ := generateInstallCommand("xdotool", distro, pkgManager)
 		whyNeeded := "Provides mouse simulation on X11 display server"
 		alt := "Not needed if using Wayland or if uinput/ydotool is configured"
@@ -292,7 +336,7 @@ func checkMissingDependencies(caps linuxCapabilities, displayServer string, hasU
 	}
 
 	// Check wtype (Wayland only, optional)
-	if displayServer == "wayland" && !caps.wtypeAvailable {
+	if displayServer == displayServerWayland && !caps.wtypeAvailable {
 		installCmd, note := generateInstallCommand("wtype", distro, pkgManager)
 		whyNeeded := "Provides Wayland-native mouse/keyboard simulation (optional, ydotool is preferred)"
 		alt := "ydotool is recommended instead, or use uinput"
@@ -310,7 +354,7 @@ func checkMissingDependencies(caps linuxCapabilities, displayServer string, hasU
 	}
 
 	// Check xprintidle (X11 only, optional - used for idle detection)
-	if displayServer == "x11" && !caps.xprintidleAvailable {
+	if displayServer == displayServerX11 && !caps.xprintidleAvailable {
 		installCmd, _ := generateInstallCommand("xprintidle", distro, pkgManager)
 		whyNeeded := "Provides idle time detection on X11 (optional, activity simulation works without it)"
 		alt := "Not needed on Wayland or if you don't need idle detection"
@@ -368,8 +412,8 @@ func formatDependencyMessages(missing []DependencyInfo, displayServer string, ha
 	return b.String()
 }
 
-// getInputGroupGID looks up the "input" group GID by parsing /etc/group
-// Returns the GID if found, or -1 if not found or on error
+// getInputGroupGID looks up the "input" group GID by parsing /etc/group.
+// Returns the GID if found, or -1 if not found or on error.
 func getInputGroupGID() int {
 	file, err := os.Open("/etc/group")
 	if err != nil {
@@ -391,7 +435,7 @@ func getInputGroupGID() int {
 	return -1
 }
 
-// checkUinputPermissions checks if uinput is accessible and returns user-friendly error message if not
+// checkUinputPermissions checks if uinput is accessible and returns a user-friendly error message if not.
 // Returns: (hasAccess bool, errorMessage string)
 func checkUinputPermissions() (bool, string) {
 	// Check if /dev/uinput exists
@@ -426,8 +470,39 @@ func checkUinputPermissions() (bool, string) {
 	return true, ""
 }
 
-// --- systemd-inhibit strategy ---
+// loginctlInhibitor implements sleep prevention using loginctl (Wayland-specific).
+type loginctlInhibitor struct {
+	pid int
+}
 
+func (l *loginctlInhibitor) Name() string { return "loginctl" }
+func (l *loginctlInhibitor) Activate(ctx context.Context) error {
+	if !hasCommand("loginctl") {
+		return fmt.Errorf("loginctl command not found")
+	}
+	// Get current PID
+	l.pid = os.Getpid()
+	// Use loginctl to inhibit sleep for this process
+	// This works on Wayland and systemd-based systems
+	_, err := runVerbose("loginctl", "inhibit-sleep", fmt.Sprintf("%d", l.pid))
+	if err != nil {
+		return fmt.Errorf("loginctl inhibit-sleep failed: %v", err)
+	}
+	log.Printf("linux: loginctl inhibit-sleep activated for pid %d", l.pid)
+	return nil
+}
+func (l *loginctlInhibitor) Deactivate() error {
+	if l.pid == 0 {
+		return nil
+	}
+	// Note: loginctl doesn't have a direct way to remove inhibition
+	// The inhibition is automatically removed when the process exits
+	// We can try to use inhibit-sleep with a timeout, but for now we'll just log
+	log.Printf("linux: loginctl inhibition will be removed when process exits (pid %d)", l.pid)
+	return nil
+}
+
+// systemdInhibitor implements sleep prevention using systemd-inhibit.
 type systemdInhibitor struct {
 	cmd *exec.Cmd
 }
@@ -437,13 +512,32 @@ func (s *systemdInhibitor) Activate(ctx context.Context) error {
 	if !hasCommand("systemd-inhibit") {
 		return fmt.Errorf("systemd-inhibit command not found")
 	}
+	// Use a Go-based blocking process instead of sleep infinity for better control
+	// Create a simple blocking script that waits for context cancellation
 	s.cmd = exec.CommandContext(ctx, "systemd-inhibit",
-		"--what=idle:sleep:handle-lid-switch",
+		"--what=idle:sleep:handle-lid-switch:shutdown",
 		"--who=keep-alive",
 		"--why=User requested keep-alive",
 		"--mode=block",
-		"sleep", "infinity")
-	return s.cmd.Start()
+		"sh", "-c", "while true; do sleep 1; done")
+
+	if err := s.cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start systemd-inhibit: %v", err)
+	}
+
+	// Verify the process started successfully
+	if s.cmd.Process == nil {
+		return fmt.Errorf("systemd-inhibit process is nil after Start()")
+	}
+
+	// Give it a moment to start, then verify it's running
+	time.Sleep(inhibitorVerifyDelay)
+	if err := s.cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		return fmt.Errorf("systemd-inhibit process verification failed: %v", err)
+	}
+
+	log.Printf("linux: systemd-inhibit started successfully (pid %d)", s.cmd.Process.Pid)
+	return nil
 }
 func (s *systemdInhibitor) Deactivate() error {
 	if s.cmd != nil && s.cmd.Process != nil {
@@ -452,8 +546,7 @@ func (s *systemdInhibitor) Deactivate() error {
 	return nil
 }
 
-// --- DBus Base strategy ---
-
+// dbusStrategy provides common functionality for DBus-based inhibitors.
 type dbusStrategy struct {
 	dest   string
 	path   string
@@ -487,6 +580,7 @@ func (d *dbusStrategy) parseCookie(out string) (uint32, error) {
 	return 0, fmt.Errorf("failed to parse cookie from: %q", out)
 }
 
+// dbusInhibitor implements sleep prevention using DBus calls.
 type dbusInhibitor struct {
 	dbusStrategy
 	name         string
@@ -497,13 +591,17 @@ func (d *dbusInhibitor) Name() string { return d.name }
 func (d *dbusInhibitor) Activate(ctx context.Context) error {
 	out, err := d.call(d.method, d.args...)
 	if err != nil {
-		return err
+		return fmt.Errorf("dbus call failed: %v (output: %q)", err, out)
 	}
 	cookie, err := d.parseCookie(out)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to parse cookie from dbus response: %v (output: %q)", err, out)
+	}
+	if cookie == 0 {
+		return fmt.Errorf("received invalid cookie (0) from dbus inhibitor %s", d.name)
 	}
 	d.cookie = cookie
+	log.Printf("linux: dbus inhibitor %s activated with cookie %d", d.name, cookie)
 	return nil
 }
 
@@ -515,8 +613,7 @@ func (d *dbusInhibitor) Deactivate() error {
 	return err
 }
 
-// --- GNOME specific fallback logic ---
-
+// gsettingsInhibitor implements sleep prevention by modifying GNOME settings.
 type gsettingsInhibitor struct {
 	prevSettings map[string]string
 }
@@ -527,19 +624,48 @@ func (g *gsettingsInhibitor) Activate(ctx context.Context) error {
 		return fmt.Errorf("gsettings command not found")
 	}
 	g.prevSettings = make(map[string]string)
+	// More comprehensive settings to prevent sleep
 	settings := []struct{ schema, key, value string }{
 		{"org.gnome.desktop.session", "idle-delay", "0"},
 		{"org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-type", "'nothing'"},
 		{"org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-type", "'nothing'"},
+		{"org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-timeout", "0"},
+		{"org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-timeout", "0"},
+		{"org.gnome.settings-daemon.plugins.power", "idle-dim", "false"},
 	}
+
+	var failedSettings []string
 	for _, s := range settings {
+		// Get current value
 		if out, err := runVerbose("gsettings", "get", s.schema, s.key); err == nil {
 			g.prevSettings[s.schema+" "+s.key] = out
 		}
+		// Set new value
 		if out, err := runVerbose("gsettings", "set", s.schema, s.key, s.value); err != nil {
-			return fmt.Errorf("gsettings set failed: %v (out: %q)", err, out)
+			failedSettings = append(failedSettings, fmt.Sprintf("%s.%s: %v", s.schema, s.key, err))
+			log.Printf("linux: gsettings set failed for %s.%s: %v (out: %q)", s.schema, s.key, err, out)
+		} else {
+			// Verify the setting was actually applied
+			if verifyOut, verifyErr := runVerbose("gsettings", "get", s.schema, s.key); verifyErr == nil {
+				// Compare values (account for quotes in gsettings output)
+				expectedValue := strings.Trim(s.value, "'\"")
+				actualValue := strings.Trim(verifyOut, "'\" \n")
+				if actualValue != expectedValue && actualValue != s.value {
+					log.Printf("linux: warning: gsettings verification failed for %s.%s: expected %q, got %q", s.schema, s.key, s.value, verifyOut)
+				}
+			}
 		}
 	}
+
+	if len(failedSettings) > 0 {
+		// Don't fail completely if some settings fail, but log warnings
+		log.Printf("linux: gsettings: some settings failed to apply: %v", failedSettings)
+		// Only fail if all settings failed
+		if len(failedSettings) == len(settings) {
+			return fmt.Errorf("all gsettings failed to apply: %v", failedSettings)
+		}
+	}
+
 	return nil
 }
 func (g *gsettingsInhibitor) Deactivate() error {
@@ -550,8 +676,7 @@ func (g *gsettingsInhibitor) Deactivate() error {
 	return nil
 }
 
-// --- X11 strategy ---
-
+// xsetInhibitor implements sleep prevention using xset (X11 only).
 type xsetInhibitor struct{}
 
 func (x *xsetInhibitor) Name() string { return "xset" }
@@ -569,11 +694,11 @@ func (x *xsetInhibitor) Deactivate() error {
 	return nil
 }
 
-// getLinuxIdleTime returns the system idle time on Linux using xprintidle (best-effort)
-// Note: xprintidle only works on X11, not Wayland
+// getLinuxIdleTime returns the system idle time on Linux using xprintidle (best-effort).
+// Note: xprintidle only works on X11, not Wayland.
 func getLinuxIdleTime() (time.Duration, error) {
 	displayServer := detectDisplayServer()
-	if displayServer == "wayland" {
+	if displayServer == displayServerWayland {
 		return 0, fmt.Errorf("xprintidle does not work on Wayland (only X11)")
 	}
 	if !hasCommand("xprintidle") {
@@ -590,19 +715,7 @@ func getLinuxIdleTime() (time.Duration, error) {
 	return time.Duration(millis) * time.Millisecond, nil
 }
 
-// --- Native uinput Simulator ---
-
-const (
-	uinputDevicePath = "/dev/uinput"
-	evSyn            = 0x00
-	evRel            = 0x02
-	relX             = 0x00
-	relY             = 0x01
-	uiSetEvbit       = 0x40045564 // _IOW('U', 100, int)
-	uiSetRelbit      = 0x40045565 // _IOW('U', 101, int)
-	uiDevCreate      = 0x5501     // _IO('U', 1)
-	uiDevDestroy     = 0x5502     // _IO('U', 2)
-)
+// uinputSimulator provides native Linux mouse simulation using the uinput kernel interface.
 
 type uinputUserDev struct {
 	name [80]byte
@@ -634,52 +747,64 @@ type uinputSimulator struct {
 func (u *uinputSimulator) setup() error {
 	f, err := os.OpenFile(uinputDevicePath, os.O_WRONLY|syscall.O_NONBLOCK, 0660)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to open uinput device: %w", err)
 	}
 	u.file = f
 	u.fd = f.Fd()
 
 	// Enable relative axes
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetEvbit), uintptr(evRel)); errno != 0 {
-		f.Close()
-		u.file = nil
-		u.fd = 0
-		return errno
-	}
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetRelbit), uintptr(relX)); errno != 0 {
-		f.Close()
-		u.file = nil
-		u.fd = 0
-		return errno
-	}
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetRelbit), uintptr(relY)); errno != 0 {
-		f.Close()
-		u.file = nil
-		u.fd = 0
-		return errno
+	if err := u.enableRelativeAxes(); err != nil {
+		u.cleanup()
+		return fmt.Errorf("failed to enable relative axes: %w", err)
 	}
 
 	// Create device
-	var dev uinputUserDev
-	copy(dev.name[:], "keep-alive-mouse")
-	dev.id.bustype = 0x03 // BUS_USB
-	dev.id.vendor = 0x1234
-	dev.id.product = 0x5678
-
-	if _, _, errno := syscall.Syscall(syscall.SYS_WRITE, u.fd, uintptr(unsafe.Pointer(&dev)), unsafe.Sizeof(dev)); errno != 0 {
-		f.Close()
-		u.file = nil
-		u.fd = 0
-		return errno
-	}
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiDevCreate), 0); errno != 0 {
-		f.Close()
-		u.file = nil
-		u.fd = 0
-		return errno
+	if err := u.createDevice(); err != nil {
+		u.cleanup()
+		return fmt.Errorf("failed to create uinput device: %w", err)
 	}
 
 	return nil
+}
+
+func (u *uinputSimulator) enableRelativeAxes() error {
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetEvbit), uintptr(evRel)); errno != 0 {
+		return errno
+	}
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetRelbit), uintptr(relX)); errno != 0 {
+		return errno
+	}
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetRelbit), uintptr(relY)); errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func (u *uinputSimulator) createDevice() error {
+	var dev uinputUserDev
+	copy(dev.name[:], uinputDeviceName)
+	dev.id.bustype = uinputBusTypeUSB
+	dev.id.vendor = uinputVendorID
+	dev.id.product = uinputProductID
+
+	if _, _, errno := syscall.Syscall(syscall.SYS_WRITE, u.fd, uintptr(unsafe.Pointer(&dev)), unsafe.Sizeof(dev)); errno != 0 {
+		return errno
+	}
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiDevCreate), 0); errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func (u *uinputSimulator) cleanup() {
+	if u.fd != 0 {
+		syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiDevDestroy), 0)
+	}
+	if u.file != nil {
+		u.file.Close()
+		u.file = nil
+	}
+	u.fd = 0
 }
 
 func (u *uinputSimulator) move(dx, dy int32) error {
@@ -698,17 +823,8 @@ func (u *uinputSimulator) move(dx, dy int32) error {
 }
 
 func (u *uinputSimulator) close() {
-	if u.fd != 0 {
-		syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiDevDestroy), 0)
-	}
-	if u.file != nil {
-		u.file.Close()
-		u.file = nil
-	}
-	u.fd = 0
+	u.cleanup()
 }
-
-// --- Platform Implementation ---
 
 // DependencyInfo contains information about a missing dependency and how to install it.
 // This struct is used to provide user-friendly installation guidance.
@@ -721,6 +837,7 @@ type DependencyInfo struct {
 	Alternative string // Alternative installation methods or workarounds
 }
 
+// linuxCapabilities tracks available tools and system information for the Linux platform.
 type linuxCapabilities struct {
 	xdotoolAvailable    bool
 	xprintidleAvailable bool
@@ -731,15 +848,17 @@ type linuxCapabilities struct {
 	desktopEnvironment  string
 }
 
+// linuxKeepAlive implements the KeepAlive interface for Linux systems.
 type linuxKeepAlive struct {
-	mu          sync.Mutex
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	isRunning   bool
-	chatAppTick *time.Ticker
-	inhibitors  []inhibitor
-	uinput      *uinputSimulator
+	mu           sync.Mutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	isRunning    bool
+	activityTick *time.Ticker
+	chatAppTick  *time.Ticker
+	inhibitors   []inhibitor
+	uinput       *uinputSimulator
 
 	simulateActivity bool
 
@@ -754,7 +873,7 @@ type linuxKeepAlive struct {
 func detectLinuxCapabilities() linuxCapabilities {
 	displayServer := detectDisplayServer()
 	// xprintidle only works on X11, not Wayland
-	xprintidleAvailable := hasCommand("xprintidle") && displayServer == "x11"
+	xprintidleAvailable := hasCommand("xprintidle") && displayServer == displayServerX11
 	return linuxCapabilities{
 		xdotoolAvailable:    hasCommand("xdotool"),
 		xprintidleAvailable: xprintidleAvailable,
@@ -766,7 +885,37 @@ func detectLinuxCapabilities() linuxCapabilities {
 	}
 }
 
-// buildLinuxInhibitors builds a prioritized list of inhibitors based on detected desktop environment
+// createGNOMESuspendInhibitor creates a DBus inhibitor for GNOME suspend prevention.
+func createGNOMESuspendInhibitor(name string) *dbusInhibitor {
+	return &dbusInhibitor{
+		name: name,
+		dbusStrategy: dbusStrategy{
+			dest:   "org.gnome.SessionManager",
+			path:   "/org/gnome/SessionManager",
+			iface:  "org.gnome.SessionManager",
+			method: "Inhibit",
+			args:   []string{"string:keep-alive", "uint32:0", "string:Prevent system suspend", fmt.Sprintf("uint32:%d", gnomeInhibitSuspend)},
+		},
+		unInhibitArg: "Uninhibit",
+	}
+}
+
+// createGNOMEIdleInhibitor creates a DBus inhibitor for GNOME idle prevention.
+func createGNOMEIdleInhibitor(name string) *dbusInhibitor {
+	return &dbusInhibitor{
+		name: name,
+		dbusStrategy: dbusStrategy{
+			dest:   "org.gnome.SessionManager",
+			path:   "/org/gnome/SessionManager",
+			iface:  "org.gnome.SessionManager",
+			method: "Inhibit",
+			args:   []string{"string:keep-alive", "uint32:0", "string:Prevent session idle", fmt.Sprintf("uint32:%d", gnomeInhibitIdle)},
+		},
+		unInhibitArg: "Uninhibit",
+	}
+}
+
+// buildLinuxInhibitors builds a prioritized list of inhibitors based on detected desktop environment.
 // Priority: systemd-inhibit (always first) → DE-specific DBus → gsettings (GNOME-based) → xset (X11 only)
 func buildLinuxInhibitors() []inhibitor {
 	de := detectDesktopEnvironment()
@@ -776,37 +925,26 @@ func buildLinuxInhibitors() []inhibitor {
 	// Always try systemd-inhibit first (works on all systems)
 	inhibitors = append(inhibitors, &systemdInhibitor{})
 
+	// Add loginctl for Wayland (works better on Wayland than some other methods)
+	if displayServer == displayServerWayland && hasCommand("loginctl") {
+		inhibitors = append(inhibitors, &loginctlInhibitor{})
+	}
+
 	// Add DE-specific inhibitors based on detected desktop
 	switch de {
-	case "cosmic":
+	case desktopCosmic:
 		// Cosmic uses GNOME session manager
-		inhibitors = append(inhibitors, &dbusInhibitor{
-			name: "dbus-cosmic",
-			dbusStrategy: dbusStrategy{
-				dest:   "org.gnome.SessionManager",
-				path:   "/org/gnome/SessionManager",
-				iface:  "org.gnome.SessionManager",
-				method: "Inhibit",
-				args:   []string{"string:keep-alive", "uint32:0", "string:User requested keep-alive", "uint32:12"},
-			},
-			unInhibitArg: "Uninhibit",
-		})
+		// Use separate suspend and idle inhibitors for better control
+		inhibitors = append(inhibitors, createGNOMESuspendInhibitor("dbus-cosmic-suspend"))
+		inhibitors = append(inhibitors, createGNOMEIdleInhibitor("dbus-cosmic-idle"))
 		// Cosmic is GNOME-based, so gsettings should work
 		inhibitors = append(inhibitors, &gsettingsInhibitor{})
-	case "gnome":
-		inhibitors = append(inhibitors, &dbusInhibitor{
-			name: "dbus-gnome",
-			dbusStrategy: dbusStrategy{
-				dest:   "org.gnome.SessionManager",
-				path:   "/org/gnome/SessionManager",
-				iface:  "org.gnome.SessionManager",
-				method: "Inhibit",
-				args:   []string{"string:keep-alive", "uint32:0", "string:User requested keep-alive", "uint32:12"},
-			},
-			unInhibitArg: "Uninhibit",
-		})
+	case desktopGNOME:
+		// Use separate suspend and idle inhibitors for better control
+		inhibitors = append(inhibitors, createGNOMESuspendInhibitor("dbus-gnome-suspend"))
+		inhibitors = append(inhibitors, createGNOMEIdleInhibitor("dbus-gnome-idle"))
 		inhibitors = append(inhibitors, &gsettingsInhibitor{})
-	case "kde":
+	case desktopKDE:
 		inhibitors = append(inhibitors, &dbusInhibitor{
 			name: "dbus-kde",
 			dbusStrategy: dbusStrategy{
@@ -818,7 +956,7 @@ func buildLinuxInhibitors() []inhibitor {
 			},
 			unInhibitArg: "UnInhibit",
 		})
-	case "xfce":
+	case desktopXFCE:
 		inhibitors = append(inhibitors, &dbusInhibitor{
 			name: "dbus-xfce",
 			dbusStrategy: dbusStrategy{
@@ -830,7 +968,7 @@ func buildLinuxInhibitors() []inhibitor {
 			},
 			unInhibitArg: "UnInhibit",
 		})
-	case "mate":
+	case desktopMATE:
 		inhibitors = append(inhibitors, &dbusInhibitor{
 			name: "dbus-mate",
 			dbusStrategy: dbusStrategy{
@@ -838,7 +976,7 @@ func buildLinuxInhibitors() []inhibitor {
 				path:   "/org/mate/SessionManager",
 				iface:  "org.mate.SessionManager",
 				method: "Inhibit",
-				args:   []string{"string:keep-alive", "uint32:0", "string:Keep system awake", "uint32:12"},
+				args:   []string{"string:keep-alive", "uint32:0", "string:Keep system awake", fmt.Sprintf("uint32:%d", gnomeInhibitBoth)},
 			},
 			unInhibitArg: "Uninhibit",
 		})
@@ -858,11 +996,41 @@ func buildLinuxInhibitors() []inhibitor {
 	})
 
 	// xset only works on X11
-	if displayServer == "x11" {
+	if displayServer == displayServerX11 {
 		inhibitors = append(inhibitors, &xsetInhibitor{})
 	}
 
 	return inhibitors
+}
+
+// verifyInhibitorActivation verifies that an inhibitor was successfully activated.
+func (k *linuxKeepAlive) verifyInhibitorActivation(inh inhibitor) bool {
+	switch v := inh.(type) {
+	case *systemdInhibitor:
+		// Verify systemd-inhibit process is running
+		if v.cmd != nil && v.cmd.Process != nil {
+			err := v.cmd.Process.Signal(syscall.Signal(0))
+			if err == nil {
+				log.Printf("linux: verified systemd-inhibit process (pid %d) is running", v.cmd.Process.Pid)
+				return true
+			}
+			log.Printf("linux: warning: systemd-inhibit process verification failed: %v", err)
+		}
+		return false
+	case *dbusInhibitor:
+		// Verify DBus cookie was received
+		if v.cookie != 0 {
+			log.Printf("linux: verified DBus inhibitor %s with cookie %d", v.name, v.cookie)
+			return true
+		}
+		log.Printf("linux: warning: DBus inhibitor %s activated but no cookie received", v.name)
+		return false
+	case *loginctlInhibitor, *gsettingsInhibitor, *xsetInhibitor:
+		// These don't return verification tokens, but if Activate succeeded, it worked
+		return true
+	default:
+		return false
+	}
 }
 
 func (k *linuxKeepAlive) activateInhibitors(ctx context.Context) (int, error) {
@@ -879,45 +1047,17 @@ func (k *linuxKeepAlive) activateInhibitors(ctx context.Context) (int, error) {
 		}
 
 		// Verify activation based on inhibitor type
-		verified := false
-		switch v := inh.(type) {
-		case *systemdInhibitor:
-			// Verify systemd-inhibit process is running
-			if v.cmd != nil && v.cmd.Process != nil {
-				// Check if process is still alive
-				if err := v.cmd.Process.Signal(syscall.Signal(0)); err == nil {
-					verified = true
-					log.Printf("linux: verified systemd-inhibit process (pid %d) is running", v.cmd.Process.Pid)
-				} else {
-					log.Printf("linux: warning: systemd-inhibit process verification failed: %v", err)
-				}
-			}
-		case *dbusInhibitor:
-			// Verify DBus cookie was received
-			if v.cookie != 0 {
-				verified = true
-				log.Printf("linux: verified DBus inhibitor %s with cookie %d", v.name, v.cookie)
-			} else {
-				log.Printf("linux: warning: DBus inhibitor %s activated but no cookie received", v.name)
-			}
-		case *gsettingsInhibitor:
-			// gsettings doesn't return a cookie, but if Activate succeeded, it worked
-			verified = true
-		case *xsetInhibitor:
-			// xset doesn't have verification, but if Activate succeeded, it worked
-			verified = true
+		verified := k.verifyInhibitorActivation(inh)
+		if !verified {
+			log.Printf("linux: warning: inhibitor %s activated but verification failed", inh.Name())
 		}
 
+		// Still add to active list if activation succeeded
+		k.inhibitors = append(k.inhibitors, inh)
 		if verified {
-			k.inhibitors = append(k.inhibitors, inh)
 			log.Printf("linux: activated and verified inhibitor: %s", inh.Name())
-			activeCount++
-		} else {
-			log.Printf("linux: warning: inhibitor %s activated but verification failed", inh.Name())
-			// Still count it as active if activation succeeded, but log the warning
-			k.inhibitors = append(k.inhibitors, inh)
-			activeCount++
 		}
+		activeCount++
 	}
 
 	if activeCount == 0 {
@@ -947,13 +1087,48 @@ func (k *linuxKeepAlive) setupUinput() {
 			log.Printf("linux: permission hint: %s", errMsg)
 		}
 		k.uinput = nil
-	} else {
-		log.Printf("linux: native uinput mouse simulation activated")
+		return
+	}
+	log.Printf("linux: native uinput mouse simulation activated")
+}
+
+func (k *linuxKeepAlive) startActivityTickerLocked(ctx context.Context) {
+	k.activityTick = time.NewTicker(ActivityInterval)
+	k.wg.Add(1)
+	go func() {
+		defer k.wg.Done()
+		defer k.activityTick.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-k.activityTick.C:
+				k.simulateSystemActivity()
+			}
+		}
+	}()
+}
+
+func (k *linuxKeepAlive) simulateSystemActivity() {
+	// Use DBus SimulateUserActivity as a system-level activity simulation
+	// This works on both X11 and Wayland and prevents system from going idle
+	// On Wayland, increase frequency by calling multiple times
+	displayServer := detectDisplayServer()
+	runBestEffort("dbus-send", "--dest=org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver.SimulateUserActivity")
+	runBestEffort("dbus-send", "--dest=org.gnome.ScreenSaver", "/org/gnome/ScreenSaver", "org.gnome.ScreenSaver.SimulateUserActivity")
+
+	// On Wayland, also try additional methods for better reliability
+	if displayServer == displayServerWayland {
+		// Try loginctl user activity if available
+		if hasCommand("loginctl") {
+			runBestEffort("loginctl", "user-status")
+		}
 	}
 }
 
 func (k *linuxKeepAlive) startInhibitorHealthCheck(ctx context.Context) {
-	healthCheckTicker := time.NewTicker(30 * time.Second)
+	healthCheckTicker := time.NewTicker(healthCheckInterval)
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
@@ -968,6 +1143,34 @@ func (k *linuxKeepAlive) startInhibitorHealthCheck(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// reactivateInhibitor attempts to reactivate a failed inhibitor.
+func (k *linuxKeepAlive) reactivateInhibitor(inh inhibitor) {
+	if k.ctx == nil {
+		return
+	}
+
+	name := inh.Name()
+	log.Printf("linux: attempting to reactivate %s", name)
+	if err := inh.Activate(k.ctx); err != nil {
+		log.Printf("linux: error: failed to reactivate %s: %v", name, err)
+		return
+	}
+
+	// Log success with type-specific details
+	switch v := inh.(type) {
+	case *systemdInhibitor:
+		if v.cmd != nil && v.cmd.Process != nil {
+			log.Printf("linux: successfully reactivated %s (new pid %d)", name, v.cmd.Process.Pid)
+		} else {
+			log.Printf("linux: successfully reactivated %s", name)
+		}
+	case *dbusInhibitor:
+		log.Printf("linux: successfully reactivated %s (new cookie %d)", name, v.cookie)
+	default:
+		log.Printf("linux: successfully reactivated %s", name)
+	}
 }
 
 func (k *linuxKeepAlive) verifyInhibitors() {
@@ -985,23 +1188,20 @@ func (k *linuxKeepAlive) verifyInhibitors() {
 			if v.cmd != nil && v.cmd.Process != nil {
 				if err := v.cmd.Process.Signal(syscall.Signal(0)); err != nil {
 					log.Printf("linux: warning: systemd-inhibit process (pid %d) is not running: %v", v.cmd.Process.Pid, err)
-					// Attempt to reactivate
-					if k.ctx != nil {
-						if reactivateErr := v.Activate(k.ctx); reactivateErr != nil {
-							log.Printf("linux: error: failed to reactivate systemd-inhibit: %v", reactivateErr)
-						} else {
-							log.Printf("linux: successfully reactivated systemd-inhibit")
-						}
-					}
+					k.reactivateInhibitor(inh)
 				}
+			} else {
+				log.Printf("linux: warning: systemd-inhibit process is nil, attempting to reactivate")
+				k.reactivateInhibitor(inh)
 			}
 		case *dbusInhibitor:
-			// DBus inhibitors don't need periodic checks as they're session-based
-			// The cookie remains valid until explicitly uninhibited
-		case *gsettingsInhibitor:
-			// gsettings inhibitors are persistent until deactivated
-		case *xsetInhibitor:
-			// xset inhibitors are persistent until deactivated
+			// Verify DBus cookie is still valid
+			if v.cookie == 0 {
+				log.Printf("linux: warning: DBus inhibitor %s has invalid cookie (0), attempting to reactivate", v.name)
+				k.reactivateInhibitor(inh)
+			}
+		case *gsettingsInhibitor, *xsetInhibitor:
+			// These inhibitors are persistent until deactivated
 		}
 	}
 }
@@ -1044,7 +1244,7 @@ func (k *linuxKeepAlive) simulateChatAppActivity(ctx context.Context, caps linux
 		} else if idleErr != nil {
 			log.Printf("linux: idle time check failed: %v (will simulate anyway)", idleErr)
 		}
-	} else if caps.displayServer == "wayland" {
+	} else if caps.displayServer == displayServerWayland {
 		// xprintidle doesn't work on Wayland, so we'll simulate anyway
 		log.Printf("linux: xprintidle not available on Wayland; simulating activity")
 	}
@@ -1053,8 +1253,8 @@ func (k *linuxKeepAlive) simulateChatAppActivity(ctx context.Context, caps linux
 	lastActiveLog := atomic.LoadInt64(&k.lastActiveLogNS)
 
 	if !shouldSimulate {
-		// Log occasionally (every 2 minutes) that we're skipping due to active use
-		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
+		// Log occasionally that we're skipping due to active use
+		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > activeLogInterval {
 			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
 			if caps.xprintidleAvailable && idleErr == nil {
 				log.Printf("linux: user is active (idle: %v); skipping simulation to avoid interference", idle)
@@ -1081,6 +1281,56 @@ func (k *linuxKeepAlive) simulateChatAppActivity(ctx context.Context, caps linux
 	k.executeMousePattern(points, caps)
 }
 
+// mouseMover defines an interface for executing mouse movements.
+type mouseMover interface {
+	move(dx, dy int) error
+	name() string
+}
+
+// executePatternCommon executes a mouse pattern using the provided mover.
+func (k *linuxKeepAlive) executePatternCommon(points []MousePoint, mover mouseMover) bool {
+	if mover == nil {
+		return false
+	}
+
+	// Execute pattern with natural timing
+	for i, pt := range points {
+		dx := int(pt.X)
+		dy := int(pt.Y)
+		if err := mover.move(dx, dy); err != nil {
+			log.Printf("linux: %s move failed: %v", mover.name(), err)
+			return false
+		}
+
+		distance := SegmentDistance(points, i)
+		delay := k.patternGen.MovementDelay(distance)
+		time.Sleep(delay)
+
+		if k.patternGen.ShouldPause() {
+			time.Sleep(k.patternGen.PauseDelay())
+		}
+
+		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
+			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
+			if err := mover.move(int(midPt.X), int(midPt.Y)); err != nil {
+				log.Printf("linux: %s move failed: %v", mover.name(), err)
+				return false
+			}
+			time.Sleep(midDelay)
+		}
+	}
+
+	// Return to origin
+	lastPt := points[len(points)-1]
+	returnDelay := k.patternGen.ReturnDelay()
+	if err := mover.move(-int(lastPt.X), -int(lastPt.Y)); err != nil {
+		log.Printf("linux: %s move failed: %v", mover.name(), err)
+		return false
+	}
+	time.Sleep(returnDelay)
+	return true
+}
+
 func (k *linuxKeepAlive) executeMousePattern(points []MousePoint, caps linuxCapabilities) {
 	// Execute pattern using available methods based on display server
 	// Priority: uinput → ydotool → xdotool (X11 only) → wtype (Wayland only) → DBus fallback
@@ -1101,154 +1351,79 @@ func (k *linuxKeepAlive) executeMousePattern(points []MousePoint, caps linuxCapa
 	}
 
 	// Try xdotool (X11 only)
-	if caps.displayServer == "x11" && caps.xdotoolAvailable {
+	if caps.displayServer == displayServerX11 && caps.xdotoolAvailable {
 		if k.executePatternXdotool(points) {
 			return
 		}
 	}
 
 	// Try wtype (Wayland-native, but limited mouse support)
-	if caps.displayServer == "wayland" && caps.wtypeAvailable {
+	if caps.displayServer == displayServerWayland && caps.wtypeAvailable {
 		if k.executePatternWtype(points) {
 			return
 		}
 	}
 
 	// Soft simulation via DBus (works on both, but less effective) - only if no other method worked
-	runBestEffort("dbus-send", "--dest=org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver.SimulateUserActivity")
-	runBestEffort("dbus-send", "--dest=org.gnome.ScreenSaver", "/org/gnome/ScreenSaver", "org.gnome.ScreenSaver.SimulateUserActivity")
+	k.simulateSystemActivity()
 
-	if caps.displayServer == "wayland" {
+	if caps.displayServer == displayServerWayland {
 		log.Printf("linux: warning: no Wayland-compatible mouse simulation method available. Install ydotool: sudo apt install ydotool (or equivalent for your distribution)")
 	}
+}
+
+// uinputMover implements mouseMover for uinput.
+type uinputMover struct {
+	sim *uinputSimulator
+}
+
+func (u *uinputMover) move(dx, dy int) error {
+	return u.sim.move(int32(dx), int32(dy))
+}
+
+func (u *uinputMover) name() string {
+	return "uinput"
 }
 
 func (k *linuxKeepAlive) executePatternUinput(points []MousePoint) bool {
 	if k.uinput == nil {
 		return false
 	}
+	mover := &uinputMover{sim: k.uinput}
+	return k.executePatternCommon(points, mover)
+}
 
-	// Execute pattern with natural timing
-	for i, pt := range points {
-		dx := int32(pt.X)
-		dy := int32(pt.Y)
-		if err := k.uinput.move(dx, dy); err != nil {
-			log.Printf("linux: uinput move failed: %v", err)
-			return false
-		}
+// commandMover implements mouseMover for command-line tools.
+type commandMover struct {
+	cmd  string
+	args []string
+}
 
-		distance := SegmentDistance(points, i)
-		delay := k.patternGen.MovementDelay(distance)
-		time.Sleep(delay)
+func (c *commandMover) move(dx, dy int) error {
+	args := append(c.args, fmt.Sprintf("%d", dx), fmt.Sprintf("%d", dy))
+	_, err := runVerbose(c.cmd, args...)
+	return err
+}
 
-		if k.patternGen.ShouldPause() {
-			time.Sleep(k.patternGen.PauseDelay())
-		}
-
-		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
-			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
-			if err := k.uinput.move(int32(midPt.X), int32(midPt.Y)); err != nil {
-				log.Printf("linux: uinput move failed: %v", err)
-				return false
-			}
-			time.Sleep(midDelay)
-		}
-	}
-
-	// Return to origin
-	lastPt := points[len(points)-1]
-	returnDelay := k.patternGen.ReturnDelay()
-	if err := k.uinput.move(-int32(lastPt.X), -int32(lastPt.Y)); err != nil {
-		log.Printf("linux: uinput move failed: %v", err)
-		return false
-	}
-	time.Sleep(returnDelay)
-	return true
+func (c *commandMover) name() string {
+	return c.cmd
 }
 
 func (k *linuxKeepAlive) executePatternXdotool(points []MousePoint) bool {
-	for i, pt := range points {
-		dx := int(pt.X)
-		dy := int(pt.Y)
-		_, err := runVerbose("xdotool", "mousemove_relative", "--", fmt.Sprintf("%d", dx), fmt.Sprintf("%d", dy))
-		if err != nil {
-			log.Printf("linux: xdotool move failed: %v", err)
-			return false
-		}
-
-		distance := SegmentDistance(points, i)
-		delay := k.patternGen.MovementDelay(distance)
-		time.Sleep(delay)
-
-		if k.patternGen.ShouldPause() {
-			time.Sleep(k.patternGen.PauseDelay())
-		}
-
-		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
-			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
-			_, err := runVerbose("xdotool", "mousemove_relative", "--", fmt.Sprintf("%d", int(midPt.X)), fmt.Sprintf("%d", int(midPt.Y)))
-			if err != nil {
-				log.Printf("linux: xdotool move failed: %v", err)
-				return false
-			}
-			time.Sleep(midDelay)
-		}
+	mover := &commandMover{
+		cmd:  "xdotool",
+		args: []string{"mousemove_relative", "--"},
 	}
-
-	// Return to origin
-	lastPt := points[len(points)-1]
-	returnDelay := k.patternGen.ReturnDelay()
-	_, err := runVerbose("xdotool", "mousemove_relative", "--", fmt.Sprintf("%d", -int(lastPt.X)), fmt.Sprintf("%d", -int(lastPt.Y)))
-	if err != nil {
-		log.Printf("linux: xdotool move failed: %v", err)
-		return false
-	}
-	time.Sleep(returnDelay)
-	return true
+	return k.executePatternCommon(points, mover)
 }
 
-// executePatternYdotool executes mouse pattern using ydotool (works on both X11 and Wayland)
+// executePatternYdotool executes mouse pattern using ydotool (works on both X11 and Wayland).
 func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint) bool {
-	for i, pt := range points {
-		dx := int(pt.X)
-		dy := int(pt.Y)
-		// ydotool mousemove with -- separator for relative movement
-		// Format: ydotool mousemove -- <dx> <dy>
-		_, err := runVerbose("ydotool", "mousemove", "--", fmt.Sprintf("%d", dx), fmt.Sprintf("%d", dy))
-		if err != nil {
-			log.Printf("linux: ydotool move failed: %v", err)
-			return false
-		}
-
-		distance := SegmentDistance(points, i)
-		delay := k.patternGen.MovementDelay(distance)
-		time.Sleep(delay)
-
-		if k.patternGen.ShouldPause() {
-			time.Sleep(k.patternGen.PauseDelay())
-		}
-
-		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
-			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
-			_, err := runVerbose("ydotool", "mousemove", "--", fmt.Sprintf("%d", int(midPt.X)), fmt.Sprintf("%d", int(midPt.Y)))
-			if err != nil {
-				log.Printf("linux: ydotool move failed: %v", err)
-				return false
-			}
-			time.Sleep(midDelay)
-		}
+	mover := &commandMover{
+		cmd:  "ydotool",
+		args: []string{"mousemove", "--"},
 	}
-
-	// Return to origin
-	lastPt := points[len(points)-1]
-	returnDelay := k.patternGen.ReturnDelay()
-	_, err := runVerbose("ydotool", "mousemove", "--", fmt.Sprintf("%d", -int(lastPt.X)), fmt.Sprintf("%d", -int(lastPt.Y)))
-	if err != nil {
-		log.Printf("linux: ydotool move failed: %v", err)
-		return false
-	}
-	time.Sleep(returnDelay)
-	return true
+	return k.executePatternCommon(points, mover)
 }
 
 // executePatternWtype executes mouse pattern using wtype (Wayland-native)
@@ -1332,10 +1507,10 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 	if caps.ydotoolAvailable {
 		mouseMethods = append(mouseMethods, "ydotool")
 	}
-	if caps.wtypeAvailable && caps.displayServer == "wayland" {
+	if caps.wtypeAvailable && caps.displayServer == displayServerWayland {
 		mouseMethods = append(mouseMethods, "wtype")
 	}
-	if caps.xdotoolAvailable && caps.displayServer == "x11" {
+	if caps.xdotoolAvailable && caps.displayServer == displayServerX11 {
 		mouseMethods = append(mouseMethods, "xdotool")
 	}
 	if len(mouseMethods) == 0 {
@@ -1350,7 +1525,10 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 	// Start periodic inhibitor health checks
 	k.startInhibitorHealthCheck(k.ctx)
 
-	// Activity ticker removed - inhibitors maintain state without periodic refresh
+	// Start system-level activity ticker to maintain keep-alive
+	k.startActivityTickerLocked(k.ctx)
+
+	// Start chat app activity ticker if enabled
 	k.startChatAppTickerLocked(k.ctx, caps)
 
 	k.isRunning = true
@@ -1369,6 +1547,10 @@ func (k *linuxKeepAlive) Stop() error {
 	}
 
 	// Stop tickers first to prevent new operations
+	if k.activityTick != nil {
+		k.activityTick.Stop()
+		k.activityTick = nil
+	}
 	if k.chatAppTick != nil {
 		k.chatAppTick.Stop()
 		k.chatAppTick = nil
@@ -1391,7 +1573,7 @@ func (k *linuxKeepAlive) Stop() error {
 	select {
 	case <-done:
 		log.Printf("linux: all goroutines completed")
-	case <-time.After(2 * time.Second):
+	case <-time.After(stopTimeout):
 		log.Printf("linux: warning: some goroutines did not complete within timeout")
 	}
 
@@ -1410,17 +1592,9 @@ func (k *linuxKeepAlive) Stop() error {
 
 	// Cleanup uinput device
 	if k.uinput != nil {
-		fdBeforeClose := k.uinput.fd
 		k.uinput.close()
-		// Verify uinput is closed by checking if fd was non-zero before close
-		if fdBeforeClose != 0 {
-			if k.uinput.fd == 0 {
-				log.Printf("linux: uinput device closed successfully")
-			} else {
-				log.Printf("linux: warning: uinput device may not have closed properly (fd=%d)", k.uinput.fd)
-			}
-		}
 		k.uinput = nil
+		log.Printf("linux: uinput device closed")
 	}
 
 	k.inhibitors = nil

@@ -3,6 +3,7 @@
 *.dll
 *.so
 *.dylib
+keepalive
 
 # Go tool output
 *.out
