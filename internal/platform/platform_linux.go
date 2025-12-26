@@ -198,7 +198,7 @@ func generateInstallCommand(tool string, distro string, pkgManager string) (stri
 	if tool == "" {
 		return "", "Tool name is required"
 	}
-	
+
 	pkgName := getPackageName(tool, distro)
 	if pkgName == "" {
 		return "", fmt.Sprintf("Package name not available for tool '%s' on distribution '%s'", tool, distro)
@@ -670,15 +670,15 @@ type linuxCapabilities struct {
 }
 
 type linuxKeepAlive struct {
-	mu                sync.Mutex
-	ctx               context.Context
-	cancel            context.CancelFunc
-	wg                sync.WaitGroup
-	isRunning         bool
-	activityTick      *time.Ticker
-	chatAppTick       *time.Ticker
-	inhibitors        []inhibitor
-	uinput            *uinputSimulator
+	mu           sync.Mutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	isRunning    bool
+	activityTick *time.Ticker
+	chatAppTick  *time.Ticker
+	inhibitors   []inhibitor
+	uinput       *uinputSimulator
 
 	simulateActivity bool
 
@@ -1056,8 +1056,8 @@ func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint) {
 	for i, pt := range points {
 		dx := int(pt.X)
 		dy := int(pt.Y)
-		// ydotool uses relative movement with --next-delay for timing
-		runBestEffort("ydotool", "mousemove", "--", fmt.Sprintf("%d", dx), fmt.Sprintf("%d", dy))
+		// ydotool mousemove uses absolute coordinates by default; use -x and -y flags for relative movement
+		runBestEffort("ydotool", "mousemove", "-x", fmt.Sprintf("%d", dx), "-y", fmt.Sprintf("%d", dy))
 
 		distance := SegmentDistance(points, i)
 		delay := k.patternGen.MovementDelay(distance)
@@ -1069,7 +1069,7 @@ func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint) {
 
 		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
 			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
-			runBestEffort("ydotool", "mousemove", "--", fmt.Sprintf("%d", int(midPt.X)), fmt.Sprintf("%d", int(midPt.Y)))
+			runBestEffort("ydotool", "mousemove", "-x", fmt.Sprintf("%d", int(midPt.X)), "-y", fmt.Sprintf("%d", int(midPt.Y)))
 			time.Sleep(midDelay)
 		}
 	}
@@ -1077,7 +1077,7 @@ func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint) {
 	// Return to origin
 	lastPt := points[len(points)-1]
 	returnDelay := k.patternGen.ReturnDelay()
-	runBestEffort("ydotool", "mousemove", "--", fmt.Sprintf("%d", -int(lastPt.X)), fmt.Sprintf("%d", -int(lastPt.Y)))
+	runBestEffort("ydotool", "mousemove", "-x", fmt.Sprintf("%d", -int(lastPt.X)), "-y", fmt.Sprintf("%d", -int(lastPt.Y)))
 	time.Sleep(returnDelay)
 }
 
