@@ -653,15 +653,19 @@ func (u *uinputSimulator) setup() error {
 	return nil
 }
 
-func (u *uinputSimulator) move(dx, dy int32) {
+func (u *uinputSimulator) move(dx, dy int32) error {
 	events := []inputEvent{
 		{etype: evRel, code: relX, value: dx},
 		{etype: evRel, code: relY, value: dy},
 		{etype: evSyn, code: 0, value: 0},
 	}
 	for _, ev := range events {
-		syscall.Write(int(u.fd), (*[unsafe.Sizeof(ev)]byte)(unsafe.Pointer(&ev))[:])
+		_, err := syscall.Write(int(u.fd), (*[unsafe.Sizeof(ev)]byte)(unsafe.Pointer(&ev))[:])
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (u *uinputSimulator) close() {
@@ -965,26 +969,30 @@ func (k *linuxKeepAlive) executeMousePattern(points []MousePoint, caps linuxCapa
 
 	// Try uinput first (works on both X11 and Wayland if permissions allow)
 	if k.uinput != nil {
-		k.executePatternUinput(points)
-		return
+		if k.executePatternUinput(points) {
+			return
+		}
 	}
 
 	// Try ydotool (works on both X11 and Wayland)
 	if caps.ydotoolAvailable {
-		k.executePatternYdotool(points)
-		return
+		if k.executePatternYdotool(points) {
+			return
+		}
 	}
 
 	// Try xdotool (X11 only)
 	if caps.displayServer == "x11" && caps.xdotoolAvailable {
-		k.executePatternXdotool(points)
-		return
+		if k.executePatternXdotool(points) {
+			return
+		}
 	}
 
 	// Try wtype (Wayland-native, but limited mouse support)
 	if caps.displayServer == "wayland" && caps.wtypeAvailable {
-		k.executePatternWtype(points)
-		return
+		if k.executePatternWtype(points) {
+			return
+		}
 	}
 
 	// Soft simulation via DBus (works on both, but less effective) - only if no other method worked
@@ -996,16 +1004,19 @@ func (k *linuxKeepAlive) executeMousePattern(points []MousePoint, caps linuxCapa
 	}
 }
 
-func (k *linuxKeepAlive) executePatternUinput(points []MousePoint) {
+func (k *linuxKeepAlive) executePatternUinput(points []MousePoint) bool {
 	if k.uinput == nil {
-		return
+		return false
 	}
 
 	// Execute pattern with natural timing
 	for i, pt := range points {
 		dx := int32(pt.X)
 		dy := int32(pt.Y)
-		k.uinput.move(dx, dy)
+		if err := k.uinput.move(dx, dy); err != nil {
+			log.Printf("linux: uinput move failed: %v", err)
+			return false
+		}
 
 		distance := SegmentDistance(points, i)
 		delay := k.patternGen.MovementDelay(distance)
@@ -1017,7 +1028,10 @@ func (k *linuxKeepAlive) executePatternUinput(points []MousePoint) {
 
 		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
 			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
-			k.uinput.move(int32(midPt.X), int32(midPt.Y))
+			if err := k.uinput.move(int32(midPt.X), int32(midPt.Y)); err != nil {
+				log.Printf("linux: uinput move failed: %v", err)
+				return false
+			}
 			time.Sleep(midDelay)
 		}
 	}
@@ -1025,15 +1039,23 @@ func (k *linuxKeepAlive) executePatternUinput(points []MousePoint) {
 	// Return to origin
 	lastPt := points[len(points)-1]
 	returnDelay := k.patternGen.ReturnDelay()
-	k.uinput.move(-int32(lastPt.X), -int32(lastPt.Y))
+	if err := k.uinput.move(-int32(lastPt.X), -int32(lastPt.Y)); err != nil {
+		log.Printf("linux: uinput move failed: %v", err)
+		return false
+	}
 	time.Sleep(returnDelay)
+	return true
 }
 
-func (k *linuxKeepAlive) executePatternXdotool(points []MousePoint) {
+func (k *linuxKeepAlive) executePatternXdotool(points []MousePoint) bool {
 	for i, pt := range points {
 		dx := int(pt.X)
 		dy := int(pt.Y)
-		runBestEffort("xdotool", "mousemove_relative", "--", fmt.Sprintf("%d", dx), fmt.Sprintf("%d", dy))
+		_, err := runVerbose("xdotool", "mousemove_relative", "--", fmt.Sprintf("%d", dx), fmt.Sprintf("%d", dy))
+		if err != nil {
+			log.Printf("linux: xdotool move failed: %v", err)
+			return false
+		}
 
 		distance := SegmentDistance(points, i)
 		delay := k.patternGen.MovementDelay(distance)
@@ -1045,7 +1067,11 @@ func (k *linuxKeepAlive) executePatternXdotool(points []MousePoint) {
 
 		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
 			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
-			runBestEffort("xdotool", "mousemove_relative", "--", fmt.Sprintf("%d", int(midPt.X)), fmt.Sprintf("%d", int(midPt.Y)))
+			_, err := runVerbose("xdotool", "mousemove_relative", "--", fmt.Sprintf("%d", int(midPt.X)), fmt.Sprintf("%d", int(midPt.Y)))
+			if err != nil {
+				log.Printf("linux: xdotool move failed: %v", err)
+				return false
+			}
 			time.Sleep(midDelay)
 		}
 	}
@@ -1053,17 +1079,26 @@ func (k *linuxKeepAlive) executePatternXdotool(points []MousePoint) {
 	// Return to origin
 	lastPt := points[len(points)-1]
 	returnDelay := k.patternGen.ReturnDelay()
-	runBestEffort("xdotool", "mousemove_relative", "--", fmt.Sprintf("%d", -int(lastPt.X)), fmt.Sprintf("%d", -int(lastPt.Y)))
+	_, err := runVerbose("xdotool", "mousemove_relative", "--", fmt.Sprintf("%d", -int(lastPt.X)), fmt.Sprintf("%d", -int(lastPt.Y)))
+	if err != nil {
+		log.Printf("linux: xdotool move failed: %v", err)
+		return false
+	}
 	time.Sleep(returnDelay)
+	return true
 }
 
 // executePatternYdotool executes mouse pattern using ydotool (works on both X11 and Wayland)
-func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint) {
+func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint) bool {
 	for i, pt := range points {
 		dx := int(pt.X)
 		dy := int(pt.Y)
 		// ydotool mousemove uses absolute coordinates by default; use -x and -y flags for relative movement
-		runBestEffort("ydotool", "mousemove", "-x", fmt.Sprintf("%d", dx), "-y", fmt.Sprintf("%d", dy))
+		_, err := runVerbose("ydotool", "mousemove", "-x", fmt.Sprintf("%d", dx), "-y", fmt.Sprintf("%d", dy))
+		if err != nil {
+			log.Printf("linux: ydotool move failed: %v", err)
+			return false
+		}
 
 		distance := SegmentDistance(points, i)
 		delay := k.patternGen.MovementDelay(distance)
@@ -1075,7 +1110,11 @@ func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint) {
 
 		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
 			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
-			runBestEffort("ydotool", "mousemove", "-x", fmt.Sprintf("%d", int(midPt.X)), "-y", fmt.Sprintf("%d", int(midPt.Y)))
+			_, err := runVerbose("ydotool", "mousemove", "-x", fmt.Sprintf("%d", int(midPt.X)), "-y", fmt.Sprintf("%d", int(midPt.Y)))
+			if err != nil {
+				log.Printf("linux: ydotool move failed: %v", err)
+				return false
+			}
 			time.Sleep(midDelay)
 		}
 	}
@@ -1083,20 +1122,30 @@ func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint) {
 	// Return to origin
 	lastPt := points[len(points)-1]
 	returnDelay := k.patternGen.ReturnDelay()
-	runBestEffort("ydotool", "mousemove", "-x", fmt.Sprintf("%d", -int(lastPt.X)), "-y", fmt.Sprintf("%d", -int(lastPt.Y)))
+	_, err := runVerbose("ydotool", "mousemove", "-x", fmt.Sprintf("%d", -int(lastPt.X)), "-y", fmt.Sprintf("%d", -int(lastPt.Y)))
+	if err != nil {
+		log.Printf("linux: ydotool move failed: %v", err)
+		return false
+	}
 	time.Sleep(returnDelay)
+	return true
 }
 
 // executePatternWtype executes mouse pattern using wtype (Wayland-native)
 // Note: wtype doesn't support relative mouse movement directly, so we use absolute coordinates
 // This is a simplified implementation - wtype may need different approach
-func (k *linuxKeepAlive) executePatternWtype(points []MousePoint) {
+func (k *linuxKeepAlive) executePatternWtype(points []MousePoint) bool {
 	// wtype doesn't have direct mouse movement commands in the same way
 	// We'll use a workaround: simulate small keyboard events or use wlrctl if available
 	// For now, log that wtype is not fully supported for mouse movement
 	log.Printf("linux: wtype mouse movement not fully implemented (wtype focuses on keyboard simulation)")
 	// Fall back to DBus simulation which works on Wayland
-	runBestEffort("dbus-send", "--dest=org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver.SimulateUserActivity")
+	_, err := runVerbose("dbus-send", "--dest=org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver.SimulateUserActivity")
+	if err != nil {
+		log.Printf("linux: wtype/DBus simulation failed: %v", err)
+		return false
+	}
+	return true
 }
 
 func (k *linuxKeepAlive) Start(ctx context.Context) error {
