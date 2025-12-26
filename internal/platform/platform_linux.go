@@ -978,13 +978,15 @@ func (k *linuxKeepAlive) simulateChatAppActivity(ctx context.Context, caps linux
 		return
 	}
 
-	// User became idle - log if we were previously active
+	// User became idle or idle check unavailable - log if we were previously active
 	if lastActiveLog != 0 {
 		atomic.StoreInt64(&k.lastActiveLogNS, 0)
 		if caps.xprintidleAvailable && idleErr == nil {
 			log.Printf("linux: user became idle (%v); resuming activity simulation", idle)
+		} else if idleErr != nil {
+			log.Printf("linux: idle check failed; resuming activity simulation (unable to determine user state)")
 		} else {
-			log.Printf("linux: user became idle; resuming activity simulation")
+			log.Printf("linux: resuming activity simulation")
 		}
 	}
 
