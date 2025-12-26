@@ -12,6 +12,14 @@ import (
 
 // Update handles messages and updates the model accordingly.
 func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
+	if m.ShowDependencyInfo {
+		// Still process timer messages so progress and timeout continue under the overlay
+		switch msg.(type) {
+		case timer.TickMsg, timer.TimeoutMsg:
+			return handleRunningState(msg, m)
+		}
+		return handleDependencyInfoState(msg, m)
+	}
 	if m.ShowHelp {
 		// Still process timer messages so progress and timeout continue under the overlay
 		switch msg.(type) {
@@ -48,6 +56,21 @@ func handleHelpState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleDependencyInfoState handles messages when dependency info is being displayed
+func handleDependencyInfoState(msg tea.Msg, m Model) (Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch {
+		case key.Matches(keyMsg, m.Keys.ToggleDependencyInfo):
+			m.ShowDependencyInfo = false
+		case key.Matches(keyMsg, m.Keys.Quit):
+			m.ShowDependencyInfo = false
+		case key.Matches(keyMsg, m.Keys.Back):
+			m.ShowDependencyInfo = false
+		}
+	}
+	return m, nil
+}
+
 // handleMenuState handles messages in the menu state
 func handleMenuState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -62,6 +85,10 @@ func handleMenuKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.Keys.ToggleHelp):
 		m.ShowHelp = true
+	case key.Matches(msg, m.Keys.ToggleDependencyInfo):
+		if m.DependencyWarning != "" {
+			m.ShowDependencyInfo = true
+		}
 	case key.Matches(msg, m.Keys.Up):
 		if m.Selected > 0 {
 			m.Selected--

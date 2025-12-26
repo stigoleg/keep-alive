@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -712,6 +713,9 @@ type linuxKeepAlive struct {
 
 	simulateActivity bool
 
+	// last time we logged that user is active (to avoid spam)
+	lastActiveLogNS int64
+
 	// random source and pattern generator for natural mouse movements
 	rnd        *rand.Rand
 	patternGen *MousePatternGenerator
@@ -943,20 +947,45 @@ func (k *linuxKeepAlive) startChatAppTickerLocked(ctx context.Context, caps linu
 
 func (k *linuxKeepAlive) simulateChatAppActivity(ctx context.Context, caps linuxCapabilities) {
 	shouldSimulate := true
+	var idle time.Duration
+	var idleErr error
+
 	if caps.xprintidleAvailable {
-		idle, err := getLinuxIdleTime()
-		if err == nil && idle <= IdleThreshold {
+		idle, idleErr = getLinuxIdleTime()
+		if idleErr == nil && idle <= IdleThreshold {
 			shouldSimulate = false
-		} else if err != nil {
-			log.Printf("linux: idle time check failed: %v (will simulate anyway)", err)
+		} else if idleErr != nil {
+			log.Printf("linux: idle time check failed: %v (will simulate anyway)", idleErr)
 		}
 	} else if caps.displayServer == "wayland" {
 		// xprintidle doesn't work on Wayland, so we'll simulate anyway
 		log.Printf("linux: xprintidle not available on Wayland; simulating activity")
 	}
 
+	nowNS := time.Now().UnixNano()
+	lastActiveLog := atomic.LoadInt64(&k.lastActiveLogNS)
+
 	if !shouldSimulate {
+		// Log occasionally (every 2 minutes) that we're skipping due to active use
+		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
+			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
+			if caps.xprintidleAvailable && idleErr == nil {
+				log.Printf("linux: user is active (idle: %v); skipping simulation to avoid interference", idle)
+			} else {
+				log.Printf("linux: user is active; skipping simulation to avoid interference")
+			}
+		}
 		return
+	}
+
+	// User became idle - log if we were previously active
+	if lastActiveLog != 0 {
+		atomic.StoreInt64(&k.lastActiveLogNS, 0)
+		if caps.xprintidleAvailable && idleErr == nil {
+			log.Printf("linux: user became idle (%v); resuming activity simulation", idle)
+		} else {
+			log.Printf("linux: user became idle; resuming activity simulation")
+		}
 	}
 
 	points := k.patternGen.GenerateShapePoints()

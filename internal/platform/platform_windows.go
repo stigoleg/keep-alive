@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -95,6 +96,9 @@ type windowsKeepAlive struct {
 	activeMethod string
 
 	simulateActivity bool
+
+	// last time we logged that user is active (to avoid spam)
+	lastActiveLogNS int64
 
 	// random source and pattern generator for natural mouse movements
 	rnd        *rand.Rand
@@ -212,8 +216,22 @@ func (k *windowsKeepAlive) simulateChatAppActivity() {
 		return
 	}
 
+	nowNS := time.Now().UnixNano()
+	lastActiveLog := atomic.LoadInt64(&k.lastActiveLogNS)
+
 	if idle <= IdleThreshold {
+		// Log occasionally (every 2 minutes) that we're skipping due to active use
+		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
+			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
+			log.Printf("windows: user is active (idle: %v); skipping simulation to avoid interference", idle)
+		}
 		return
+	}
+
+	// User became idle - log if we were previously active
+	if lastActiveLog != 0 {
+		atomic.StoreInt64(&k.lastActiveLogNS, 0)
+		log.Printf("windows: user became idle (%v); resuming activity simulation", idle)
 	}
 
 	points := k.patternGen.GenerateShapePoints()

@@ -8,6 +8,9 @@ import (
 
 // View renders the current state of the model to a string.
 func View(m Model) string {
+	if m.ShowDependencyInfo {
+		return dependencyInfoView(m)
+	}
 	if m.ShowHelp {
 		return helpView(m)
 	}
@@ -69,6 +72,14 @@ func menuView(m Model) string {
 	}
 	b.WriteString(Current.Unselected.Render(activeText) + " " + Current.Unselected.Render("(press 'a' to toggle)"))
 	b.WriteString("\n")
+
+	// Dependency warning notification
+	if m.DependencyWarning != "" && !m.ShowDependencyInfo {
+		b.WriteString("\n")
+		warningText := "⚠ Missing optional dependencies detected. Press 'i' for details."
+		b.WriteString(Current.Error.Render(warningText))
+		b.WriteString("\n")
+	}
 
 	if m.ErrorMessage != "" {
 		b.WriteString("\n" + Current.Error.Render(m.ErrorMessage))
@@ -167,7 +178,24 @@ Navigation:
   ↑/k, ↓/j  : Navigate menu
   Enter      : Select option
   h/?        : Toggle help overlay
+  i          : Show dependency information (if available)
   q/Esc      : Quit/Back
 `
 	return Current.Help.Render(fmt.Sprintf(help, m.Version()))
+}
+
+// dependencyInfoView displays detailed dependency information
+func dependencyInfoView(m Model) string {
+	if m.DependencyWarning == "" {
+		return Current.Help.Render("No dependency information available.")
+	}
+
+	header := `Keep-Alive — Dependency Information
+Version: %s
+
+%s
+
+Press 'i' or 'Esc' to close this view.
+`
+	return Current.Help.Render(fmt.Sprintf(header, m.Version(), m.DependencyWarning))
 }

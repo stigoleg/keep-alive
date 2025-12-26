@@ -87,6 +87,9 @@ type darwinKeepAlive struct {
 	// last time we warned about Accessibility, unix nanos
 	lastPermWarnNS int64
 
+	// last time we logged that user is active (to avoid spam)
+	lastActiveLogNS int64
+
 	// random source for jitter
 	rnd *rand.Rand
 
@@ -258,8 +261,22 @@ func (k *darwinKeepAlive) simulateChatAppActivity() {
 	}
 
 	// Only simulate activity if user has been idle for more than threshold
+	nowNS := time.Now().UnixNano()
+	lastActiveLog := atomic.LoadInt64(&k.lastActiveLogNS)
+
 	if idle <= IdleThreshold {
+		// Log occasionally (every 2 minutes) that we're skipping due to active use
+		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
+			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
+			log.Printf("darwin: user is active (idle: %v); skipping simulation to avoid interference", idle)
+		}
 		return
+	}
+
+	// User became idle - log if we were previously active
+	if lastActiveLog != 0 {
+		atomic.StoreInt64(&k.lastActiveLogNS, 0)
+		log.Printf("darwin: user became idle (%v); resuming activity simulation", idle)
 	}
 
 	// User is idle - simulate natural, human-like activity

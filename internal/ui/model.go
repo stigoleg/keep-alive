@@ -33,6 +33,8 @@ type Model struct {
 	StartTime          time.Time
 	Duration           time.Duration
 	ShowHelp           bool
+	ShowDependencyInfo bool
+	DependencyWarning  string
 	version            string
 	Keys               KeyMap
 	Help               help.Model
@@ -50,6 +52,8 @@ func InitialModel() Model {
 		durationStringMode: false,
 		KeepAlive:          &keepalive.Keeper{},
 		ShowHelp:           false,
+		ShowDependencyInfo: false,
+		DependencyWarning:  "",
 		Keys:               DefaultKeys(),
 		Help:               NewHelpModel(),
 		progress:           progress.New(progress.WithDefaultGradient(), progress.WithWidth(34)),
@@ -126,6 +130,11 @@ func (m *Model) SetVersion(version string) {
 // Version returns the current version
 func (m Model) Version() string {
 	return m.version
+}
+
+// SetDependencyWarning sets the dependency warning message
+func (m *Model) SetDependencyWarning(message string) {
+	m.DependencyWarning = message
 }
 
 // newMinutesTextInput constructs a focused text input configured for minute entry.

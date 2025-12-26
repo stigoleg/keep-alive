@@ -8,8 +8,9 @@ import (
 // KeyMap defines key bindings for various UI states and common actions.
 type KeyMap struct {
 	// Common
-	Quit       key.Binding
-	ToggleHelp key.Binding
+	Quit               key.Binding
+	ToggleHelp         key.Binding
+	ToggleDependencyInfo key.Binding
 
 	// Menu navigation
 	Up     key.Binding
@@ -35,6 +36,10 @@ func DefaultKeys() KeyMap {
 		ToggleHelp: key.NewBinding(
 			key.WithKeys("h", "?"),
 			key.WithHelp("h/?", "toggle help"),
+		),
+		ToggleDependencyInfo: key.NewBinding(
+			key.WithKeys("i"),
+			key.WithHelp("i", "dependency info"),
 		),
 		Up: key.NewBinding(
 			key.WithKeys("up", "k"),
