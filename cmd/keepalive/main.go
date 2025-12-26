@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -46,15 +45,6 @@ func main() {
 		}
 	}()
 
-	// Check for missing dependencies and display information before TUI starts
-	depMessage := platform.GetDependencyMessage()
-	if depMessage != "" {
-		fmt.Print(depMessage)
-		fmt.Print("(This message is also logged to debug.log)\n")
-		fmt.Print("Starting application in 2 seconds...\n\n")
-		time.Sleep(2 * time.Second)
-	}
-
 	var model ui.Model
 	if cfg.Duration > 0 {
 		model = ui.InitialModelWithDuration(cfg.Duration, cfg.SimulateActivity)
@@ -63,6 +53,13 @@ func main() {
 		model.SimulateActivity = cfg.SimulateActivity
 	}
 	model.SetVersion(appVersion)
+
+	// Check for missing dependencies and store in model for TUI display
+	depMessage := platform.GetDependencyMessage()
+	if depMessage != "" {
+		model.SetDependencyWarning(depMessage)
+		log.Printf("linux: missing dependencies detected:\n%s", depMessage)
+	}
 
 	keeperRef = model.KeepAlive
 
