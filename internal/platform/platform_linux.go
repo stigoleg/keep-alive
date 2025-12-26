@@ -597,14 +597,17 @@ func (u *uinputSimulator) setup() error {
 	// Enable relative axes
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetEvbit), uintptr(evRel)); errno != 0 {
 		f.Close()
+		u.fd = 0
 		return errno
 	}
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetRelbit), uintptr(relX)); errno != 0 {
 		f.Close()
+		u.fd = 0
 		return errno
 	}
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiSetRelbit), uintptr(relY)); errno != 0 {
 		f.Close()
+		u.fd = 0
 		return errno
 	}
 
@@ -621,6 +624,7 @@ func (u *uinputSimulator) setup() error {
 	}
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiDevCreate), 0); errno != 0 {
 		f.Close()
+		u.fd = 0
 		return errno
 	}
 
@@ -670,15 +674,14 @@ type linuxCapabilities struct {
 }
 
 type linuxKeepAlive struct {
-	mu           sync.Mutex
-	ctx          context.Context
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
-	isRunning    bool
-	activityTick *time.Ticker
-	chatAppTick  *time.Ticker
-	inhibitors   []inhibitor
-	uinput       *uinputSimulator
+	mu          sync.Mutex
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+	isRunning   bool
+	chatAppTick *time.Ticker
+	inhibitors  []inhibitor
+	uinput      *uinputSimulator
 
 	simulateActivity bool
 
@@ -885,24 +888,6 @@ func (k *linuxKeepAlive) setupUinput() {
 	}
 }
 
-func (k *linuxKeepAlive) startActivityTickerLocked(ctx context.Context) {
-	k.activityTick = time.NewTicker(ActivityInterval)
-	k.wg.Add(1)
-	go func() {
-		defer k.wg.Done()
-		defer k.activityTick.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-k.activityTick.C:
-				// System keep-alive refresh (no activity simulation here)
-			}
-		}
-	}()
-}
-
 func (k *linuxKeepAlive) startChatAppTickerLocked(ctx context.Context, caps linuxCapabilities) {
 	if !k.simulateActivity {
 		return
@@ -953,38 +938,38 @@ func (k *linuxKeepAlive) simulateChatAppActivity(ctx context.Context, caps linux
 
 func (k *linuxKeepAlive) executeMousePattern(points []MousePoint, caps linuxCapabilities) {
 	// Execute pattern using available methods based on display server
-	// Priority: uinput → ydotool → wtype → xdotool (X11 only) → DBus fallback
-
-	executed := false
+	// Priority: uinput → ydotool → xdotool (X11 only) → wtype (Wayland only) → DBus fallback
+	// Stop after first successful method to avoid redundant execution
 
 	// Try uinput first (works on both X11 and Wayland if permissions allow)
 	if k.uinput != nil {
 		k.executePatternUinput(points)
-		executed = true
+		return
 	}
 
 	// Try ydotool (works on both X11 and Wayland)
 	if caps.ydotoolAvailable {
 		k.executePatternYdotool(points)
-		executed = true
-	}
-
-	// Try wtype (Wayland-native, but limited mouse support)
-	if caps.displayServer == "wayland" && caps.wtypeAvailable {
-		k.executePatternWtype(points)
+		return
 	}
 
 	// Try xdotool (X11 only)
 	if caps.displayServer == "x11" && caps.xdotoolAvailable {
 		k.executePatternXdotool(points)
-		executed = true
+		return
 	}
 
-	// Soft simulation via DBus (works on both, but less effective)
+	// Try wtype (Wayland-native, but limited mouse support)
+	if caps.displayServer == "wayland" && caps.wtypeAvailable {
+		k.executePatternWtype(points)
+		return
+	}
+
+	// Soft simulation via DBus (works on both, but less effective) - only if no other method worked
 	runBestEffort("dbus-send", "--dest=org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver.SimulateUserActivity")
 	runBestEffort("dbus-send", "--dest=org.gnome.ScreenSaver", "/org/gnome/ScreenSaver", "org.gnome.ScreenSaver.SimulateUserActivity")
 
-	if !executed && caps.displayServer == "wayland" {
+	if caps.displayServer == "wayland" {
 		log.Printf("linux: warning: no Wayland-compatible mouse simulation method available. Install ydotool: sudo apt install ydotool (or equivalent for your distribution)")
 	}
 }
@@ -1171,7 +1156,7 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 	log.Printf("linux: === End Diagnostics ===")
 	log.Printf("linux: started successfully; active inhibitors: %d", activeCount)
 
-	k.startActivityTickerLocked(k.ctx)
+	// Activity ticker removed - inhibitors maintain state without periodic refresh
 	k.startChatAppTickerLocked(k.ctx, caps)
 
 	k.isRunning = true
@@ -1190,9 +1175,6 @@ func (k *linuxKeepAlive) Stop() error {
 	}
 
 	// Stop tickers first to prevent new operations
-	if k.activityTick != nil {
-		k.activityTick.Stop()
-	}
 	if k.chatAppTick != nil {
 		k.chatAppTick.Stop()
 		k.chatAppTick = nil
@@ -1251,7 +1233,6 @@ func (k *linuxKeepAlive) Stop() error {
 	k.isRunning = false
 	k.ctx = nil
 	k.cancel = nil
-	k.activityTick = nil
 	k.mu.Unlock()
 
 	if len(deactivateErrors) > 0 {
