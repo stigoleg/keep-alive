@@ -352,6 +352,29 @@ func formatDependencyMessages(missing []DependencyInfo, displayServer string, ha
 	return b.String()
 }
 
+// getInputGroupGID looks up the "input" group GID by parsing /etc/group
+// Returns the GID if found, or -1 if not found or on error
+func getInputGroupGID() int {
+	file, err := os.Open("/etc/group")
+	if err != nil {
+		return -1
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		// /etc/group format: groupname:password:GID:userlist
+		parts := strings.Split(line, ":")
+		if len(parts) >= 3 && parts[0] == "input" {
+			if gid, err := strconv.Atoi(parts[2]); err == nil {
+				return gid
+			}
+		}
+	}
+	return -1
+}
+
 // checkUinputPermissions checks if uinput is accessible and returns user-friendly error message if not
 // Returns: (hasAccess bool, errorMessage string)
 func checkUinputPermissions() (bool, string) {
@@ -363,23 +386,22 @@ func checkUinputPermissions() (bool, string) {
 	// Try to open the device to check permissions
 	f, err := os.OpenFile(uinputDevicePath, os.O_WRONLY, 0)
 	if err != nil {
-		// Check if user is in input group
-		groups, err := os.Getgroups()
+		// Check if user is in input group by looking up the actual input group GID
+		userGroups, err := os.Getgroups()
 		if err == nil {
-			// Check if any group matches input (typically gid 104)
-			// We can't easily check group name without parsing /etc/group, so we'll provide general instructions
-			hasInputGroup := false
-			for _, gid := range groups {
-				// Common input group GID is 104, but can vary
-				// We'll check by trying to read /etc/group or provide general instructions
-				if gid == 104 {
-					hasInputGroup = true
-					break
+			inputGID := getInputGroupGID()
+			if inputGID != -1 {
+				hasInputGroup := false
+				for _, gid := range userGroups {
+					if gid == inputGID {
+						hasInputGroup = true
+						break
+					}
 				}
-			}
-			if !hasInputGroup {
-				msg := "uinput permission denied. Add your user to the 'input' group:\n  sudo usermod -aG input $USER\nThen log out and log back in for changes to take effect.\n\nAlternatively, create a udev rule:\n  echo 'KERNEL==\"uinput\", MODE=\"0664\", GROUP=\"input\"' | sudo tee /etc/udev/rules.d/99-uinput.rules\n  sudo udevadm control --reload-rules\n  sudo udevadm trigger"
-				return false, msg
+				if !hasInputGroup {
+					msg := "uinput permission denied. Add your user to the 'input' group:\n  sudo usermod -aG input $USER\nThen log out and log back in for changes to take effect.\n\nAlternatively, create a udev rule:\n  echo 'KERNEL==\"uinput\", MODE=\"0664\", GROUP=\"input\"' | sudo tee /etc/udev/rules.d/99-uinput.rules\n  sudo udevadm control --reload-rules\n  sudo udevadm trigger"
+					return false, msg
+				}
 			}
 		}
 		return false, fmt.Sprintf("uinput permission denied: %v\n\nTo fix:\n1. Add user to input group: sudo usermod -aG input $USER (then logout/login)\n2. Or create udev rule: echo 'KERNEL==\"uinput\", MODE=\"0664\", GROUP=\"input\"' | sudo tee /etc/udev/rules.d/99-uinput.rules", err)
