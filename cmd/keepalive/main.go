@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -10,13 +11,14 @@ import (
 
 	"github.com/stigoleg/keep-alive/internal/config"
 	"github.com/stigoleg/keep-alive/internal/keepalive"
+	"github.com/stigoleg/keep-alive/internal/platform"
 	"github.com/stigoleg/keep-alive/internal/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 const (
-	appVersion      = "1.4.6"
+	appVersion      = "1.4.7"
 	shutdownTimeout = 5 * time.Second
 )
 
@@ -43,6 +45,15 @@ func main() {
 			logFile.Close()
 		}
 	}()
+
+	// Check for missing dependencies and display information before TUI starts
+	depMessage := platform.GetDependencyMessage()
+	if depMessage != "" {
+		fmt.Print(depMessage)
+		fmt.Print("(This message is also logged to debug.log)\n")
+		fmt.Print("Starting application in 2 seconds...\n\n")
+		time.Sleep(2 * time.Second)
+	}
 
 	var model ui.Model
 	if cfg.Duration > 0 {

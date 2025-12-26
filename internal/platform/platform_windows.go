@@ -380,6 +380,11 @@ func (k *windowsKeepAlive) SetSimulateActivity(simulate bool) {
 	}
 }
 
+// GetDependencyMessage returns empty string on Windows (no external dependencies needed)
+func GetDependencyMessage() string {
+	return ""
+}
+
 // NewKeepAlive creates a new platform-specific keep-alive instance
 func NewKeepAlive() (KeepAlive, error) {
 	return &windowsKeepAlive{}, nil

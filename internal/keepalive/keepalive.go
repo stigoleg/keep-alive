@@ -94,7 +94,15 @@ func (k *Keeper) StartTimed(d time.Duration) error {
 	k.running = true
 	k.endTime = time.Now().Add(d)
 	k.timer = time.AfterFunc(d, func() {
-		k.Stop()
+		// Check if still running before calling Stop to avoid race condition
+		// This prevents the timer callback from calling Stop() if Stop() was already called
+		k.mu.Lock()
+		stillRunning := k.running
+		k.mu.Unlock()
+
+		if stillRunning {
+			k.Stop()
+		}
 	})
 
 	log.Printf("keeper: started (timed=%s)", d)
