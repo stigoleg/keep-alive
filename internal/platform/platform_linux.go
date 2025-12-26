@@ -642,6 +642,7 @@ func (u *uinputSimulator) setup() error {
 
 	if _, _, errno := syscall.Syscall(syscall.SYS_WRITE, u.fd, uintptr(unsafe.Pointer(&dev)), unsafe.Sizeof(dev)); errno != 0 {
 		f.Close()
+		u.fd = 0
 		return errno
 	}
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, u.fd, uintptr(uiDevCreate), 0); errno != 0 {
