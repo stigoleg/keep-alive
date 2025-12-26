@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -45,6 +46,346 @@ func runBestEffort(name string, args ...string) {
 func hasCommand(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
+}
+
+// detectDesktopEnvironment detects the current desktop environment
+// Returns: "cosmic", "gnome", "kde", "xfce", "mate", "unknown"
+func detectDesktopEnvironment() string {
+	xdgDesktop := strings.ToLower(os.Getenv("XDG_CURRENT_DESKTOP"))
+	desktopSession := strings.ToLower(os.Getenv("DESKTOP_SESSION"))
+
+	// Check for Cosmic (Pop OS)
+	if strings.Contains(xdgDesktop, "cosmic") || strings.Contains(xdgDesktop, "pop") ||
+		strings.Contains(desktopSession, "cosmic") || strings.Contains(desktopSession, "pop") {
+		return "cosmic"
+	}
+
+	// Check for GNOME
+	if strings.Contains(xdgDesktop, "gnome") || strings.Contains(desktopSession, "gnome") {
+		return "gnome"
+	}
+
+	// Check for KDE
+	if strings.Contains(xdgDesktop, "kde") || strings.Contains(desktopSession, "kde") ||
+		strings.Contains(xdgDesktop, "plasma") {
+		return "kde"
+	}
+
+	// Check for XFCE
+	if strings.Contains(xdgDesktop, "xfce") || strings.Contains(desktopSession, "xfce") {
+		return "xfce"
+	}
+
+	// Check for MATE
+	if strings.Contains(xdgDesktop, "mate") || strings.Contains(desktopSession, "mate") {
+		return "mate"
+	}
+
+	return "unknown"
+}
+
+// detectDisplayServer detects whether running on Wayland or X11
+// Returns: "wayland", "x11", or "unknown"
+func detectDisplayServer() string {
+	if os.Getenv("WAYLAND_DISPLAY") != "" {
+		return "wayland"
+	}
+	if os.Getenv("XDG_SESSION_TYPE") == "wayland" {
+		return "wayland"
+	}
+	if os.Getenv("DISPLAY") != "" {
+		return "x11"
+	}
+	if os.Getenv("XDG_SESSION_TYPE") == "x11" {
+		return "x11"
+	}
+	return "unknown"
+}
+
+// detectLinuxDistribution detects the Linux distribution and package manager by parsing /etc/os-release.
+// It supports major distributions including Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE, and Alpine.
+// Returns: (distribution name, package manager command, error)
+// If detection fails, returns "unknown" for distribution and package manager.
+func detectLinuxDistribution() (string, string, error) {
+	file, err := os.Open("/etc/os-release")
+	if err != nil {
+		return "unknown", "", fmt.Errorf("failed to read /etc/os-release: %v", err)
+	}
+	defer file.Close()
+
+	var id, idLike string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "ID=") {
+			id = strings.Trim(strings.TrimPrefix(line, "ID="), "\"")
+		}
+		if strings.HasPrefix(line, "ID_LIKE=") {
+			idLike = strings.Trim(strings.TrimPrefix(line, "ID_LIKE="), "\"")
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "unknown", "", fmt.Errorf("failed to parse /etc/os-release: %v", err)
+	}
+
+	// Normalize distribution name
+	distro := strings.ToLower(id)
+	if distro == "" {
+		distro = "unknown"
+	}
+
+	// Determine package manager based on distribution
+	var pkgManager string
+	switch {
+	case distro == "debian" || distro == "ubuntu" || distro == "pop" || strings.Contains(idLike, "debian") || strings.Contains(idLike, "ubuntu"):
+		pkgManager = "apt"
+	case distro == "fedora" || distro == "rhel" || distro == "centos" || strings.Contains(idLike, "fedora") || strings.Contains(idLike, "rhel"):
+		// Check if dnf is available, fallback to yum
+		if hasCommand("dnf") {
+			pkgManager = "dnf"
+		} else {
+			pkgManager = "yum"
+		}
+	case distro == "arch" || distro == "manjaro" || strings.Contains(idLike, "arch"):
+		pkgManager = "pacman"
+	case distro == "opensuse" || distro == "opensuse-leap" || distro == "opensuse-tumbleweed" || strings.Contains(idLike, "suse"):
+		pkgManager = "zypper"
+	case distro == "alpine":
+		pkgManager = "apk"
+	default:
+		// Try to detect package manager by checking which commands are available
+		if hasCommand("apt") {
+			pkgManager = "apt"
+		} else if hasCommand("dnf") {
+			pkgManager = "dnf"
+		} else if hasCommand("yum") {
+			pkgManager = "yum"
+		} else if hasCommand("pacman") {
+			pkgManager = "pacman"
+		} else if hasCommand("zypper") {
+			pkgManager = "zypper"
+		} else if hasCommand("apk") {
+			pkgManager = "apk"
+		} else {
+			pkgManager = "unknown"
+		}
+	}
+
+	return distro, pkgManager, nil
+}
+
+// getPackageName returns the package name for a tool on a specific distribution.
+// Package names are typically consistent across distributions, but availability may vary.
+func getPackageName(tool string, distro string) string {
+	tool = strings.ToLower(tool)
+	// distro parameter is kept for potential future distro-specific variations
+
+	switch tool {
+	case "ydotool", "xdotool", "wtype":
+		// Package names are consistent across distributions
+		return tool
+	default:
+		return ""
+	}
+}
+
+// generateInstallCommand generates a distro-specific installation command for the given tool.
+// Returns: (installation command, optional note about package availability)
+// If the package manager is unknown, returns a generic instruction.
+// If the package name cannot be determined, returns an empty command with an error note.
+func generateInstallCommand(tool string, distro string, pkgManager string) (string, string) {
+	if tool == "" {
+		return "", "Tool name is required"
+	}
+	
+	pkgName := getPackageName(tool, distro)
+	if pkgName == "" {
+		return "", fmt.Sprintf("Package name not available for tool '%s' on distribution '%s'", tool, distro)
+	}
+
+	var cmd string
+	var note string
+
+	switch pkgManager {
+	case "apt":
+		cmd = fmt.Sprintf("sudo apt update && sudo apt install %s", pkgName)
+		if tool == "ydotool" {
+			note = "Note: ydotool may not be in default Ubuntu/Debian repos. You may need to build from source or use a PPA."
+		}
+	case "dnf", "yum":
+		cmd = fmt.Sprintf("sudo %s install %s", pkgManager, pkgName)
+		if tool == "ydotool" {
+			note = "Note: ydotool may not be in default Fedora/RHEL repos. You may need to build from source."
+		}
+	case "pacman":
+		cmd = fmt.Sprintf("sudo pacman -S %s", pkgName)
+		if tool == "ydotool" {
+			note = "Note: ydotool is available in AUR. Install with: yay -S ydotool (or use your AUR helper)"
+		}
+	case "zypper":
+		cmd = fmt.Sprintf("sudo zypper install %s", pkgName)
+	case "apk":
+		cmd = fmt.Sprintf("sudo apk add %s", pkgName)
+	default:
+		cmd = fmt.Sprintf("Install %s using your distribution's package manager", pkgName)
+		note = fmt.Sprintf("Package name: %s. Check your distribution's repositories.", pkgName)
+	}
+
+	return cmd, note
+}
+
+// checkMissingDependencies checks which dependencies are missing and returns installation information.
+// It detects the Linux distribution and generates distro-specific installation commands.
+// Returns a list of DependencyInfo structs for missing optional dependencies.
+func checkMissingDependencies(caps linuxCapabilities, displayServer string, hasUinput bool) []DependencyInfo {
+	var missing []DependencyInfo
+
+	distro, pkgManager, err := detectLinuxDistribution()
+	if err != nil {
+		log.Printf("linux: failed to detect distribution: %v", err)
+		distro = "unknown"
+		pkgManager = "unknown"
+	}
+
+	// Check ydotool (recommended for Wayland, works on X11 too)
+	if !caps.ydotoolAvailable {
+		installCmd, note := generateInstallCommand("ydotool", distro, pkgManager)
+		whyNeeded := "Provides reliable mouse simulation on both X11 and Wayland (recommended)"
+		if displayServer == "wayland" {
+			whyNeeded = "Provides reliable mouse simulation on Wayland display server (highly recommended)"
+		}
+		alt := "Use uinput instead (requires permissions: sudo usermod -aG input $USER, then logout/login)"
+		if !hasUinput {
+			alt = "Setup uinput permissions: sudo usermod -aG input $USER (then logout/login)"
+		}
+		missing = append(missing, DependencyInfo{
+			Name:        "ydotool",
+			WhyNeeded:   whyNeeded,
+			InstallCmd:  installCmd,
+			Optional:    true,
+			Available:   true,
+			Alternative: alt,
+		})
+		if note != "" {
+			missing[len(missing)-1].Alternative = note + "\n" + alt
+		}
+	}
+
+	// Check xdotool (X11 only)
+	if displayServer == "x11" && !caps.xdotoolAvailable {
+		installCmd, _ := generateInstallCommand("xdotool", distro, pkgManager)
+		whyNeeded := "Provides mouse simulation on X11 display server"
+		alt := "Not needed if using Wayland or if uinput/ydotool is configured"
+		if !hasUinput && !caps.ydotoolAvailable {
+			alt = "Alternative: Install ydotool (works on both X11 and Wayland) or setup uinput"
+		}
+		missing = append(missing, DependencyInfo{
+			Name:        "xdotool",
+			WhyNeeded:   whyNeeded,
+			InstallCmd:  installCmd,
+			Optional:    true,
+			Available:   true,
+			Alternative: alt,
+		})
+	}
+
+	// Check wtype (Wayland only, optional)
+	if displayServer == "wayland" && !caps.wtypeAvailable {
+		installCmd, note := generateInstallCommand("wtype", distro, pkgManager)
+		whyNeeded := "Provides Wayland-native mouse/keyboard simulation (optional, ydotool is preferred)"
+		alt := "ydotool is recommended instead, or use uinput"
+		missing = append(missing, DependencyInfo{
+			Name:        "wtype",
+			WhyNeeded:   whyNeeded,
+			InstallCmd:  installCmd,
+			Optional:    true,
+			Available:   note == "", // Available if no special note
+			Alternative: alt,
+		})
+		if note != "" {
+			missing[len(missing)-1].Alternative = note + "\n" + alt
+		}
+	}
+
+	return missing
+}
+
+// formatDependencyMessages formats dependency information into user-friendly messages.
+// Returns an empty string if no dependencies are missing, otherwise returns a formatted message
+// with installation instructions and alternatives.
+func formatDependencyMessages(missing []DependencyInfo, displayServer string, hasUinput bool) string {
+	if len(missing) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString("═══════════════════════════════════════════════════════════\n")
+	b.WriteString("  Missing Optional Dependencies Detected\n")
+	b.WriteString("═══════════════════════════════════════════════════════════\n")
+	b.WriteString("\n")
+	b.WriteString("The following dependencies are recommended for optimal mouse simulation:\n")
+	b.WriteString("\n")
+
+	for i, dep := range missing {
+		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, dep.Name))
+		b.WriteString(fmt.Sprintf("   Why needed: %s\n", dep.WhyNeeded))
+		b.WriteString(fmt.Sprintf("   Install with: %s\n", dep.InstallCmd))
+		if dep.Alternative != "" {
+			b.WriteString(fmt.Sprintf("   Alternative: %s\n", dep.Alternative))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("Note: The app will work without these dependencies, but mouse\n")
+	b.WriteString("simulation may be limited. DBus simulation will be used as fallback.\n")
+	b.WriteString("\n")
+	if !hasUinput {
+		b.WriteString("Tip: Setting up uinput permissions provides native mouse simulation\n")
+		b.WriteString("     without external dependencies. Run: sudo usermod -aG input $USER\n")
+		b.WriteString("     (then logout and login again)\n")
+		b.WriteString("\n")
+	}
+	b.WriteString("═══════════════════════════════════════════════════════════\n")
+
+	return b.String()
+}
+
+// checkUinputPermissions checks if uinput is accessible and returns user-friendly error message if not
+// Returns: (hasAccess bool, errorMessage string)
+func checkUinputPermissions() (bool, string) {
+	// Check if /dev/uinput exists
+	if _, err := os.Stat(uinputDevicePath); os.IsNotExist(err) {
+		return false, "uinput device not found: /dev/uinput does not exist. The uinput kernel module may not be loaded. Try: sudo modprobe uinput"
+	}
+
+	// Try to open the device to check permissions
+	f, err := os.OpenFile(uinputDevicePath, os.O_WRONLY, 0)
+	if err != nil {
+		// Check if user is in input group
+		groups, err := os.Getgroups()
+		if err == nil {
+			// Check if any group matches input (typically gid 104)
+			// We can't easily check group name without parsing /etc/group, so we'll provide general instructions
+			hasInputGroup := false
+			for _, gid := range groups {
+				// Common input group GID is 104, but can vary
+				// We'll check by trying to read /etc/group or provide general instructions
+				if gid == 104 {
+					hasInputGroup = true
+					break
+				}
+			}
+			if !hasInputGroup {
+				msg := "uinput permission denied. Add your user to the 'input' group:\n  sudo usermod -aG input $USER\nThen log out and log back in for changes to take effect.\n\nAlternatively, create a udev rule:\n  echo 'KERNEL==\"uinput\", MODE=\"0664\", GROUP=\"input\"' | sudo tee /etc/udev/rules.d/99-uinput.rules\n  sudo udevadm control --reload-rules\n  sudo udevadm trigger"
+				return false, msg
+			}
+		}
+		return false, fmt.Sprintf("uinput permission denied: %v\n\nTo fix:\n1. Add user to input group: sudo usermod -aG input $USER (then logout/login)\n2. Or create udev rule: echo 'KERNEL==\"uinput\", MODE=\"0664\", GROUP=\"input\"' | sudo tee /etc/udev/rules.d/99-uinput.rules", err)
+	}
+	f.Close()
+	return true, ""
 }
 
 // --- systemd-inhibit strategy ---
@@ -307,22 +648,37 @@ func (u *uinputSimulator) close() {
 
 // --- Platform Implementation ---
 
+// DependencyInfo contains information about a missing dependency and how to install it.
+// This struct is used to provide user-friendly installation guidance.
+type DependencyInfo struct {
+	Name        string // Name of the dependency (e.g., "ydotool", "xdotool")
+	WhyNeeded   string // Explanation of why this dependency is needed
+	InstallCmd  string // Distro-specific installation command
+	Optional    bool   // Whether the dependency is optional (all dependencies are currently optional)
+	Available   bool   // Whether the package exists in default repositories
+	Alternative string // Alternative installation methods or workarounds
+}
+
 type linuxCapabilities struct {
 	xdotoolAvailable    bool
 	xprintidleAvailable bool
 	uinputAvailable     bool
+	ydotoolAvailable    bool
+	wtypeAvailable      bool
+	displayServer       string
+	desktopEnvironment  string
 }
 
 type linuxKeepAlive struct {
-	mu           sync.Mutex
-	ctx          context.Context
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
-	isRunning    bool
-	activityTick *time.Ticker
-	chatAppTick  *time.Ticker
-	inhibitors   []inhibitor
-	uinput       *uinputSimulator
+	mu                sync.Mutex
+	ctx               context.Context
+	cancel            context.CancelFunc
+	wg                sync.WaitGroup
+	isRunning         bool
+	activityTick      *time.Ticker
+	chatAppTick       *time.Ticker
+	inhibitors        []inhibitor
+	uinput            *uinputSimulator
 
 	simulateActivity bool
 
@@ -336,13 +692,42 @@ func detectLinuxCapabilities() linuxCapabilities {
 		xdotoolAvailable:    hasCommand("xdotool"),
 		xprintidleAvailable: hasCommand("xprintidle"),
 		uinputAvailable:     true, // Will be tested during setup
+		ydotoolAvailable:    hasCommand("ydotool"),
+		wtypeAvailable:      hasCommand("wtype"),
+		displayServer:       detectDisplayServer(),
+		desktopEnvironment:  detectDesktopEnvironment(),
 	}
 }
 
+// buildLinuxInhibitors builds a prioritized list of inhibitors based on detected desktop environment
+// Priority: systemd-inhibit (always first) → DE-specific DBus → gsettings (GNOME-based) → xset (X11 only)
 func buildLinuxInhibitors() []inhibitor {
-	return []inhibitor{
-		&systemdInhibitor{},
-		&dbusInhibitor{
+	de := detectDesktopEnvironment()
+	displayServer := detectDisplayServer()
+	inhibitors := []inhibitor{}
+
+	// Always try systemd-inhibit first (works on all systems)
+	inhibitors = append(inhibitors, &systemdInhibitor{})
+
+	// Add DE-specific inhibitors based on detected desktop
+	switch de {
+	case "cosmic":
+		// Cosmic uses GNOME session manager
+		inhibitors = append(inhibitors, &dbusInhibitor{
+			name: "dbus-cosmic",
+			dbusStrategy: dbusStrategy{
+				dest:   "org.gnome.SessionManager",
+				path:   "/org/gnome/SessionManager",
+				iface:  "org.gnome.SessionManager",
+				method: "Inhibit",
+				args:   []string{"string:keep-alive", "uint32:0", "string:User requested keep-alive", "uint32:12"},
+			},
+			unInhibitArg: "Uninhibit",
+		})
+		// Cosmic is GNOME-based, so gsettings should work
+		inhibitors = append(inhibitors, &gsettingsInhibitor{})
+	case "gnome":
+		inhibitors = append(inhibitors, &dbusInhibitor{
 			name: "dbus-gnome",
 			dbusStrategy: dbusStrategy{
 				dest:   "org.gnome.SessionManager",
@@ -352,19 +737,10 @@ func buildLinuxInhibitors() []inhibitor {
 				args:   []string{"string:keep-alive", "uint32:0", "string:User requested keep-alive", "uint32:12"},
 			},
 			unInhibitArg: "Uninhibit",
-		},
-		&dbusInhibitor{
-			name: "dbus-freedesktop",
-			dbusStrategy: dbusStrategy{
-				dest:   "org.freedesktop.ScreenSaver",
-				path:   "/org/freedesktop/ScreenSaver",
-				iface:  "org.freedesktop.ScreenSaver",
-				method: "Inhibit",
-				args:   []string{"string:keep-alive", "string:Keep system awake"},
-			},
-			unInhibitArg: "UnInhibit",
-		},
-		&dbusInhibitor{
+		})
+		inhibitors = append(inhibitors, &gsettingsInhibitor{})
+	case "kde":
+		inhibitors = append(inhibitors, &dbusInhibitor{
 			name: "dbus-kde",
 			dbusStrategy: dbusStrategy{
 				dest:   "org.freedesktop.PowerManagement.Inhibit",
@@ -374,8 +750,9 @@ func buildLinuxInhibitors() []inhibitor {
 				args:   []string{"string:keep-alive", "string:Keep system awake"},
 			},
 			unInhibitArg: "UnInhibit",
-		},
-		&dbusInhibitor{
+		})
+	case "xfce":
+		inhibitors = append(inhibitors, &dbusInhibitor{
 			name: "dbus-xfce",
 			dbusStrategy: dbusStrategy{
 				dest:   "org.xfce.PowerManager",
@@ -385,8 +762,9 @@ func buildLinuxInhibitors() []inhibitor {
 				args:   []string{"string:keep-alive", "string:Keep system awake"},
 			},
 			unInhibitArg: "UnInhibit",
-		},
-		&dbusInhibitor{
+		})
+	case "mate":
+		inhibitors = append(inhibitors, &dbusInhibitor{
 			name: "dbus-mate",
 			dbusStrategy: dbusStrategy{
 				dest:   "org.mate.SessionManager",
@@ -396,37 +774,111 @@ func buildLinuxInhibitors() []inhibitor {
 				args:   []string{"string:keep-alive", "uint32:0", "string:Keep system awake", "uint32:12"},
 			},
 			unInhibitArg: "Uninhibit",
-		},
-		&gsettingsInhibitor{},
-		&xsetInhibitor{},
+		})
 	}
+
+	// Add freedesktop fallback (works on many systems)
+	inhibitors = append(inhibitors, &dbusInhibitor{
+		name: "dbus-freedesktop",
+		dbusStrategy: dbusStrategy{
+			dest:   "org.freedesktop.ScreenSaver",
+			path:   "/org/freedesktop/ScreenSaver",
+			iface:  "org.freedesktop.ScreenSaver",
+			method: "Inhibit",
+			args:   []string{"string:keep-alive", "string:Keep system awake"},
+		},
+		unInhibitArg: "UnInhibit",
+	})
+
+	// xset only works on X11
+	if displayServer == "x11" {
+		inhibitors = append(inhibitors, &xsetInhibitor{})
+	}
+
+	return inhibitors
 }
 
 func (k *linuxKeepAlive) activateInhibitors(ctx context.Context) (int, error) {
 	allInhibitors := buildLinuxInhibitors()
 	activeCount := 0
+	var activationErrors []string
 
 	for _, inh := range allInhibitors {
-		if err := inh.Activate(ctx); err == nil {
+		err := inh.Activate(ctx)
+		if err != nil {
+			log.Printf("linux: inhibitor %s failed: %v", inh.Name(), err)
+			activationErrors = append(activationErrors, fmt.Sprintf("%s: %v", inh.Name(), err))
+			continue
+		}
+
+		// Verify activation based on inhibitor type
+		verified := false
+		switch v := inh.(type) {
+		case *systemdInhibitor:
+			// Verify systemd-inhibit process is running
+			if v.cmd != nil && v.cmd.Process != nil {
+				// Check if process is still alive
+				if err := v.cmd.Process.Signal(syscall.Signal(0)); err == nil {
+					verified = true
+					log.Printf("linux: verified systemd-inhibit process (pid %d) is running", v.cmd.Process.Pid)
+				} else {
+					log.Printf("linux: warning: systemd-inhibit process verification failed: %v", err)
+				}
+			}
+		case *dbusInhibitor:
+			// Verify DBus cookie was received
+			if v.cookie != 0 {
+				verified = true
+				log.Printf("linux: verified DBus inhibitor %s with cookie %d", v.name, v.cookie)
+			} else {
+				log.Printf("linux: warning: DBus inhibitor %s activated but no cookie received", v.name)
+			}
+		case *gsettingsInhibitor:
+			// gsettings doesn't return a cookie, but if Activate succeeded, it worked
+			verified = true
+		case *xsetInhibitor:
+			// xset doesn't have verification, but if Activate succeeded, it worked
+			verified = true
+		}
+
+		if verified {
 			k.inhibitors = append(k.inhibitors, inh)
-			log.Printf("linux: activated inhibitor: %s", inh.Name())
+			log.Printf("linux: activated and verified inhibitor: %s", inh.Name())
 			activeCount++
 		} else {
-			log.Printf("linux: inhibitor %s skipped: %v", inh.Name(), err)
+			log.Printf("linux: warning: inhibitor %s activated but verification failed", inh.Name())
+			// Still count it as active if activation succeeded, but log the warning
+			k.inhibitors = append(k.inhibitors, inh)
+			activeCount++
 		}
 	}
 
 	if activeCount == 0 {
-		return 0, fmt.Errorf("linux: no keep-alive method successfully activated")
+		errorMsg := "linux: no keep-alive method successfully activated"
+		if len(activationErrors) > 0 {
+			errorMsg += "\nFailed inhibitors:\n" + strings.Join(activationErrors, "\n")
+		}
+		return 0, fmt.Errorf("%s", errorMsg)
 	}
 
+	log.Printf("linux: successfully activated %d inhibitor(s) out of %d attempted", activeCount, len(allInhibitors))
 	return activeCount, nil
 }
 
 func (k *linuxKeepAlive) setupUinput() {
+	hasAccess, errMsg := checkUinputPermissions()
+	if !hasAccess {
+		log.Printf("linux: uinput not available: %s", errMsg)
+		k.uinput = nil
+		return
+	}
+
 	k.uinput = &uinputSimulator{}
 	if err := k.uinput.setup(); err != nil {
-		log.Printf("linux: uinput setup failed (likely permissions): %v", err)
+		log.Printf("linux: uinput setup failed: %v", err)
+		if errMsg != "" {
+			log.Printf("linux: permission hint: %s", errMsg)
+		}
 		k.uinput = nil
 	} else {
 		log.Printf("linux: native uinput mouse simulation activated")
@@ -483,7 +935,12 @@ func (k *linuxKeepAlive) simulateChatAppActivity(ctx context.Context, caps linux
 		idle, err := getLinuxIdleTime()
 		if err == nil && idle <= IdleThreshold {
 			shouldSimulate = false
+		} else if err != nil {
+			log.Printf("linux: idle time check failed: %v (will simulate anyway)", err)
 		}
+	} else if caps.displayServer == "wayland" {
+		// xprintidle doesn't work on Wayland, so we'll simulate anyway
+		log.Printf("linux: xprintidle not available on Wayland; simulating activity")
 	}
 
 	if !shouldSimulate {
@@ -495,18 +952,42 @@ func (k *linuxKeepAlive) simulateChatAppActivity(ctx context.Context, caps linux
 }
 
 func (k *linuxKeepAlive) executeMousePattern(points []MousePoint, caps linuxCapabilities) {
-	// Execute pattern using available methods
+	// Execute pattern using available methods based on display server
+	// Priority: uinput → ydotool → wtype → xdotool (X11 only) → DBus fallback
+
+	executed := false
+
+	// Try uinput first (works on both X11 and Wayland if permissions allow)
 	if k.uinput != nil {
 		k.executePatternUinput(points)
+		executed = true
 	}
 
-	if caps.xdotoolAvailable {
+	// Try ydotool (works on both X11 and Wayland)
+	if caps.ydotoolAvailable {
+		k.executePatternYdotool(points)
+		executed = true
+	}
+
+	// Try wtype (Wayland-native, but limited mouse support)
+	if caps.displayServer == "wayland" && caps.wtypeAvailable {
+		k.executePatternWtype(points)
+		executed = true
+	}
+
+	// Try xdotool (X11 only)
+	if caps.displayServer == "x11" && caps.xdotoolAvailable {
 		k.executePatternXdotool(points)
+		executed = true
 	}
 
-	// Soft simulation via DBus
+	// Soft simulation via DBus (works on both, but less effective)
 	runBestEffort("dbus-send", "--dest=org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver.SimulateUserActivity")
 	runBestEffort("dbus-send", "--dest=org.gnome.ScreenSaver", "/org/gnome/ScreenSaver", "org.gnome.ScreenSaver.SimulateUserActivity")
+
+	if !executed && caps.displayServer == "wayland" {
+		log.Printf("linux: warning: no Wayland-compatible mouse simulation method available. Install ydotool: sudo apt install ydotool (or equivalent for your distribution)")
+	}
 }
 
 func (k *linuxKeepAlive) executePatternUinput(points []MousePoint) {
@@ -570,6 +1051,48 @@ func (k *linuxKeepAlive) executePatternXdotool(points []MousePoint) {
 	time.Sleep(returnDelay)
 }
 
+// executePatternYdotool executes mouse pattern using ydotool (works on both X11 and Wayland)
+func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint) {
+	for i, pt := range points {
+		dx := int(pt.X)
+		dy := int(pt.Y)
+		// ydotool uses relative movement with --next-delay for timing
+		runBestEffort("ydotool", "mousemove", "--", fmt.Sprintf("%d", dx), fmt.Sprintf("%d", dy))
+
+		distance := SegmentDistance(points, i)
+		delay := k.patternGen.MovementDelay(distance)
+		time.Sleep(delay)
+
+		if k.patternGen.ShouldPause() {
+			time.Sleep(k.patternGen.PauseDelay())
+		}
+
+		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
+			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
+			runBestEffort("ydotool", "mousemove", "--", fmt.Sprintf("%d", int(midPt.X)), fmt.Sprintf("%d", int(midPt.Y)))
+			time.Sleep(midDelay)
+		}
+	}
+
+	// Return to origin
+	lastPt := points[len(points)-1]
+	returnDelay := k.patternGen.ReturnDelay()
+	runBestEffort("ydotool", "mousemove", "--", fmt.Sprintf("%d", -int(lastPt.X)), fmt.Sprintf("%d", -int(lastPt.Y)))
+	time.Sleep(returnDelay)
+}
+
+// executePatternWtype executes mouse pattern using wtype (Wayland-native)
+// Note: wtype doesn't support relative mouse movement directly, so we use absolute coordinates
+// This is a simplified implementation - wtype may need different approach
+func (k *linuxKeepAlive) executePatternWtype(points []MousePoint) {
+	// wtype doesn't have direct mouse movement commands in the same way
+	// We'll use a workaround: simulate small keyboard events or use wlrctl if available
+	// For now, log that wtype is not fully supported for mouse movement
+	log.Printf("linux: wtype mouse movement not fully implemented (wtype focuses on keyboard simulation)")
+	// Fall back to DBus simulation which works on Wayland
+	runBestEffort("dbus-send", "--dest=org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver.SimulateUserActivity")
+}
+
 func (k *linuxKeepAlive) Start(ctx context.Context) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -584,22 +1107,70 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 	k.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 	k.patternGen = NewMousePatternGenerator(k.rnd)
 
+	// Detect capabilities and log diagnostics
+	caps := detectLinuxCapabilities()
+	log.Printf("linux: === Startup Diagnostics ===")
+	log.Printf("linux: Desktop Environment: %s", caps.desktopEnvironment)
+	log.Printf("linux: Display Server: %s", caps.displayServer)
+	log.Printf("linux: Available tools: xdotool=%v, ydotool=%v, wtype=%v, xprintidle=%v",
+		caps.xdotoolAvailable, caps.ydotoolAvailable, caps.wtypeAvailable, caps.xprintidleAvailable)
+
+	// Check uinput permissions and log status
+	hasUinputAccess, uinputErrMsg := checkUinputPermissions()
+	log.Printf("linux: uinput access: %v", hasUinputAccess)
+	if !hasUinputAccess && uinputErrMsg != "" {
+		log.Printf("linux: uinput permission issue: %s", uinputErrMsg)
+	}
+
 	// Activate inhibitors
 	activeCount, err := k.activateInhibitors(k.ctx)
 	if err != nil {
 		k.cancel()
-		return err
+		// Enhance error message with suggestions
+		enhancedErr := fmt.Errorf("%v\n\nTroubleshooting:\n- Ensure systemd-inhibit is available: which systemd-inhibit\n- Check DBus services: dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ListNames\n- For Cosmic/GNOME: ensure org.gnome.SessionManager is available", err)
+		return enhancedErr
 	}
 
 	// Setup uinput if available
 	k.setupUinput()
 
-	caps := detectLinuxCapabilities()
+	hasUinput := k.uinput != nil
 	if k.uinput != nil {
 		caps.uinputAvailable = true
+		log.Printf("linux: uinput mouse simulation: enabled")
+	} else {
+		log.Printf("linux: uinput mouse simulation: disabled (permissions or unavailable)")
 	}
 
-	log.Printf("linux: started; active inhibitors: %d (Wayland=%v, DISPLAY=%q)", activeCount, os.Getenv("WAYLAND_DISPLAY") != "", os.Getenv("DISPLAY"))
+	// Check for missing dependencies and log messages
+	missingDeps := checkMissingDependencies(caps, caps.displayServer, hasUinput)
+	if len(missingDeps) > 0 {
+		depMessage := formatDependencyMessages(missingDeps, caps.displayServer, hasUinput)
+		log.Printf("linux: missing dependencies detected:\n%s", depMessage)
+	}
+
+	// Log mouse simulation capabilities
+	mouseMethods := []string{}
+	if k.uinput != nil {
+		mouseMethods = append(mouseMethods, "uinput")
+	}
+	if caps.ydotoolAvailable {
+		mouseMethods = append(mouseMethods, "ydotool")
+	}
+	if caps.wtypeAvailable && caps.displayServer == "wayland" {
+		mouseMethods = append(mouseMethods, "wtype")
+	}
+	if caps.xdotoolAvailable && caps.displayServer == "x11" {
+		mouseMethods = append(mouseMethods, "xdotool")
+	}
+	if len(mouseMethods) == 0 {
+		log.Printf("linux: warning: no mouse simulation methods available")
+	} else {
+		log.Printf("linux: mouse simulation methods: %s", strings.Join(mouseMethods, ", "))
+	}
+
+	log.Printf("linux: === End Diagnostics ===")
+	log.Printf("linux: started successfully; active inhibitors: %d", activeCount)
 
 	k.startActivityTickerLocked(k.ctx)
 	k.startChatAppTickerLocked(k.ctx, caps)
@@ -632,7 +1203,7 @@ func (k *linuxKeepAlive) Stop() error {
 	var deactivateErrors []error
 	inhibitors := make([]inhibitor, len(k.inhibitors))
 	copy(inhibitors, k.inhibitors)
-	
+
 	k.mu.Unlock()
 
 	// Wait for goroutines with timeout
@@ -661,7 +1232,7 @@ func (k *linuxKeepAlive) Stop() error {
 	}
 
 	k.mu.Lock()
-	
+
 	// Cleanup uinput device
 	if k.uinput != nil {
 		fdBeforeClose := k.uinput.fd
@@ -719,6 +1290,19 @@ func (k *linuxKeepAlive) SetSimulateActivity(simulate bool) {
 			k.chatAppTick = nil
 		}
 	}
+}
+
+// GetDependencyMessage returns the formatted dependency message if dependencies are missing.
+// This function is called before Start() to display dependency information to the user.
+// It performs a fresh detection to ensure accuracy at startup time.
+func GetDependencyMessage() string {
+	caps := detectLinuxCapabilities()
+	hasUinput, _ := checkUinputPermissions()
+	missingDeps := checkMissingDependencies(caps, caps.displayServer, hasUinput)
+	if len(missingDeps) > 0 {
+		return formatDependencyMessages(missingDeps, caps.displayServer, hasUinput)
+	}
+	return ""
 }
 
 func NewKeepAlive() (KeepAlive, error) {

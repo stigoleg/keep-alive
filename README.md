@@ -112,9 +112,14 @@ Keep-Alive uses platform-specific APIs and techniques to prevent your system fro
 
 ### Linux
 Keep-Alive uses a multi-layered approach:
-- **Systemd**: Uses `systemd-inhibit` (preferred).
-- **Desktop DBus**: Native inhibition for GNOME, KDE, XFCE, and MATE.
-- **Active Status**: Optionally uses `xdotool` to simulate periodic mouse movement.
+- **Systemd**: Uses `systemd-inhibit` (preferred, works on all systems).
+- **Desktop DBus**: Native inhibition for Cosmic (Pop OS), GNOME, KDE, XFCE, and MATE.
+- **gsettings**: For GNOME-based desktops (including Cosmic).
+- **Active Status**: Uses multiple methods with automatic fallback:
+  - **uinput** (native, works on both X11 and Wayland, requires permissions)
+  - **ydotool** (recommended for Wayland, works on X11 too)
+  - **wtype** (Wayland-native, limited mouse support)
+  - **xdotool** (X11 only)
 
 ## Dependencies
 
@@ -122,12 +127,82 @@ Keep-Alive uses a multi-layered approach:
 
 - **Linux**:
   - `dbus-send` or `gdbus` (typically pre-installed)
-  - `xdotool` (optional, for `--active` simulation)
+  - `systemd-inhibit` (typically pre-installed on systemd-based systems)
+  - **For mouse simulation (`--active` flag)**:
+    - `ydotool` (recommended, works on both X11 and Wayland): `sudo apt install ydotool` (Debian/Ubuntu) or equivalent
+    - `xdotool` (X11 only): `sudo apt install xdotool` (Debian/Ubuntu) or equivalent
+    - `wtype` (Wayland only, limited support): Install from your distribution's repository
+    - Native uinput (requires proper permissions, see Troubleshooting)
   - A terminal that supports TUI applications
 
 ### Build Dependencies
 
 - Go 1.25 or later
+- **Library Dependencies:**
+  - [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
+  - [Bubbles](https://github.com/charmbracelet/bubbles) - UI components (textinput, timer, progress, help)
+  - [Lip Gloss](https://github.com/charmbracelet/lipgloss) - Styling
+  - [Testify](https://github.com/stretchr/testify) - Testing assertions
+  - [golang.org/x/sys](https://pkg.go.dev/golang.org/x/sys) - Windows syscall interop
+
+## Troubleshooting
+
+### Linux
+
+#### Sleep Prevention Not Working
+
+**Pop OS Cosmic / GNOME-based desktops:**
+- Ensure `systemd-inhibit` is available: `which systemd-inhibit`
+- Check DBus services: `dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ListNames | grep -i session`
+- For Cosmic, the application automatically detects and uses the GNOME session manager
+
+**General Linux:**
+- Check system logs: `journalctl -xe | grep keep-alive`
+- Verify inhibitors are active: Check the application's debug log (`debug.log`)
+- If using systemd, ensure the service is running: `systemctl status`
+
+#### Mouse Simulation Not Working
+
+**Permission Issues (uinput):**
+If you see permission errors for `/dev/uinput`, you have two options:
+
+1. **Add user to input group** (recommended):
+   ```bash
+   sudo usermod -aG input $USER
+   ```
+   Then **log out and log back in** for changes to take effect.
+
+2. **Create udev rule**:
+   ```bash
+   echo 'KERNEL=="uinput", MODE="0664", GROUP="input"' | sudo tee /etc/udev/rules.d/99-uinput.rules
+   sudo udevadm control --reload-rules
+   sudo udevadm trigger
+   ```
+
+**Wayland vs X11:**
+- **Wayland**: Install `ydotool` for best compatibility: `sudo apt install ydotool` (Debian/Ubuntu) or equivalent
+- **X11**: `xdotool` works: `sudo apt install xdotool` (Debian/Ubuntu) or equivalent
+- Check your display server: `echo $XDG_SESSION_TYPE` or `echo $WAYLAND_DISPLAY`
+- If on Wayland without `ydotool`, the application will fall back to DBus simulation (less effective)
+
+**Missing Dependencies:**
+- The application will log warnings if required tools are missing
+- Check `debug.log` for specific dependency recommendations
+- Install missing tools based on your display server (see Dependencies section)
+
+#### Pop OS Cosmic Specific Notes
+
+- Cosmic is automatically detected and uses GNOME session manager
+- Works with both Wayland and X11 sessions
+- For best mouse simulation on Wayland, install `ydotool`
+- If sleep prevention fails, check that `org.gnome.SessionManager` is available via DBus
+
+#### Debugging
+
+- Check the debug log: `cat debug.log` or `tail -f debug.log`
+- Look for diagnostic messages starting with `linux: === Startup Diagnostics ===`
+- Verify detected desktop environment and display server match your system
+- Check which inhibitors and mouse simulation methods are active
 
 ## Contributing
 

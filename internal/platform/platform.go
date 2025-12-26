@@ -434,7 +434,7 @@ func (k *darwinKeepAlive) killProcessLocked() {
 	if err := k.cmd.Process.Kill(); err != nil {
 		log.Printf("darwin: failed to kill caffeinate process (pid %d): %v", pid, err)
 	}
-	
+
 	// Also try killing the process group
 	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
 		log.Printf("darwin: failed to kill caffeinate process group (pgid %d): %v", pid, err)
@@ -457,19 +457,19 @@ func (k *darwinKeepAlive) verifyProcessTerminated() bool {
 	}
 
 	pid := k.cmd.Process.Pid
-	
+
 	// Check if process still exists by sending signal 0 (doesn't kill, just checks)
 	err := syscall.Kill(pid, 0)
 	if err == nil {
 		log.Printf("darwin: warning: caffeinate process (pid %d) still exists", pid)
 		return false
 	}
-	
+
 	if err == syscall.ESRCH {
 		log.Printf("darwin: verified caffeinate process (pid %d) has terminated", pid)
 		return true
 	}
-	
+
 	log.Printf("darwin: could not verify caffeinate process (pid %d) status: %v", pid, err)
 	return false
 }
@@ -512,7 +512,7 @@ func (k *darwinKeepAlive) Stop() error {
 	}
 
 	k.mu.Lock()
-	
+
 	// Verify process termination
 	if !k.verifyProcessTerminated() {
 		log.Printf("darwin: warning: caffeinate process may still be running")
@@ -563,6 +563,11 @@ func (k *darwinKeepAlive) SetSimulateActivity(simulate bool) {
 			k.chatAppActivityTick = nil
 		}
 	}
+}
+
+// GetDependencyMessage returns empty string on macOS (no external dependencies needed)
+func GetDependencyMessage() string {
+	return ""
 }
 
 // NewKeepAlive creates a new platform specific keep alive instance
