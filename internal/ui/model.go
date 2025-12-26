@@ -58,13 +58,17 @@ func InitialModel() Model {
 }
 
 // InitialModelWithDuration returns a model initialized with a specific duration and starts running.
-func InitialModelWithDuration(minutes int) Model {
+func InitialModelWithDuration(minutes int, simulateActivity bool) Model {
 	m := InitialModel()
+	m.SimulateActivity = simulateActivity
 	m.textInput.SetValue(strconv.Itoa(minutes))
 	m.State = stateRunning
 	m.StartTime = time.Now()
 	m.Duration = time.Duration(minutes) * time.Minute
 	m.timer = timer.NewWithInterval(m.Duration, time.Second/10)
+
+	// Set simulate activity before starting
+	m.KeepAlive.SetSimulateActivity(simulateActivity)
 
 	// Start the keep-alive process
 	err := m.KeepAlive.StartTimed(time.Duration(minutes) * time.Minute)

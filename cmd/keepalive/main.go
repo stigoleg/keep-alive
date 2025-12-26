@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	appVersion      = "1.4.7"
+	appVersion      = "1.4.8"
 	shutdownTimeout = 5 * time.Second
 )
 
@@ -57,12 +57,12 @@ func main() {
 
 	var model ui.Model
 	if cfg.Duration > 0 {
-		model = ui.InitialModelWithDuration(cfg.Duration)
+		model = ui.InitialModelWithDuration(cfg.Duration, cfg.SimulateActivity)
 	} else {
 		model = ui.InitialModel()
+		model.SimulateActivity = cfg.SimulateActivity
 	}
 	model.SetVersion(appVersion)
-	model.SimulateActivity = cfg.SimulateActivity
 
 	keeperRef = model.KeepAlive
 
