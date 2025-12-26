@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -32,11 +33,16 @@ func main() {
 		log.Fatal(err)
 	}
 
-	f, err := tea.LogToFile("debug.log", "debug")
-	if err != nil {
-		log.Fatal(err)
+	if cfg.EnableLogging {
+		f, err := tea.LogToFile("debug.log", "debug")
+		if err != nil {
+			log.Fatal(err)
+		}
+		logFile = f
+	} else {
+		log.SetOutput(io.Discard)
+		logFile = nil
 	}
-	logFile = f
 	defer func() {
 		if logFile != nil {
 			logFile.Sync()

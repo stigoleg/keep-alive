@@ -17,6 +17,7 @@ type Config struct {
 	Clock            time.Time
 	ShowVersion      bool
 	SimulateActivity bool
+	EnableLogging    bool
 }
 
 func formatError(err error) string {
@@ -70,6 +71,9 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 	simulateActivity := flags.Bool("active", false, "Simulate activity to keep chat apps active")
 	flags.BoolVar(simulateActivity, "a", false, "Simulate activity to keep chat apps active")
 
+	enableLogging := flags.Bool("log", false, "Enable logging to debug.log file")
+	flags.BoolVar(enableLogging, "l", false, "Enable logging to debug.log file")
+
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		if err == flag.ErrHelp {
 			os.Exit(0)
@@ -117,5 +121,6 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 		Clock:            clockTime,
 		ShowVersion:      *showVersion,
 		SimulateActivity: *simulateActivity,
+		EnableLogging:    *enableLogging,
 	}, nil
 }

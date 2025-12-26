@@ -84,6 +84,7 @@ Flags:
     -d, --duration string   Duration to keep system alive (e.g., "2h30m" or "150")
     -c, --clock string     Time to keep system alive until (e.g., "22:00" or "10:00PM")
     -a, --active           Keep chat apps (Slack/Teams) active by simulating activity
+    -l, --log              Enable logging to debug.log file
     -v, --version          Show version information
     -h, --help            Show help message
 ```
@@ -94,6 +95,8 @@ keepalive                    # Start with interactive TUI
 keepalive --active           # Start with active status simulation
 keepalive -d 2h30m --active  # Keep system/Slack awake for 2.5 hours
 keepalive -c 17:00           # Keep system awake until 5 PM
+keepalive --log              # Enable logging to debug.log file
+keepalive -d 1h --log        # Keep system awake for 1 hour with logging enabled
 ```
 
 ## How It Works
