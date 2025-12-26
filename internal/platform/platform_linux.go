@@ -972,7 +972,6 @@ func (k *linuxKeepAlive) executeMousePattern(points []MousePoint, caps linuxCapa
 	// Try wtype (Wayland-native, but limited mouse support)
 	if caps.displayServer == "wayland" && caps.wtypeAvailable {
 		k.executePatternWtype(points)
-		executed = true
 	}
 
 	// Try xdotool (X11 only)
