@@ -27,6 +27,21 @@ func GetDependencyMessage() string {
 	return ""
 }
 
+// CheckActivitySimulationCapability returns unavailable on unsupported platforms.
+func CheckActivitySimulationCapability() SimulationCapability {
+	return SimulationCapability{
+		CanSimulate:  false,
+		ErrorMessage: "Activity simulation not supported on this platform",
+		Instructions: "This feature is only available on macOS, Windows, and Linux.",
+		CanPrompt:    false,
+	}
+}
+
+// PromptActivitySimulationPermission is a no-op on unsupported platforms.
+func PromptActivitySimulationPermission() {
+	// No-op
+}
+
 // NewKeepAlive creates a new platform-specific keep-alive instance
 func NewKeepAlive() (KeepAlive, error) {
 	return &unsupportedKeepAlive{}, nil

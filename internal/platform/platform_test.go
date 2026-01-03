@@ -206,3 +206,190 @@ func TestWindowsBasicStartStopSkipIfUnavailable(t *testing.T) {
 		t.Errorf("stop: %v", err)
 	}
 }
+
+func TestNewKeepAlive(t *testing.T) {
+	keeper, err := NewKeepAlive()
+	if err != nil {
+		t.Fatalf("NewKeepAlive failed: %v", err)
+	}
+	if keeper == nil {
+		t.Fatal("NewKeepAlive returned nil")
+	}
+}
+
+func TestKeepAliveDoubleStart(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if runtime.GOOS == "darwin" {
+		killCaffeinate()
+		t.Cleanup(func() {
+			killCaffeinate()
+		})
+	}
+
+	keeper, err := NewKeepAlive()
+	if err != nil {
+		t.Fatalf("NewKeepAlive failed: %v", err)
+	}
+
+	// First start
+	if err := keeper.Start(ctx); err != nil {
+		t.Fatalf("First Start failed: %v", err)
+	}
+
+	// Second start should be a no-op (idempotent)
+	if err := keeper.Start(ctx); err != nil {
+		t.Fatalf("Second Start failed: %v", err)
+	}
+
+	// Cleanup
+	if err := keeper.Stop(); err != nil {
+		t.Errorf("Stop failed: %v", err)
+	}
+}
+
+func TestKeepAliveDoubleStop(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if runtime.GOOS == "darwin" {
+		killCaffeinate()
+		t.Cleanup(func() {
+			killCaffeinate()
+		})
+	}
+
+	keeper, err := NewKeepAlive()
+	if err != nil {
+		t.Fatalf("NewKeepAlive failed: %v", err)
+	}
+
+	if err := keeper.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// First stop
+	if err := keeper.Stop(); err != nil {
+		t.Errorf("First Stop failed: %v", err)
+	}
+
+	// Second stop should be a no-op (idempotent)
+	if err := keeper.Stop(); err != nil {
+		t.Errorf("Second Stop failed: %v", err)
+	}
+}
+
+func TestKeepAliveStopWithoutStart(t *testing.T) {
+	keeper, err := NewKeepAlive()
+	if err != nil {
+		t.Fatalf("NewKeepAlive failed: %v", err)
+	}
+
+	// Stop without start should be a no-op
+	if err := keeper.Stop(); err != nil {
+		t.Errorf("Stop without Start failed: %v", err)
+	}
+}
+
+func TestSetSimulateActivity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if runtime.GOOS == "darwin" {
+		killCaffeinate()
+		t.Cleanup(func() {
+			killCaffeinate()
+		})
+	}
+
+	keeper, err := NewKeepAlive()
+	if err != nil {
+		t.Fatalf("NewKeepAlive failed: %v", err)
+	}
+
+	// Set before start
+	keeper.SetSimulateActivity(true)
+
+	if err := keeper.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Toggle while running
+	keeper.SetSimulateActivity(false)
+	keeper.SetSimulateActivity(true)
+
+	if err := keeper.Stop(); err != nil {
+		t.Errorf("Stop failed: %v", err)
+	}
+}
+
+func TestSetSimulateActivityWithoutStart(t *testing.T) {
+	keeper, err := NewKeepAlive()
+	if err != nil {
+		t.Fatalf("NewKeepAlive failed: %v", err)
+	}
+
+	// Should not panic when called without Start
+	keeper.SetSimulateActivity(true)
+	keeper.SetSimulateActivity(false)
+}
+
+func TestCheckActivitySimulationCapability(t *testing.T) {
+	// This test verifies the structure of the returned SimulationCapability
+	// The actual capability depends on the system environment
+	cap := CheckActivitySimulationCapability()
+
+	// Verify the structure is valid
+	if !cap.CanSimulate {
+		// If simulation is not available, we should have an error message
+		if cap.ErrorMessage == "" {
+			t.Error("SimulationCapability.ErrorMessage should not be empty when CanSimulate is false")
+		}
+		if cap.Instructions == "" {
+			t.Error("SimulationCapability.Instructions should not be empty when CanSimulate is false")
+		}
+	}
+
+	// Log the capability status for debugging
+	t.Logf("CanSimulate: %v, CanPrompt: %v", cap.CanSimulate, cap.CanPrompt)
+	if !cap.CanSimulate {
+		t.Logf("ErrorMessage: %s", cap.ErrorMessage)
+	}
+}
+
+func TestGetDependencyMessage(t *testing.T) {
+	// GetDependencyMessage should return a string (possibly empty)
+	msg := GetDependencyMessage()
+	t.Logf("GetDependencyMessage returned %d bytes", len(msg))
+
+	// If there's a message, it should contain useful information
+	if msg != "" {
+		// Should contain instructions or error information
+		if !strings.Contains(strings.ToLower(msg), "permission") &&
+			!strings.Contains(strings.ToLower(msg), "accessibility") &&
+			!strings.Contains(strings.ToLower(msg), "install") &&
+			!strings.Contains(strings.ToLower(msg), "missing") {
+			t.Logf("Dependency message may not contain actionable information: %s", msg)
+		}
+	}
+}
+
+func TestPromptActivitySimulationPermission(t *testing.T) {
+	// This test just verifies PromptActivitySimulationPermission doesn't panic
+	// We can't easily test the actual prompting behavior
+	PromptActivitySimulationPermission()
+	// If we got here without panicking, the test passes
+}

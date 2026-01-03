@@ -5,9 +5,19 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stigoleg/keep-alive/internal/platform"
+)
+
+// SimulationHealth represents the runtime health of activity simulation
+type SimulationHealth int
+
+const (
+	SimulationHealthUnknown SimulationHealth = iota
+	SimulationHealthOK
+	SimulationHealthFailed
 )
 
 // Keeper manages the system's keep-alive state
@@ -21,6 +31,9 @@ type Keeper struct {
 	endTime time.Time
 
 	simulateActivity bool
+
+	// simulationFailCount tracks consecutive simulation failures (atomic for thread-safety)
+	simulationFailCount int64
 }
 
 // IsRunning returns whether the keep-alive is currently active
@@ -94,15 +107,7 @@ func (k *Keeper) StartTimed(d time.Duration) error {
 	k.running = true
 	k.endTime = time.Now().Add(d)
 	k.timer = time.AfterFunc(d, func() {
-		// Check if still running before calling Stop to avoid race condition
-		// This prevents the timer callback from calling Stop() if Stop() was already called
-		k.mu.Lock()
-		stillRunning := k.running
-		k.mu.Unlock()
-
-		if stillRunning {
-			k.Stop()
-		}
+		k.Stop()
 	})
 
 	log.Printf("keeper: started (timed=%s)", d)
@@ -117,9 +122,8 @@ func (k *Keeper) Stop() error {
 // StopWithTimeout stops keeping the system alive with a timeout
 func (k *Keeper) StopWithTimeout(timeout time.Duration) error {
 	k.mu.Lock()
-	defer k.mu.Unlock()
-
 	if !k.running {
+		k.mu.Unlock()
 		return nil
 	}
 
@@ -127,34 +131,35 @@ func (k *Keeper) StopWithTimeout(timeout time.Duration) error {
 		timeout = 5 * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+	// Stop timer and cancel context while holding the lock
+	if k.timer != nil {
+		k.timer.Stop()
+		k.timer = nil
+	}
+
+	if k.cancel != nil {
+		k.cancel()
+		k.cancel = nil
+	}
+
+	// Capture keeper reference and mark as not running
+	keeper := k.keeper
+	k.running = false
+	k.mu.Unlock()
+
+	// Stop the platform keeper without holding the lock (may take time)
+	if keeper == nil {
+		log.Printf("keeper: stopped")
+		return nil
+	}
 
 	done := make(chan error, 1)
 	go func() {
-		var err error
-		defer func() {
-			done <- err
-		}()
-
-		if k.timer != nil {
-			k.timer.Stop()
-			k.timer = nil
-		}
-
-		if k.cancel != nil {
-			k.cancel()
-			k.cancel = nil
-		}
-
-		if k.keeper != nil {
-			if stopErr := k.keeper.Stop(); stopErr != nil {
-				err = stopErr
-			}
-		}
-
-		k.running = false
+		done <- keeper.Stop()
 	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	select {
 	case err := <-done:
@@ -166,7 +171,6 @@ func (k *Keeper) StopWithTimeout(timeout time.Duration) error {
 		return nil
 	case <-ctx.Done():
 		log.Printf("keeper: stop timeout exceeded after %v", timeout)
-		k.running = false
 		return ctx.Err()
 	}
 }
@@ -195,4 +199,23 @@ func (k *Keeper) SetSimulateActivity(simulate bool) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.simulateActivity = simulate
+}
+
+// GetSimulationHealth returns the current health of activity simulation
+func (k *Keeper) GetSimulationHealth() SimulationHealth {
+	failCount := atomic.LoadInt64(&k.simulationFailCount)
+	if failCount > 0 {
+		return SimulationHealthFailed
+	}
+	return SimulationHealthOK
+}
+
+// RecordSimulationFailure increments the simulation failure counter
+func (k *Keeper) RecordSimulationFailure() {
+	atomic.AddInt64(&k.simulationFailCount, 1)
+}
+
+// ResetSimulationHealth resets the simulation failure counter
+func (k *Keeper) ResetSimulationHealth() {
+	atomic.StoreInt64(&k.simulationFailCount, 0)
 }

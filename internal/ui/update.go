@@ -7,11 +7,16 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/timer"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stigoleg/keep-alive/internal/platform"
 	"github.com/stigoleg/keep-alive/internal/util"
 )
 
 // Update handles messages and updates the model accordingly.
 func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
+	// Handle simulation warning dialog first (blocking)
+	if m.ShowSimulationWarning {
+		return handleSimulationWarningState(msg, m)
+	}
 	if m.ShowDependencyInfo {
 		// Still process timer messages so progress and timeout continue under the overlay
 		switch msg.(type) {
@@ -66,6 +71,35 @@ func handleDependencyInfoState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 			m.ShowDependencyInfo = false
 		case key.Matches(keyMsg, m.Keys.Back):
 			m.ShowDependencyInfo = false
+		}
+	}
+	return m, nil
+}
+
+// handleSimulationWarningState handles the blocking simulation warning dialog
+func handleSimulationWarningState(msg tea.Msg, m Model) (Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
+		case "c", "C":
+			// Continue without simulation - disable the flag
+			m.ShowSimulationWarning = false
+			m.SimulateActivity = false
+			return m, nil
+		case "r", "R":
+			// Retry capability check
+			simCap := platform.CheckActivitySimulationCapability()
+			if simCap.CanSimulate {
+				m.ShowSimulationWarning = false
+				m.SimulationCapable = true
+				m.SimulationStatus = SimulationStatusAvailable
+				m.SimulationMessage = ""
+				return m, nil
+			}
+			// Still not available - update message in case it changed
+			m.SimulationMessage = simCap.ErrorMessage + "\n\n" + simCap.Instructions
+			return m, nil
+		case "q", "Q":
+			return m, tea.Quit
 		}
 	}
 	return m, nil
@@ -281,7 +315,7 @@ func cleanup(m Model) (Model, error) {
 	m.ErrorMessage = ""
 	// Reset timer and progress models
 	m.timer = timer.Model{}
-	m.progress = progress.New(progress.WithDefaultGradient(), progress.WithWidth(34))
+	m.progress = progress.New(progress.WithDefaultGradient(), progress.WithWidth(progressBarWidth))
 
 	return m, nil
 }

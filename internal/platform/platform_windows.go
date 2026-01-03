@@ -8,10 +8,11 @@ import (
 	"math/rand"
 	"os/exec"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/stigoleg/keep-alive/internal/platform/patterns"
 )
 
 // runBestEffort executes a command ignoring any errors (best-effort)
@@ -79,6 +80,49 @@ func getIdleTime() (time.Duration, error) {
 	return time.Duration(idleMillis) * time.Millisecond, nil
 }
 
+// checkSendInputCapability tests if SendInput works by sending a no-op movement
+func checkSendInputCapability() bool {
+	var testInput input
+	testInput.inputType = inputMouse
+	testInput.mi = mouseInput{dx: 0, dy: 0, dwFlags: mouseEventMove}
+
+	ret, _, _ := procSendInput.Call(
+		uintptr(1),
+		uintptr(unsafe.Pointer(&testInput)),
+		uintptr(unsafe.Sizeof(testInput)),
+	)
+
+	// SendInput returns the number of events successfully inserted
+	return ret == 1
+}
+
+// CheckActivitySimulationCapability checks if the platform can simulate user activity.
+// On Windows, SendInput typically works without special permissions for normal users.
+func CheckActivitySimulationCapability() SimulationCapability {
+	if checkSendInputCapability() {
+		return SimulationCapability{CanSimulate: true}
+	}
+
+	return SimulationCapability{
+		CanSimulate:  false,
+		ErrorMessage: "Mouse simulation may be blocked by system security",
+		Instructions: `SendInput API test failed. This can happen when:
+
+- Security software blocks input simulation
+- User Interface Privilege Isolation (UIPI) is active
+- Running in a restricted environment
+
+The app will continue but activity simulation for Slack/Teams may not work.`,
+		CanPrompt: false,
+	}
+}
+
+// PromptActivitySimulationPermission is a no-op on Windows.
+// Windows doesn't have a system permission dialog for input simulation.
+func PromptActivitySimulationPermission() {
+	// No-op on Windows
+}
+
 type windowsCapabilities struct {
 	nativeAPIAvailable  bool
 	powerShellAvailable bool
@@ -97,12 +141,12 @@ type windowsKeepAlive struct {
 
 	simulateActivity bool
 
-	// last time we logged that user is active (to avoid spam)
-	lastActiveLogNS int64
+	// idle tracker for rate-limited logging
+	idleTracker *patterns.IdleTracker
 
 	// random source and pattern generator for natural mouse movements
 	rnd        *rand.Rand
-	patternGen *MousePatternGenerator
+	patternGen *patterns.Generator
 }
 
 func setWindowsKeepAlive() error {
@@ -143,13 +187,8 @@ func setPowerShellKeepAlive() error {
 func detectWindowsCapabilities() windowsCapabilities {
 	return windowsCapabilities{
 		nativeAPIAvailable:  true, // Always available on Windows
-		powerShellAvailable: hasCommandWindows("powershell"),
+		powerShellAvailable: hasCommand("powershell"),
 	}
-}
-
-func hasCommandWindows(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
 }
 
 func (k *windowsKeepAlive) activateKeepAliveMethod() error {
@@ -169,7 +208,7 @@ func (k *windowsKeepAlive) activateKeepAliveMethod() error {
 }
 
 func (k *windowsKeepAlive) startActivityTickerLocked(ctx context.Context) {
-	k.activityTick = time.NewTicker(ActivityInterval)
+	k.activityTick = time.NewTicker(patterns.ActivityInterval)
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
@@ -192,7 +231,7 @@ func (k *windowsKeepAlive) startChatAppTickerLocked(ctx context.Context) {
 		return
 	}
 
-	k.chatAppTick = time.NewTicker(ChatAppActivityInterval)
+	k.chatAppTick = time.NewTicker(patterns.ChatAppActivityInterval)
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
@@ -216,29 +255,25 @@ func (k *windowsKeepAlive) simulateChatAppActivity() {
 		return
 	}
 
-	nowNS := time.Now().UnixNano()
-	lastActiveLog := atomic.LoadInt64(&k.lastActiveLogNS)
-
-	if idle <= IdleThreshold {
-		// Log occasionally (every 2 minutes) that we're skipping due to active use
-		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
-			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
-			log.Printf("windows: user is active (idle: %v); skipping simulation to avoid interference", idle)
-		}
+	// Use idle tracker for rate-limited logging
+	result := k.idleTracker.CheckIdle(idle, nil, "windows")
+	if result.LogMessage != "" {
+		log.Print(result.LogMessage)
+	}
+	if !result.ShouldSimulate {
 		return
 	}
 
-	// User became idle - log if we were previously active
-	if lastActiveLog != 0 {
-		atomic.StoreInt64(&k.lastActiveLogNS, 0)
-		log.Printf("windows: user became idle (%v); resuming activity simulation", idle)
-	}
-
 	points := k.patternGen.GenerateShapePoints()
-	k.executeMousePattern(points)
+	if k.executeMousePattern(points) {
+		log.Printf("windows: idle detected (%v); simulated natural user activity", idle)
+	} else {
+		log.Printf("windows: mouse simulation failed; SendInput may be blocked")
+	}
 }
 
-func (k *windowsKeepAlive) executeMousePattern(points []MousePoint) {
+func (k *windowsKeepAlive) executeMousePattern(points []patterns.Point) bool {
+	successCount := 0
 	for i, pt := range points {
 		dx := int32(pt.X)
 		dy := int32(pt.Y)
@@ -247,13 +282,17 @@ func (k *windowsKeepAlive) executeMousePattern(points []MousePoint) {
 		inputEv.inputType = inputMouse
 		inputEv.mi = mouseInput{dx: dx, dy: dy, dwFlags: mouseEventMove}
 
-		procSendInput.Call(
+		ret, _, _ := procSendInput.Call(
 			uintptr(1),
 			uintptr(unsafe.Pointer(&inputEv)),
 			uintptr(unsafe.Sizeof(inputEv)),
 		)
 
-		distance := SegmentDistance(points, i)
+		if ret == 1 {
+			successCount++
+		}
+
+		distance := patterns.SegmentDistance(points, i)
 		delay := k.patternGen.MovementDelay(distance)
 		time.Sleep(delay)
 
@@ -266,11 +305,14 @@ func (k *windowsKeepAlive) executeMousePattern(points []MousePoint) {
 			var midInput input
 			midInput.inputType = inputMouse
 			midInput.mi = mouseInput{dx: int32(midPt.X), dy: int32(midPt.Y), dwFlags: mouseEventMove}
-			procSendInput.Call(
+			ret, _, _ := procSendInput.Call(
 				uintptr(1),
 				uintptr(unsafe.Pointer(&midInput)),
 				uintptr(unsafe.Sizeof(midInput)),
 			)
+			if ret == 1 {
+				successCount++
+			}
 			time.Sleep(midDelay)
 		}
 	}
@@ -281,12 +323,18 @@ func (k *windowsKeepAlive) executeMousePattern(points []MousePoint) {
 	var returnInput input
 	returnInput.inputType = inputMouse
 	returnInput.mi = mouseInput{dx: -int32(lastPt.X), dy: -int32(lastPt.Y), dwFlags: mouseEventMove}
-	procSendInput.Call(
+	ret, _, _ := procSendInput.Call(
 		uintptr(1),
 		uintptr(unsafe.Pointer(&returnInput)),
 		uintptr(unsafe.Sizeof(returnInput)),
 	)
+	if ret == 1 {
+		successCount++
+	}
 	time.Sleep(returnDelay)
+
+	// Return true if at least some movements succeeded
+	return successCount > 0
 }
 
 // Start initiates the keep-alive functionality
@@ -300,9 +348,10 @@ func (k *windowsKeepAlive) Start(ctx context.Context) error {
 
 	k.ctx, k.cancel = context.WithCancel(ctx)
 
-	// Initialize random source and pattern generator
+	// Initialize random source, pattern generator, and idle tracker
 	k.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
-	k.patternGen = NewMousePatternGenerator(k.rnd)
+	k.patternGen = patterns.NewGenerator(k.rnd)
+	k.idleTracker = patterns.NewIdleTracker()
 
 	// Activate keep-alive method
 	if err := k.activateKeepAliveMethod(); err != nil {
@@ -398,8 +447,13 @@ func (k *windowsKeepAlive) SetSimulateActivity(simulate bool) {
 	}
 }
 
-// GetDependencyMessage returns empty string on Windows (no external dependencies needed)
+// GetDependencyMessage returns dependency information for Windows.
+// On Windows, activity simulation typically works without special permissions.
 func GetDependencyMessage() string {
+	cap := CheckActivitySimulationCapability()
+	if !cap.CanSimulate {
+		return cap.ErrorMessage + "\n\n" + cap.Instructions
+	}
 	return ""
 }
 
