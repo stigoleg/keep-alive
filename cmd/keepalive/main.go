@@ -17,8 +17,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// version is set via ldflags during build: -X main.version=x.y.z
+var version = "dev"
+
 const (
-	appVersion      = "1.4.8"
 	shutdownTimeout = 5 * time.Second
 )
 
@@ -29,7 +31,7 @@ var (
 )
 
 func main() {
-	cfg, err := config.ParseFlags(appVersion)
+	cfg, err := config.ParseFlags(version)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -58,7 +60,7 @@ func main() {
 		model = ui.InitialModel()
 		model.SimulateActivity = cfg.SimulateActivity
 	}
-	model.SetVersion(appVersion)
+	model.SetVersion(version)
 
 	// Check for missing dependencies and store in model for TUI display
 	depMessage := platform.GetDependencyMessage()

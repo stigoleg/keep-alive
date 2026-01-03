@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/stigoleg/keep-alive/internal/platform/patterns"
 )
 
 const (
@@ -31,17 +33,12 @@ type darwinCapabilities struct {
 	osascriptAvailable  bool
 }
 
-// runBestEffort executes a command ignoring any errors (best effort)
+// runBestEffort executes a command ignoring any errors (best effort).
 func runBestEffort(name string, args ...string) {
 	out, err := exec.Command(name, args...).CombinedOutput()
 	if err != nil {
-		log.Printf("darwin: best effort command %s failed: %v (output: %q)", name, err, string(out))
+		log.Printf("darwin: best-effort command %s failed: %v (output: %q)", name, err, string(out))
 	}
-}
-
-// run executes a command and returns any error
-func run(name string, args ...string) error {
-	return exec.Command(name, args...).Run()
 }
 
 // getIdleTime returns the system idle time on macOS
@@ -68,15 +65,15 @@ func getIdleTime() (time.Duration, error) {
 
 // darwinKeepAlive implements the KeepAlive interface for macOS
 type darwinKeepAlive struct {
-	mu                  sync.Mutex
-	cmd                 *exec.Cmd
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	wg                  sync.WaitGroup
-	isRunning           bool
-	activityTick        *time.Ticker
-	chatAppActivityTick *time.Ticker
-	activeMethod        string
+	mu           sync.Mutex
+	cmd          *exec.Cmd
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	isRunning    bool
+	activityTick *time.Ticker
+	chatAppTick  *time.Ticker
+	activeMethod string
 
 	// 0 or 1
 	simulateActivity uint32
@@ -87,14 +84,14 @@ type darwinKeepAlive struct {
 	// last time we warned about Accessibility, unix nanos
 	lastPermWarnNS int64
 
-	// last time we logged that user is active (to avoid spam)
-	lastActiveLogNS int64
+	// idle tracker for rate-limited logging
+	idleTracker *patterns.IdleTracker
 
 	// random source for jitter
 	rnd *rand.Rand
 
 	// mouse pattern generator for natural movement patterns
-	patternGen *MousePatternGenerator
+	patternGen *patterns.Generator
 }
 
 // Start initiates the keep-alive functionality.
@@ -108,7 +105,8 @@ func (k *darwinKeepAlive) Start(ctx context.Context) error {
 
 	k.ctx, k.cancel = context.WithCancel(ctx)
 	k.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
-	k.patternGen = NewMousePatternGenerator(k.rnd)
+	k.patternGen = patterns.NewGenerator(k.rnd)
+	k.idleTracker = patterns.NewIdleTracker()
 
 	caps, err := detectDarwinCapabilities()
 	if err != nil {
@@ -177,7 +175,7 @@ func (k *darwinKeepAlive) startCaffeinateLocked() error {
 }
 
 func (k *darwinKeepAlive) startActivityTickerLocked(caps darwinCapabilities) {
-	k.activityTick = time.NewTicker(ActivityInterval)
+	k.activityTick = time.NewTicker(patterns.ActivityInterval)
 
 	k.wg.Add(1)
 	go func() {
@@ -203,22 +201,22 @@ func (k *darwinKeepAlive) maybeStartChatAppTickerLocked() {
 		return
 	}
 
-	if k.chatAppActivityTick != nil {
+	if k.chatAppTick != nil {
 		return
 	}
 
-	k.chatAppActivityTick = time.NewTicker(ChatAppActivityInterval)
+	k.chatAppTick = time.NewTicker(patterns.ChatAppActivityInterval)
 
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
-		defer k.chatAppActivityTick.Stop()
+		defer k.chatAppTick.Stop()
 
 		for {
 			select {
 			case <-k.ctx.Done():
 				return
-			case <-k.chatAppActivityTick.C:
+			case <-k.chatAppTick.C:
 				k.simulateChatAppActivity()
 			}
 		}
@@ -260,23 +258,13 @@ func (k *darwinKeepAlive) simulateChatAppActivity() {
 		return
 	}
 
-	// Only simulate activity if user has been idle for more than threshold
-	nowNS := time.Now().UnixNano()
-	lastActiveLog := atomic.LoadInt64(&k.lastActiveLogNS)
-
-	if idle <= IdleThreshold {
-		// Log occasionally (every 2 minutes) that we're skipping due to active use
-		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
-			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
-			log.Printf("darwin: user is active (idle: %v); skipping simulation to avoid interference", idle)
-		}
-		return
+	// Use idle tracker for rate-limited logging
+	result := k.idleTracker.CheckIdle(idle, nil, "darwin")
+	if result.LogMessage != "" {
+		log.Print(result.LogMessage)
 	}
-
-	// User became idle - log if we were previously active
-	if lastActiveLog != 0 {
-		atomic.StoreInt64(&k.lastActiveLogNS, 0)
-		log.Printf("darwin: user became idle (%v); resuming activity simulation", idle)
+	if !result.ShouldSimulate {
+		return
 	}
 
 	// User is idle - simulate natural, human-like activity
@@ -360,7 +348,7 @@ func (k *darwinKeepAlive) jitterMouseRandomShape() error {
 	return nil
 }
 
-func (k *darwinKeepAlive) buildMouseMovementScript(points []MousePoint) string {
+func (k *darwinKeepAlive) buildMouseMovementScript(points []patterns.Point) string {
 	script := `
 ObjC.import('CoreGraphics');
 
@@ -393,7 +381,7 @@ if (Math.abs(test.x - (x0 + 1)) > 0.5 || Math.abs(test.y - (y0 + 1)) > 0.5) {
 `
 
 	for i, pt := range points {
-		distance := SegmentDistance(points, i)
+		distance := patterns.SegmentDistance(points, i)
 		delay := k.patternGen.MovementDelay(distance)
 
 		script += fmt.Sprintf("moveMouse(x0 + %f, y0 + %f);\ndelay(%f);\n", pt.X, pt.Y, delay.Seconds())
@@ -507,8 +495,8 @@ func (k *darwinKeepAlive) Stop() error {
 	if k.activityTick != nil {
 		k.activityTick.Stop()
 	}
-	if k.chatAppActivityTick != nil {
-		k.chatAppActivityTick.Stop()
+	if k.chatAppTick != nil {
+		k.chatAppTick.Stop()
 	}
 
 	k.killProcessLocked()
@@ -540,7 +528,7 @@ func (k *darwinKeepAlive) Stop() error {
 	k.ctx = nil
 	k.cancel = nil
 	k.activityTick = nil
-	k.chatAppActivityTick = nil
+	k.chatAppTick = nil
 	k.waitDone = nil
 	k.mu.Unlock()
 
@@ -555,18 +543,18 @@ func (k *darwinKeepAlive) SetSimulateActivity(simulate bool) {
 	if simulate {
 		atomic.StoreUint32(&k.simulateActivity, 1)
 		// Start chat app activity ticker if not already running and we have a context
-		if k.chatAppActivityTick == nil && k.isRunning && k.ctx != nil {
-			k.chatAppActivityTick = time.NewTicker(ChatAppActivityInterval)
+		if k.chatAppTick == nil && k.isRunning && k.ctx != nil {
+			k.chatAppTick = time.NewTicker(patterns.ChatAppActivityInterval)
 			k.wg.Add(1)
 			go func() {
 				defer k.wg.Done()
-				defer k.chatAppActivityTick.Stop()
+				defer k.chatAppTick.Stop()
 
 				for {
 					select {
 					case <-k.ctx.Done():
 						return
-					case <-k.chatAppActivityTick.C:
+					case <-k.chatAppTick.C:
 						k.simulateChatAppActivity()
 					}
 				}
@@ -575,9 +563,9 @@ func (k *darwinKeepAlive) SetSimulateActivity(simulate bool) {
 	} else {
 		atomic.StoreUint32(&k.simulateActivity, 0)
 		// Stop chat app activity ticker
-		if k.chatAppActivityTick != nil {
-			k.chatAppActivityTick.Stop()
-			k.chatAppActivityTick = nil
+		if k.chatAppTick != nil {
+			k.chatAppTick.Stop()
+			k.chatAppTick = nil
 		}
 	}
 }

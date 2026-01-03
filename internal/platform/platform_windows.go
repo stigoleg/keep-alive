@@ -8,10 +8,11 @@ import (
 	"math/rand"
 	"os/exec"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/stigoleg/keep-alive/internal/platform/patterns"
 )
 
 // runBestEffort executes a command ignoring any errors (best-effort)
@@ -97,12 +98,12 @@ type windowsKeepAlive struct {
 
 	simulateActivity bool
 
-	// last time we logged that user is active (to avoid spam)
-	lastActiveLogNS int64
+	// idle tracker for rate-limited logging
+	idleTracker *patterns.IdleTracker
 
 	// random source and pattern generator for natural mouse movements
 	rnd        *rand.Rand
-	patternGen *MousePatternGenerator
+	patternGen *patterns.Generator
 }
 
 func setWindowsKeepAlive() error {
@@ -143,13 +144,8 @@ func setPowerShellKeepAlive() error {
 func detectWindowsCapabilities() windowsCapabilities {
 	return windowsCapabilities{
 		nativeAPIAvailable:  true, // Always available on Windows
-		powerShellAvailable: hasCommandWindows("powershell"),
+		powerShellAvailable: hasCommand("powershell"),
 	}
-}
-
-func hasCommandWindows(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
 }
 
 func (k *windowsKeepAlive) activateKeepAliveMethod() error {
@@ -169,7 +165,7 @@ func (k *windowsKeepAlive) activateKeepAliveMethod() error {
 }
 
 func (k *windowsKeepAlive) startActivityTickerLocked(ctx context.Context) {
-	k.activityTick = time.NewTicker(ActivityInterval)
+	k.activityTick = time.NewTicker(patterns.ActivityInterval)
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
@@ -192,7 +188,7 @@ func (k *windowsKeepAlive) startChatAppTickerLocked(ctx context.Context) {
 		return
 	}
 
-	k.chatAppTick = time.NewTicker(ChatAppActivityInterval)
+	k.chatAppTick = time.NewTicker(patterns.ChatAppActivityInterval)
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
@@ -216,29 +212,20 @@ func (k *windowsKeepAlive) simulateChatAppActivity() {
 		return
 	}
 
-	nowNS := time.Now().UnixNano()
-	lastActiveLog := atomic.LoadInt64(&k.lastActiveLogNS)
-
-	if idle <= IdleThreshold {
-		// Log occasionally (every 2 minutes) that we're skipping due to active use
-		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
-			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
-			log.Printf("windows: user is active (idle: %v); skipping simulation to avoid interference", idle)
-		}
-		return
+	// Use idle tracker for rate-limited logging
+	result := k.idleTracker.CheckIdle(idle, nil, "windows")
+	if result.LogMessage != "" {
+		log.Print(result.LogMessage)
 	}
-
-	// User became idle - log if we were previously active
-	if lastActiveLog != 0 {
-		atomic.StoreInt64(&k.lastActiveLogNS, 0)
-		log.Printf("windows: user became idle (%v); resuming activity simulation", idle)
+	if !result.ShouldSimulate {
+		return
 	}
 
 	points := k.patternGen.GenerateShapePoints()
 	k.executeMousePattern(points)
 }
 
-func (k *windowsKeepAlive) executeMousePattern(points []MousePoint) {
+func (k *windowsKeepAlive) executeMousePattern(points []patterns.Point) {
 	for i, pt := range points {
 		dx := int32(pt.X)
 		dy := int32(pt.Y)
@@ -253,7 +240,7 @@ func (k *windowsKeepAlive) executeMousePattern(points []MousePoint) {
 			uintptr(unsafe.Sizeof(inputEv)),
 		)
 
-		distance := SegmentDistance(points, i)
+		distance := patterns.SegmentDistance(points, i)
 		delay := k.patternGen.MovementDelay(distance)
 		time.Sleep(delay)
 
@@ -300,9 +287,10 @@ func (k *windowsKeepAlive) Start(ctx context.Context) error {
 
 	k.ctx, k.cancel = context.WithCancel(ctx)
 
-	// Initialize random source and pattern generator
+	// Initialize random source, pattern generator, and idle tracker
 	k.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
-	k.patternGen = NewMousePatternGenerator(k.rnd)
+	k.patternGen = patterns.NewGenerator(k.rnd)
+	k.idleTracker = patterns.NewIdleTracker()
 
 	// Activate keep-alive method
 	if err := k.activateKeepAliveMethod(); err != nil {
