@@ -1,7 +1,9 @@
 package patterns
 
 import (
+	"fmt"
 	"math/rand"
+	"strings"
 	"testing"
 	"time"
 )
@@ -240,5 +242,107 @@ func TestAllShapeTypes(t *testing.T) {
 
 	if len(shapeTypeSeen) != 4 {
 		t.Errorf("not all shape types were reached, got %d types", len(shapeTypeSeen))
+	}
+}
+
+func TestNewIdleTracker(t *testing.T) {
+	tracker := NewIdleTracker()
+	if tracker == nil {
+		t.Fatal("NewIdleTracker returned nil")
+	}
+}
+
+func TestIdleTrackerCheckIdle_ErrorCase(t *testing.T) {
+	tracker := NewIdleTracker()
+
+	// When idle detection fails, should simulate without logging
+	result := tracker.CheckIdle(0, fmt.Errorf("detection failed"), "test")
+
+	if !result.ShouldSimulate {
+		t.Error("expected ShouldSimulate=true when idle detection fails")
+	}
+	if result.LogMessage != "" {
+		t.Errorf("expected empty log message on error, got: %q", result.LogMessage)
+	}
+}
+
+func TestIdleTrackerCheckIdle_UserActive(t *testing.T) {
+	tracker := NewIdleTracker()
+
+	// User is active (idle time below threshold)
+	result := tracker.CheckIdle(1*time.Second, nil, "test")
+
+	if result.ShouldSimulate {
+		t.Error("expected ShouldSimulate=false when user is active")
+	}
+	if result.LogMessage == "" {
+		t.Error("expected log message on first active detection")
+	}
+	if !strings.Contains(result.LogMessage, "user is active") {
+		t.Errorf("log message should mention 'user is active', got: %q", result.LogMessage)
+	}
+}
+
+func TestIdleTrackerCheckIdle_UserActiveRateLimited(t *testing.T) {
+	tracker := NewIdleTracker()
+
+	// First call - should log
+	result1 := tracker.CheckIdle(1*time.Second, nil, "test")
+	if result1.LogMessage == "" {
+		t.Error("expected log message on first active detection")
+	}
+
+	// Second call immediately after - should NOT log (rate limited)
+	result2 := tracker.CheckIdle(1*time.Second, nil, "test")
+	if result2.ShouldSimulate {
+		t.Error("expected ShouldSimulate=false when user is active")
+	}
+	if result2.LogMessage != "" {
+		t.Errorf("expected no log message due to rate limiting, got: %q", result2.LogMessage)
+	}
+}
+
+func TestIdleTrackerCheckIdle_UserIdle(t *testing.T) {
+	tracker := NewIdleTracker()
+
+	// User is idle (idle time above threshold)
+	result := tracker.CheckIdle(10*time.Second, nil, "test")
+
+	if !result.ShouldSimulate {
+		t.Error("expected ShouldSimulate=true when user is idle")
+	}
+	// First idle check with no prior active state should not log
+	if result.LogMessage != "" {
+		t.Errorf("expected no log message on first idle check, got: %q", result.LogMessage)
+	}
+}
+
+func TestIdleTrackerCheckIdle_TransitionActiveToIdle(t *testing.T) {
+	tracker := NewIdleTracker()
+
+	// First: user is active
+	tracker.CheckIdle(1*time.Second, nil, "test")
+
+	// Then: user becomes idle
+	result := tracker.CheckIdle(10*time.Second, nil, "test")
+
+	if !result.ShouldSimulate {
+		t.Error("expected ShouldSimulate=true when user becomes idle")
+	}
+	if result.LogMessage == "" {
+		t.Error("expected log message when transitioning from active to idle")
+	}
+	if !strings.Contains(result.LogMessage, "became idle") {
+		t.Errorf("log message should mention 'became idle', got: %q", result.LogMessage)
+	}
+}
+
+func TestIdleTrackerCheckIdle_PlatformInLogMessage(t *testing.T) {
+	tracker := NewIdleTracker()
+
+	result := tracker.CheckIdle(1*time.Second, nil, "darwin")
+
+	if !strings.Contains(result.LogMessage, "darwin") {
+		t.Errorf("log message should contain platform name, got: %q", result.LogMessage)
 	}
 }
