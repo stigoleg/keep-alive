@@ -81,7 +81,7 @@ func (k *KeepAlive) Start(ctx context.Context) error {
 	activeCount, err := k.activateInhibitors(k.ctx)
 	if err != nil {
 		k.cancel()
-		enhancedErr := fmt.Errorf("%v\n\nTroubleshooting:\n- Ensure systemd-inhibit is available: which systemd-inhibit\n- Check DBus services: dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ListNames\n- For Cosmic/GNOME: ensure org.gnome.SessionManager is available", err)
+		enhancedErr := fmt.Errorf("%w\n\nTroubleshooting:\n- Ensure systemd-inhibit is available: which systemd-inhibit\n- Check DBus services: dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ListNames\n- For Cosmic/GNOME: ensure org.gnome.SessionManager is available", err)
 		return enhancedErr
 	}
 
@@ -196,7 +196,7 @@ func (k *KeepAlive) verifyInhibitorActivation(inh Inhibitor) bool {
 		}
 		log.Printf("linux: warning: DBus inhibitor %s activated but no cookie received", v.Name())
 		return false
-	case *LoginctlInhibitor, *GsettingsInhibitor, *XsetInhibitor:
+	case *GsettingsInhibitor, *XsetInhibitor:
 		return true
 	default:
 		return false

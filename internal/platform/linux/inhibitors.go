@@ -33,34 +33,6 @@ type Inhibitor interface {
 	Deactivate() error
 }
 
-// LoginctlInhibitor implements sleep prevention using loginctl (Wayland-specific).
-type LoginctlInhibitor struct {
-	pid int
-}
-
-func (l *LoginctlInhibitor) Name() string { return "loginctl" }
-
-func (l *LoginctlInhibitor) Activate(ctx context.Context) error {
-	if !hasCommand("loginctl") {
-		return fmt.Errorf("loginctl command not found")
-	}
-	l.pid = os.Getpid()
-	_, err := runVerbose("loginctl", "inhibit-sleep", fmt.Sprintf("%d", l.pid))
-	if err != nil {
-		return fmt.Errorf("loginctl inhibit-sleep failed: %v", err)
-	}
-	log.Printf("linux: loginctl inhibit-sleep activated for pid %d", l.pid)
-	return nil
-}
-
-func (l *LoginctlInhibitor) Deactivate() error {
-	if l.pid == 0 {
-		return nil
-	}
-	log.Printf("linux: loginctl inhibition will be removed when process exits (pid %d)", l.pid)
-	return nil
-}
-
 // SystemdInhibitor implements sleep prevention using systemd-inhibit.
 type SystemdInhibitor struct {
 	cmd *exec.Cmd
@@ -81,7 +53,7 @@ func (s *SystemdInhibitor) Activate(ctx context.Context) error {
 		"sh", "-c", "while true; do sleep 1; done")
 
 	if err := s.cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start systemd-inhibit: %v", err)
+		return fmt.Errorf("failed to start systemd-inhibit: %w", err)
 	}
 
 	if s.cmd.Process == nil {
@@ -90,7 +62,7 @@ func (s *SystemdInhibitor) Activate(ctx context.Context) error {
 
 	time.Sleep(inhibitorVerifyDelay)
 	if err := s.cmd.Process.Signal(syscall.Signal(0)); err != nil {
-		return fmt.Errorf("systemd-inhibit process verification failed: %v", err)
+		return fmt.Errorf("systemd-inhibit process verification failed: %w", err)
 	}
 
 	log.Printf("linux: systemd-inhibit started successfully (pid %d)", s.cmd.Process.Pid)
@@ -154,11 +126,11 @@ func (d *DBusInhibitor) Name() string { return d.name }
 func (d *DBusInhibitor) Activate(ctx context.Context) error {
 	out, err := d.call(d.method, d.args...)
 	if err != nil {
-		return fmt.Errorf("dbus call failed: %v (output: %q)", err, out)
+		return fmt.Errorf("dbus call failed (output: %q): %w", out, err)
 	}
 	cookie, err := d.parseCookie(out)
 	if err != nil {
-		return fmt.Errorf("failed to parse cookie from dbus response: %v (output: %q)", err, out)
+		return fmt.Errorf("failed to parse cookie from dbus response (output: %q): %w", out, err)
 	}
 	if cookie == 0 {
 		return fmt.Errorf("received invalid cookie (0) from dbus inhibitor %s", d.name)
@@ -290,11 +262,6 @@ func BuildInhibitors() []Inhibitor {
 
 	// Always try systemd-inhibit first (works on all systems)
 	inhibitors = append(inhibitors, &SystemdInhibitor{})
-
-	// Add loginctl for Wayland
-	if displayServer == DisplayServerWayland && hasCommand("loginctl") {
-		inhibitors = append(inhibitors, &LoginctlInhibitor{})
-	}
 
 	// Add DE-specific inhibitors
 	switch de {

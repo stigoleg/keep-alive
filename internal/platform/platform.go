@@ -57,7 +57,7 @@ func getIdleTime() (time.Duration, error) {
 
 	nanos, err := strconv.ParseInt(string(matches[1]), 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse HIDIdleTime: %v", err)
+		return 0, fmt.Errorf("failed to parse HIDIdleTime: %w", err)
 	}
 
 	return time.Duration(nanos), nil
@@ -75,8 +75,7 @@ type darwinKeepAlive struct {
 	chatAppTick  *time.Ticker
 	activeMethod string
 
-	// 0 or 1
-	simulateActivity uint32
+	simulateActivity bool
 
 	// closed when cmd.Wait returns
 	waitDone chan struct{}
@@ -197,7 +196,7 @@ func (k *darwinKeepAlive) startActivityTickerLocked(caps darwinCapabilities) {
 }
 
 func (k *darwinKeepAlive) maybeStartChatAppTickerLocked() {
-	if atomic.LoadUint32(&k.simulateActivity) != 1 || k.ctx == nil {
+	if !k.simulateActivity || k.ctx == nil {
 		return
 	}
 
@@ -303,7 +302,7 @@ console.log("ok");
 `
 	out, err := runJXAScript(script)
 	if err != nil {
-		return fmt.Errorf("keyboard simulation failed: %v (output: %q)", err, string(out))
+		return fmt.Errorf("keyboard simulation failed (output: %q): %w", string(out), err)
 	}
 	return nil
 }
@@ -343,7 +342,7 @@ func (k *darwinKeepAlive) jitterMouseRandomShape() error {
 
 	out, err := runJXAScript(script)
 	if err != nil {
-		return fmt.Errorf("osascript failed: %v (output: %q)", err, string(out))
+		return fmt.Errorf("osascript failed (output: %q): %w", string(out), err)
 	}
 	return nil
 }
@@ -541,7 +540,7 @@ func (k *darwinKeepAlive) SetSimulateActivity(simulate bool) {
 	defer k.mu.Unlock()
 
 	if simulate {
-		atomic.StoreUint32(&k.simulateActivity, 1)
+		k.simulateActivity = true
 		// Start chat app activity ticker if not already running and we have a context
 		if k.chatAppTick == nil && k.isRunning && k.ctx != nil {
 			k.chatAppTick = time.NewTicker(patterns.ChatAppActivityInterval)
@@ -561,7 +560,7 @@ func (k *darwinKeepAlive) SetSimulateActivity(simulate bool) {
 			}()
 		}
 	} else {
-		atomic.StoreUint32(&k.simulateActivity, 0)
+		k.simulateActivity = false
 		// Stop chat app activity ticker
 		if k.chatAppTick != nil {
 			k.chatAppTick.Stop()

@@ -43,21 +43,13 @@ func menuView(m Model) string {
 	}
 
 	for i, opt := range menuItems {
-		var menuLine strings.Builder
-
+		prefix := "  "
+		style := Current.Unselected
 		if i == m.Selected {
-			menuLine.WriteString(Current.Selected.Render("> "))
-		} else {
-			menuLine.WriteString(Current.Unselected.Render("  "))
+			prefix = "> "
+			style = Current.Selected
 		}
-
-		if i == m.Selected {
-			menuLine.WriteString(Current.Selected.Render(opt))
-		} else {
-			menuLine.WriteString(Current.Unselected.Render(opt))
-		}
-
-		b.WriteString(menuLine.String() + "\n")
+		b.WriteString(style.Render(prefix+opt) + "\n")
 	}
 
 	// Activity simulation toggle

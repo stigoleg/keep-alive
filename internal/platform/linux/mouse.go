@@ -27,7 +27,7 @@ func GetIdleTime() (time.Duration, error) {
 	}
 	millis, err := strconv.ParseInt(out, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse xprintidle output %q: %v", out, err)
+		return 0, fmt.Errorf("failed to parse xprintidle output %q: %w", out, err)
 	}
 	return time.Duration(millis) * time.Millisecond, nil
 }

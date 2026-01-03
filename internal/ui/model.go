@@ -22,6 +22,11 @@ const (
 	stateRunning
 )
 
+// UI layout constants.
+const (
+	progressBarWidth = 34
+)
+
 // Model holds the current state of the UI, including user input and keep-alive state.
 type Model struct {
 	State              state
@@ -56,7 +61,7 @@ func InitialModel() Model {
 		DependencyWarning:  "",
 		Keys:               DefaultKeys(),
 		Help:               NewHelpModel(),
-		progress:           progress.New(progress.WithDefaultGradient(), progress.WithWidth(34)),
+		progress:           progress.New(progress.WithDefaultGradient(), progress.WithWidth(progressBarWidth)),
 		SimulateActivity:   false,
 	}
 }
