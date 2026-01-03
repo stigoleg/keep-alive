@@ -5,9 +5,19 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stigoleg/keep-alive/internal/platform"
+)
+
+// SimulationHealth represents the runtime health of activity simulation
+type SimulationHealth int
+
+const (
+	SimulationHealthUnknown SimulationHealth = iota
+	SimulationHealthOK
+	SimulationHealthFailed
 )
 
 // Keeper manages the system's keep-alive state
@@ -21,6 +31,9 @@ type Keeper struct {
 	endTime time.Time
 
 	simulateActivity bool
+
+	// simulationFailCount tracks consecutive simulation failures (atomic for thread-safety)
+	simulationFailCount int64
 }
 
 // IsRunning returns whether the keep-alive is currently active
@@ -186,4 +199,23 @@ func (k *Keeper) SetSimulateActivity(simulate bool) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.simulateActivity = simulate
+}
+
+// GetSimulationHealth returns the current health of activity simulation
+func (k *Keeper) GetSimulationHealth() SimulationHealth {
+	failCount := atomic.LoadInt64(&k.simulationFailCount)
+	if failCount > 0 {
+		return SimulationHealthFailed
+	}
+	return SimulationHealthOK
+}
+
+// RecordSimulationFailure increments the simulation failure counter
+func (k *Keeper) RecordSimulationFailure() {
+	atomic.AddInt64(&k.simulationFailCount, 1)
+}
+
+// ResetSimulationHealth resets the simulation failure counter
+func (k *Keeper) ResetSimulationHealth() {
+	atomic.StoreInt64(&k.simulationFailCount, 0)
 }

@@ -80,6 +80,49 @@ func getIdleTime() (time.Duration, error) {
 	return time.Duration(idleMillis) * time.Millisecond, nil
 }
 
+// checkSendInputCapability tests if SendInput works by sending a no-op movement
+func checkSendInputCapability() bool {
+	var testInput input
+	testInput.inputType = inputMouse
+	testInput.mi = mouseInput{dx: 0, dy: 0, dwFlags: mouseEventMove}
+
+	ret, _, _ := procSendInput.Call(
+		uintptr(1),
+		uintptr(unsafe.Pointer(&testInput)),
+		uintptr(unsafe.Sizeof(testInput)),
+	)
+
+	// SendInput returns the number of events successfully inserted
+	return ret == 1
+}
+
+// CheckActivitySimulationCapability checks if the platform can simulate user activity.
+// On Windows, SendInput typically works without special permissions for normal users.
+func CheckActivitySimulationCapability() SimulationCapability {
+	if checkSendInputCapability() {
+		return SimulationCapability{CanSimulate: true}
+	}
+
+	return SimulationCapability{
+		CanSimulate:  false,
+		ErrorMessage: "Mouse simulation may be blocked by system security",
+		Instructions: `SendInput API test failed. This can happen when:
+
+- Security software blocks input simulation
+- User Interface Privilege Isolation (UIPI) is active
+- Running in a restricted environment
+
+The app will continue but activity simulation for Slack/Teams may not work.`,
+		CanPrompt: false,
+	}
+}
+
+// PromptActivitySimulationPermission is a no-op on Windows.
+// Windows doesn't have a system permission dialog for input simulation.
+func PromptActivitySimulationPermission() {
+	// No-op on Windows
+}
+
 type windowsCapabilities struct {
 	nativeAPIAvailable  bool
 	powerShellAvailable bool
@@ -222,10 +265,15 @@ func (k *windowsKeepAlive) simulateChatAppActivity() {
 	}
 
 	points := k.patternGen.GenerateShapePoints()
-	k.executeMousePattern(points)
+	if k.executeMousePattern(points) {
+		log.Printf("windows: idle detected (%v); simulated natural user activity", idle)
+	} else {
+		log.Printf("windows: mouse simulation failed; SendInput may be blocked")
+	}
 }
 
-func (k *windowsKeepAlive) executeMousePattern(points []patterns.Point) {
+func (k *windowsKeepAlive) executeMousePattern(points []patterns.Point) bool {
+	successCount := 0
 	for i, pt := range points {
 		dx := int32(pt.X)
 		dy := int32(pt.Y)
@@ -234,11 +282,15 @@ func (k *windowsKeepAlive) executeMousePattern(points []patterns.Point) {
 		inputEv.inputType = inputMouse
 		inputEv.mi = mouseInput{dx: dx, dy: dy, dwFlags: mouseEventMove}
 
-		procSendInput.Call(
+		ret, _, _ := procSendInput.Call(
 			uintptr(1),
 			uintptr(unsafe.Pointer(&inputEv)),
 			uintptr(unsafe.Sizeof(inputEv)),
 		)
+
+		if ret == 1 {
+			successCount++
+		}
 
 		distance := patterns.SegmentDistance(points, i)
 		delay := k.patternGen.MovementDelay(distance)
@@ -253,11 +305,14 @@ func (k *windowsKeepAlive) executeMousePattern(points []patterns.Point) {
 			var midInput input
 			midInput.inputType = inputMouse
 			midInput.mi = mouseInput{dx: int32(midPt.X), dy: int32(midPt.Y), dwFlags: mouseEventMove}
-			procSendInput.Call(
+			ret, _, _ := procSendInput.Call(
 				uintptr(1),
 				uintptr(unsafe.Pointer(&midInput)),
 				uintptr(unsafe.Sizeof(midInput)),
 			)
+			if ret == 1 {
+				successCount++
+			}
 			time.Sleep(midDelay)
 		}
 	}
@@ -268,12 +323,18 @@ func (k *windowsKeepAlive) executeMousePattern(points []patterns.Point) {
 	var returnInput input
 	returnInput.inputType = inputMouse
 	returnInput.mi = mouseInput{dx: -int32(lastPt.X), dy: -int32(lastPt.Y), dwFlags: mouseEventMove}
-	procSendInput.Call(
+	ret, _, _ := procSendInput.Call(
 		uintptr(1),
 		uintptr(unsafe.Pointer(&returnInput)),
 		uintptr(unsafe.Sizeof(returnInput)),
 	)
+	if ret == 1 {
+		successCount++
+	}
 	time.Sleep(returnDelay)
+
+	// Return true if at least some movements succeeded
+	return successCount > 0
 }
 
 // Start initiates the keep-alive functionality
@@ -386,8 +447,13 @@ func (k *windowsKeepAlive) SetSimulateActivity(simulate bool) {
 	}
 }
 
-// GetDependencyMessage returns empty string on Windows (no external dependencies needed)
+// GetDependencyMessage returns dependency information for Windows.
+// On Windows, activity simulation typically works without special permissions.
 func GetDependencyMessage() string {
+	cap := CheckActivitySimulationCapability()
+	if !cap.CanSimulate {
+		return cap.ErrorMessage + "\n\n" + cap.Instructions
+	}
 	return ""
 }
 

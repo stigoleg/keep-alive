@@ -38,3 +38,20 @@ func (k *linuxKeepAlive) SetSimulateActivity(simulate bool) {
 func GetDependencyMessage() string {
 	return linux.GetDependencyMessage()
 }
+
+// CheckActivitySimulationCapability checks if the platform can simulate user activity.
+// On Linux, this checks for uinput access or availability of ydotool/xdotool.
+func CheckActivitySimulationCapability() SimulationCapability {
+	linuxCap := linux.CheckActivitySimulationCapability()
+	return SimulationCapability{
+		CanSimulate:  linuxCap.CanSimulate,
+		ErrorMessage: linuxCap.ErrorMessage,
+		Instructions: linuxCap.Instructions,
+		CanPrompt:    linuxCap.CanPrompt,
+	}
+}
+
+// PromptActivitySimulationPermission is a no-op on Linux.
+func PromptActivitySimulationPermission() {
+	linux.PromptActivitySimulationPermission()
+}

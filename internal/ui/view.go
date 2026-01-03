@@ -8,6 +8,10 @@ import (
 
 // View renders the current state of the model to a string.
 func View(m Model) string {
+	// Show blocking simulation warning first (when --active used but won't work)
+	if m.ShowSimulationWarning {
+		return simulationWarningView(m)
+	}
 	if m.ShowDependencyInfo {
 		return dependencyInfoView(m)
 	}
@@ -52,15 +56,28 @@ func menuView(m Model) string {
 		b.WriteString(style.Render(prefix+opt) + "\n")
 	}
 
-	// Activity simulation toggle
+	// Activity simulation toggle with status indicator
 	b.WriteString("\n")
 	activeStatus := "[ ]"
 	if m.SimulateActivity {
 		activeStatus = "[x]"
 	}
-	activeText := fmt.Sprintf("%s Simulate activity (Slack/Teams)", activeStatus)
+
+	// Show capability status when simulation is enabled
+	statusIndicator := ""
+	if m.SimulateActivity && !m.SimulationCapable {
+		statusIndicator = " (unavailable)"
+	}
+
+	activeText := fmt.Sprintf("%s Simulate activity (Slack/Teams)%s", activeStatus, statusIndicator)
 	b.WriteString(Current.Unselected.Render(activeText) + " " + Current.Unselected.Render("(press 'a' to toggle)"))
 	b.WriteString("\n")
+
+	// Show inline warning if enabled but unavailable
+	if m.SimulateActivity && !m.SimulationCapable {
+		b.WriteString(Current.Error.Render("    Press 'i' for details on how to enable"))
+		b.WriteString("\n")
+	}
 
 	// Dependency warning notification
 	if m.DependencyWarning != "" && !m.ShowDependencyInfo {
@@ -116,6 +133,27 @@ func runningView(m Model) string {
 
 	b.WriteString(Current.Awake.Render("System is being kept awake"))
 	b.WriteString("\n")
+
+	// Show activity simulation status if enabled
+	if m.SimulateActivity {
+		var simStatus string
+		switch m.SimulationStatus {
+		case SimulationStatusActive:
+			simStatus = "Activity simulation: Active"
+		case SimulationStatusFailed:
+			simStatus = "Activity simulation: Failed (check debug.log)"
+		case SimulationStatusUnavailable:
+			simStatus = "Activity simulation: Not available"
+		default:
+			if m.SimulationCapable {
+				simStatus = "Activity simulation: Enabled"
+			} else {
+				simStatus = "Activity simulation: Not available"
+			}
+		}
+		b.WriteString(Current.Unselected.Render(simStatus))
+		b.WriteString("\n")
+	}
 
 	// Show countdown and progress bar if this is a timed session
 	if m.Duration > time.Duration(0) {
@@ -187,4 +225,39 @@ Version: %s
 Press 'i' or 'Esc' to close this view.
 `
 	return Current.Help.Render(fmt.Sprintf(header, m.Version(), m.DependencyWarning))
+}
+
+// simulationWarningView displays the blocking warning when --active was used but simulation won't work
+func simulationWarningView(m Model) string {
+	var b strings.Builder
+
+	b.WriteString(Current.Title.Render("Activity Simulation Unavailable"))
+	b.WriteString("\n\n")
+
+	b.WriteString(Current.Error.Render("The --active flag was specified, but activity simulation cannot work."))
+	b.WriteString("\n\n")
+
+	// Show the error message and instructions
+	if m.SimulationMessage != "" {
+		b.WriteString(Current.Unselected.Render(m.SimulationMessage))
+		b.WriteString("\n\n")
+	}
+
+	b.WriteString(Current.Selected.Render("Options:"))
+	b.WriteString("\n")
+	b.WriteString(Current.Unselected.Render("  [c] Continue without activity simulation"))
+	b.WriteString("\n")
+	b.WriteString(Current.Unselected.Render("  [r] Retry (after granting permissions)"))
+	b.WriteString("\n")
+	b.WriteString(Current.Unselected.Render("  [q] Quit"))
+	b.WriteString("\n")
+
+	if m.SimulationCanPrompt {
+		b.WriteString("\n")
+		b.WriteString(Current.Unselected.Render("A permission dialog should have appeared."))
+		b.WriteString("\n")
+		b.WriteString(Current.Unselected.Render("Grant access and press 'r' to retry."))
+	}
+
+	return b.String()
 }

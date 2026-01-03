@@ -22,6 +22,17 @@ const (
 	stateRunning
 )
 
+// SimulationStatus represents the current state of activity simulation
+type SimulationStatus int
+
+const (
+	SimulationStatusUnknown SimulationStatus = iota
+	SimulationStatusAvailable
+	SimulationStatusUnavailable
+	SimulationStatusActive
+	SimulationStatusFailed
+)
+
 // UI layout constants.
 const (
 	progressBarWidth = 34
@@ -46,23 +57,35 @@ type Model struct {
 	timer              timer.Model
 	progress           progress.Model
 	SimulateActivity   bool
+
+	// Simulation capability and status
+	SimulationCapable     bool             // Whether simulation can work on this system
+	SimulationStatus      SimulationStatus // Current simulation state during runtime
+	SimulationMessage     string           // Error/instruction message if not capable
+	SimulationCanPrompt   bool             // Whether we can trigger a system permission dialog
+	ShowSimulationWarning bool             // Show blocking warning dialog when --active fails
 }
 
 // InitialModel returns the initial model for the TUI.
 func InitialModel() Model {
 	return Model{
-		State:              stateMenu,
-		Selected:           0,
-		textInput:          newMinutesTextInput(),
-		durationStringMode: false,
-		KeepAlive:          &keepalive.Keeper{},
-		ShowHelp:           false,
-		ShowDependencyInfo: false,
-		DependencyWarning:  "",
-		Keys:               DefaultKeys(),
-		Help:               NewHelpModel(),
-		progress:           progress.New(progress.WithDefaultGradient(), progress.WithWidth(progressBarWidth)),
-		SimulateActivity:   false,
+		State:                 stateMenu,
+		Selected:              0,
+		textInput:             newMinutesTextInput(),
+		durationStringMode:    false,
+		KeepAlive:             &keepalive.Keeper{},
+		ShowHelp:              false,
+		ShowDependencyInfo:    false,
+		DependencyWarning:     "",
+		Keys:                  DefaultKeys(),
+		Help:                  NewHelpModel(),
+		progress:              progress.New(progress.WithDefaultGradient(), progress.WithWidth(progressBarWidth)),
+		SimulateActivity:      false,
+		SimulationCapable:     true, // Assume capable until checked
+		SimulationStatus:      SimulationStatusUnknown,
+		SimulationMessage:     "",
+		SimulationCanPrompt:   false,
+		ShowSimulationWarning: false,
 	}
 }
 
@@ -140,6 +163,18 @@ func (m Model) Version() string {
 // SetDependencyWarning sets the dependency warning message
 func (m *Model) SetDependencyWarning(message string) {
 	m.DependencyWarning = message
+}
+
+// SetSimulationCapability sets the simulation capability status
+func (m *Model) SetSimulationCapability(capable bool, message string, canPrompt bool) {
+	m.SimulationCapable = capable
+	m.SimulationMessage = message
+	m.SimulationCanPrompt = canPrompt
+	if capable {
+		m.SimulationStatus = SimulationStatusAvailable
+	} else {
+		m.SimulationStatus = SimulationStatusUnavailable
+	}
 }
 
 // newMinutesTextInput constructs a focused text input configured for minute entry.

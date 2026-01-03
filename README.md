@@ -106,7 +106,7 @@ Keep-Alive uses platform-specific APIs and techniques to prevent your system fro
 ### macOS
 - Uses the `caffeinate` command with multiple flags (`-s`, `-d`, `-m`, `-i`, `-u`).
 - Periodically asserts user activity using `pmset touch`.
-- **Active Status**: Optionally jitters the mouse by 1 pixel via native scripting to maintain application-level activity.
+- **Active Status**: Optionally jitters the mouse by 1 pixel via native scripting to maintain application-level activity. **Requires Accessibility permission** (see Troubleshooting).
 
 ### Windows
 - Utilizes the Windows `SetThreadExecutionState` API.
@@ -149,6 +149,34 @@ Keep-Alive uses a multi-layered approach:
   - [golang.org/x/sys](https://pkg.go.dev/golang.org/x/sys) - Windows syscall interop
 
 ## Troubleshooting
+
+### macOS
+
+#### Mouse Simulation Not Working (--active flag)
+
+The `--active` flag uses mouse simulation to keep apps like Slack and Teams showing you as "active". On macOS, this requires **Accessibility permissions**.
+
+**Granting Accessibility Permission:**
+
+When you first run `keepalive --active`, the app will automatically prompt you to grant Accessibility access. If the prompt doesn't appear or you dismissed it:
+
+1. Open **System Settings** (or System Preferences on older macOS)
+2. Go to **Privacy & Security** > **Accessibility**
+3. Click the lock icon to make changes (enter your password)
+4. Find and enable `keepalive` (or `Terminal`/`iTerm` if running from a terminal)
+5. **Restart the terminal** or relaunch `keepalive`
+
+**Why is this needed?**
+
+macOS requires explicit user permission for any app that wants to control the mouse or keyboard. This is a security feature to prevent malicious software from controlling your computer.
+
+**Verifying Permission Status:**
+
+Run `keepalive --active --log` and check `debug.log` for messages like:
+- `darwin: Accessibility permission: granted` - Permission is working
+- `darwin: Accessibility permission: denied` - Permission needs to be granted
+
+If you see "mouse jitter blocked or failed" errors in the log, Accessibility permission has not been granted.
 
 ### Linux
 

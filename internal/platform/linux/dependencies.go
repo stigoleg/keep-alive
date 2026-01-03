@@ -238,3 +238,76 @@ func GetDependencyMessage() string {
 	}
 	return ""
 }
+
+// SimulationCapability represents the result of checking if activity simulation will work.
+// This type mirrors the one in platform_interface.go but is defined here for the linux package.
+type SimulationCapability struct {
+	CanSimulate  bool
+	ErrorMessage string
+	Instructions string
+	CanPrompt    bool
+}
+
+// CheckActivitySimulationCapability checks if the platform can simulate user activity.
+// On Linux, this checks for uinput access or availability of ydotool/xdotool.
+func CheckActivitySimulationCapability() SimulationCapability {
+	caps := DetectCapabilities()
+	hasUinput, uinputErr := CheckUinputPermissions()
+
+	// Check if any mouse simulation method is available
+	hasMethod := hasUinput || caps.YdotoolAvailable ||
+		(caps.DisplayServer == DisplayServerX11 && caps.XdotoolAvailable)
+
+	if hasMethod {
+		return SimulationCapability{CanSimulate: true}
+	}
+
+	// Build detailed instructions
+	var instructions strings.Builder
+	instructions.WriteString("No mouse simulation method available.\n\n")
+
+	if uinputErr != "" {
+		instructions.WriteString("uinput: ")
+		instructions.WriteString(uinputErr)
+		instructions.WriteString("\n\n")
+	}
+
+	distro := DetectDistribution()
+
+	if !caps.YdotoolAvailable {
+		cmd, note := GenerateInstallCommand("ydotool", distro)
+		instructions.WriteString("Install ydotool (recommended for both X11 and Wayland):\n  ")
+		instructions.WriteString(cmd)
+		instructions.WriteString("\n")
+		if note != "" {
+			instructions.WriteString("  ")
+			instructions.WriteString(note)
+			instructions.WriteString("\n")
+		}
+		instructions.WriteString("\n")
+	}
+
+	if caps.DisplayServer == DisplayServerX11 && !caps.XdotoolAvailable {
+		cmd, _ := GenerateInstallCommand("xdotool", distro)
+		instructions.WriteString("Or install xdotool (X11 only):\n  ")
+		instructions.WriteString(cmd)
+		instructions.WriteString("\n\n")
+	}
+
+	instructions.WriteString("Alternative: Setup uinput permissions (works on both X11 and Wayland):\n")
+	instructions.WriteString("  sudo usermod -aG input $USER\n")
+	instructions.WriteString("  (then logout and login again)\n")
+
+	return SimulationCapability{
+		CanSimulate:  false,
+		ErrorMessage: "No mouse simulation method available for activity simulation",
+		Instructions: instructions.String(),
+		CanPrompt:    false,
+	}
+}
+
+// PromptActivitySimulationPermission is a no-op on Linux.
+// Linux doesn't have a system permission dialog for input simulation.
+func PromptActivitySimulationPermission() {
+	// No-op on Linux
+}

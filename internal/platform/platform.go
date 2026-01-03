@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -26,6 +27,66 @@ const (
 	// scripting environment is not responding.
 	scriptExecutionTimeout = 3 * time.Second
 )
+
+// checkAccessibilityPermission checks if Accessibility is enabled using AXIsProcessTrusted
+func checkAccessibilityPermission() bool {
+	script := `ObjC.import('ApplicationServices'); $.AXIsProcessTrusted()`
+	out, err := runJXAScript(script)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "true"
+}
+
+// CheckActivitySimulationCapability checks if the platform can simulate user activity.
+// On macOS, this checks if Accessibility permissions are granted.
+func CheckActivitySimulationCapability() SimulationCapability {
+	if checkAccessibilityPermission() {
+		return SimulationCapability{CanSimulate: true}
+	}
+
+	return SimulationCapability{
+		CanSimulate:  false,
+		ErrorMessage: "Accessibility permission required for activity simulation",
+		Instructions: `To enable activity simulation on macOS:
+
+1. Open System Settings > Privacy & Security > Accessibility
+2. Click the "+" button to add an application
+3. Add your terminal app (Terminal, iTerm2, etc.) or the keepalive app
+4. Ensure the checkbox is enabled
+5. Restart keepalive
+
+The system will prompt you to grant permission.`,
+		CanPrompt: true,
+	}
+}
+
+// PromptActivitySimulationPermission triggers the system Accessibility permission dialog.
+// On macOS, this uses AXIsProcessTrustedWithOptions with the prompt option.
+func PromptActivitySimulationPermission() {
+	// AXIsProcessTrustedWithOptions with kAXTrustedCheckOptionPrompt triggers the dialog
+	script := `
+ObjC.import('CoreFoundation');
+ObjC.import('ApplicationServices');
+
+// Create the options dictionary with kAXTrustedCheckOptionPrompt = true
+var key = $.kAXTrustedCheckOptionPrompt;
+var value = $.kCFBooleanTrue;
+var options = $.CFDictionaryCreate(
+    null,
+    Ref([key]),
+    Ref([value]),
+    1,
+    $.kCFTypeDictionaryKeyCallBacks,
+    $.kCFTypeDictionaryValueCallBacks
+);
+
+// This will trigger the system permission dialog
+$.AXIsProcessTrustedWithOptions(options);
+`
+	// Run in background, don't wait for result
+	_, _ = runJXAScript(script)
+}
 
 type darwinCapabilities struct {
 	caffeinateAvailable bool
@@ -569,8 +630,19 @@ func (k *darwinKeepAlive) SetSimulateActivity(simulate bool) {
 	}
 }
 
-// GetDependencyMessage returns empty string on macOS (no external dependencies needed)
+// GetDependencyMessage returns dependency information for macOS.
+// On macOS, the main dependency is Accessibility permission for mouse simulation.
 func GetDependencyMessage() string {
+	cap := CheckActivitySimulationCapability()
+	if !cap.CanSimulate {
+		return fmt.Sprintf(`
+Accessibility Permission Required
+
+%s
+
+%s
+`, cap.ErrorMessage, cap.Instructions)
+	}
 	return ""
 }
 

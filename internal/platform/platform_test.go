@@ -346,3 +346,50 @@ func TestSetSimulateActivityWithoutStart(t *testing.T) {
 	keeper.SetSimulateActivity(true)
 	keeper.SetSimulateActivity(false)
 }
+
+func TestCheckActivitySimulationCapability(t *testing.T) {
+	// This test verifies the structure of the returned SimulationCapability
+	// The actual capability depends on the system environment
+	cap := CheckActivitySimulationCapability()
+
+	// Verify the structure is valid
+	if !cap.CanSimulate {
+		// If simulation is not available, we should have an error message
+		if cap.ErrorMessage == "" {
+			t.Error("SimulationCapability.ErrorMessage should not be empty when CanSimulate is false")
+		}
+		if cap.Instructions == "" {
+			t.Error("SimulationCapability.Instructions should not be empty when CanSimulate is false")
+		}
+	}
+
+	// Log the capability status for debugging
+	t.Logf("CanSimulate: %v, CanPrompt: %v", cap.CanSimulate, cap.CanPrompt)
+	if !cap.CanSimulate {
+		t.Logf("ErrorMessage: %s", cap.ErrorMessage)
+	}
+}
+
+func TestGetDependencyMessage(t *testing.T) {
+	// GetDependencyMessage should return a string (possibly empty)
+	msg := GetDependencyMessage()
+	t.Logf("GetDependencyMessage returned %d bytes", len(msg))
+
+	// If there's a message, it should contain useful information
+	if msg != "" {
+		// Should contain instructions or error information
+		if !strings.Contains(strings.ToLower(msg), "permission") &&
+			!strings.Contains(strings.ToLower(msg), "accessibility") &&
+			!strings.Contains(strings.ToLower(msg), "install") &&
+			!strings.Contains(strings.ToLower(msg), "missing") {
+			t.Logf("Dependency message may not contain actionable information: %s", msg)
+		}
+	}
+}
+
+func TestPromptActivitySimulationPermission(t *testing.T) {
+	// This test just verifies PromptActivitySimulationPermission doesn't panic
+	// We can't easily test the actual prompting behavior
+	PromptActivitySimulationPermission()
+	// If we got here without panicking, the test passes
+}

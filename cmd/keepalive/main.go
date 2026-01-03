@@ -62,11 +62,30 @@ func main() {
 	}
 	model.SetVersion(version)
 
+	// Check simulation capability
+	simCap := platform.CheckActivitySimulationCapability()
+	simMessage := ""
+	if !simCap.CanSimulate {
+		simMessage = simCap.ErrorMessage + "\n\n" + simCap.Instructions
+	}
+	model.SetSimulationCapability(simCap.CanSimulate, simMessage, simCap.CanPrompt)
+
+	// If --active flag was used but simulation won't work, show blocking warning
+	if cfg.SimulateActivity && !simCap.CanSimulate {
+		model.ShowSimulationWarning = true
+
+		// Trigger permission prompt if available (macOS)
+		if simCap.CanPrompt {
+			platform.PromptActivitySimulationPermission()
+		}
+	}
+
 	// Check for missing dependencies and store in model for TUI display
+	// This now includes simulation capability info from GetDependencyMessage
 	depMessage := platform.GetDependencyMessage()
 	if depMessage != "" {
 		model.SetDependencyWarning(depMessage)
-		log.Printf("linux: missing dependencies detected:\n%s", depMessage)
+		log.Printf("missing dependencies detected:\n%s", depMessage)
 	}
 
 	keeperRef = model.KeepAlive
