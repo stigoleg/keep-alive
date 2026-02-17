@@ -1,5 +1,4 @@
 //go:build !windows
-// +build !windows
 
 package integration
 
@@ -28,4 +27,3 @@ func getUnixSignalsWithSIGTSTP() []os.Signal {
 func sendSIGTSTP(proc *os.Process) error {
 	return proc.Signal(syscall.SIGTSTP)
 }
-

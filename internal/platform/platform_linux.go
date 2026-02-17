@@ -1093,17 +1093,18 @@ func (k *linuxKeepAlive) setupUinput() {
 }
 
 func (k *linuxKeepAlive) startActivityTickerLocked(ctx context.Context) {
-	k.activityTick = time.NewTicker(ActivityInterval)
+	ticker := time.NewTicker(ActivityInterval)
+	k.activityTick = ticker
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
-		defer k.activityTick.Stop()
+		defer ticker.Stop()
 
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-k.activityTick.C:
+			case <-ticker.C:
 				k.simulateSystemActivity()
 			}
 		}
@@ -1211,11 +1212,12 @@ func (k *linuxKeepAlive) startChatAppTickerLocked(ctx context.Context, caps linu
 		return
 	}
 
-	k.chatAppTick = time.NewTicker(ChatAppActivityInterval)
+	ticker := time.NewTicker(ChatAppActivityInterval)
+	k.chatAppTick = ticker
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
-		defer k.chatAppTick.Stop()
+		defer ticker.Stop()
 
 		if !caps.xprintidleAvailable {
 			log.Printf("linux: xprintidle not found; will simulate activity without idle check")
@@ -1225,14 +1227,21 @@ func (k *linuxKeepAlive) startChatAppTickerLocked(ctx context.Context, caps linu
 			select {
 			case <-ctx.Done():
 				return
-			case <-k.chatAppTick.C:
-				k.simulateChatAppActivity(ctx, caps)
+			case <-ticker.C:
+				k.simulateChatAppActivity(caps)
 			}
 		}
 	}()
 }
 
-func (k *linuxKeepAlive) simulateChatAppActivity(ctx context.Context, caps linuxCapabilities) {
+func (k *linuxKeepAlive) simulateChatAppActivity(caps linuxCapabilities) {
+	k.mu.Lock()
+	simulate := k.simulateActivity
+	k.mu.Unlock()
+	if !simulate {
+		return
+	}
+
 	shouldSimulate := true
 	var idle time.Duration
 	var idleErr error
@@ -1632,11 +1641,7 @@ func (k *linuxKeepAlive) SetSimulateActivity(simulate bool) {
 			k.startChatAppTickerLocked(k.ctx, caps)
 		}
 	} else {
-		// Stop chat app ticker
-		if k.chatAppTick != nil {
-			k.chatAppTick.Stop()
-			k.chatAppTick = nil
-		}
+		// Keep ticker alive and gate behavior via simulateActivity flag.
 	}
 }
 

@@ -206,3 +206,30 @@ func TestWindowsBasicStartStopSkipIfUnavailable(t *testing.T) {
 		t.Errorf("stop: %v", err)
 	}
 }
+
+func TestToggleSimulateActivityWhileRunning(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	keeper, err := NewKeepAlive()
+	if err != nil {
+		t.Fatalf("new keepalive: %v", err)
+	}
+
+	if err := keeper.Start(ctx); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	for i := 0; i < 20; i++ {
+		keeper.SetSimulateActivity(i%2 == 0)
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := keeper.Stop(); err != nil {
+		t.Errorf("stop: %v", err)
+	}
+}

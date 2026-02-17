@@ -1,5 +1,4 @@
 //go:build !windows
-// +build !windows
 
 package main
 
@@ -20,4 +19,3 @@ func getSignalsForPlatform() []os.Signal {
 func isSIGTSTPForPlatform(sig os.Signal) bool {
 	return sig == syscall.SIGTSTP
 }
-

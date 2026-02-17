@@ -39,11 +39,6 @@ func runBestEffort(name string, args ...string) {
 	}
 }
 
-// run executes a command and returns any error
-func run(name string, args ...string) error {
-	return exec.Command(name, args...).Run()
-}
-
 // getIdleTime returns the system idle time on macOS
 func getIdleTime() (time.Duration, error) {
 	out, err := exec.Command("ioreg", "-c", "IOHIDSystem").Output()
@@ -177,18 +172,19 @@ func (k *darwinKeepAlive) startCaffeinateLocked() error {
 }
 
 func (k *darwinKeepAlive) startActivityTickerLocked(caps darwinCapabilities) {
-	k.activityTick = time.NewTicker(ActivityInterval)
+	ticker := time.NewTicker(ActivityInterval)
+	k.activityTick = ticker
 
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
-		defer k.activityTick.Stop()
+		defer ticker.Stop()
 
 		for {
 			select {
 			case <-k.ctx.Done():
 				return
-			case <-k.activityTick.C:
+			case <-ticker.C:
 				if caps.pmsetAvailable {
 					runBestEffort("pmset", "touch")
 				}
@@ -207,18 +203,19 @@ func (k *darwinKeepAlive) maybeStartChatAppTickerLocked() {
 		return
 	}
 
-	k.chatAppActivityTick = time.NewTicker(ChatAppActivityInterval)
+	ticker := time.NewTicker(ChatAppActivityInterval)
+	k.chatAppActivityTick = ticker
 
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
-		defer k.chatAppActivityTick.Stop()
+		defer ticker.Stop()
 
 		for {
 			select {
 			case <-k.ctx.Done():
 				return
-			case <-k.chatAppActivityTick.C:
+			case <-ticker.C:
 				k.simulateChatAppActivity()
 			}
 		}
@@ -252,6 +249,10 @@ func (k *darwinKeepAlive) setActiveMethod(caps darwinCapabilities) {
 // simulateChatAppActivity simulates natural user activity to keep Teams/Slack active
 // Only triggers when the user is idle to avoid interfering with actual computer use
 func (k *darwinKeepAlive) simulateChatAppActivity() {
+	if atomic.LoadUint32(&k.simulateActivity) != 1 {
+		return
+	}
+
 	// Check if user is idle - only simulate when idle
 	idle, err := getIdleTime()
 	if err != nil {
@@ -556,17 +557,18 @@ func (k *darwinKeepAlive) SetSimulateActivity(simulate bool) {
 		atomic.StoreUint32(&k.simulateActivity, 1)
 		// Start chat app activity ticker if not already running and we have a context
 		if k.chatAppActivityTick == nil && k.isRunning && k.ctx != nil {
-			k.chatAppActivityTick = time.NewTicker(ChatAppActivityInterval)
+			ticker := time.NewTicker(ChatAppActivityInterval)
+			k.chatAppActivityTick = ticker
 			k.wg.Add(1)
 			go func() {
 				defer k.wg.Done()
-				defer k.chatAppActivityTick.Stop()
+				defer ticker.Stop()
 
 				for {
 					select {
 					case <-k.ctx.Done():
 						return
-					case <-k.chatAppActivityTick.C:
+					case <-ticker.C:
 						k.simulateChatAppActivity()
 					}
 				}
@@ -574,11 +576,6 @@ func (k *darwinKeepAlive) SetSimulateActivity(simulate bool) {
 		}
 	} else {
 		atomic.StoreUint32(&k.simulateActivity, 0)
-		// Stop chat app activity ticker
-		if k.chatAppActivityTick != nil {
-			k.chatAppActivityTick.Stop()
-			k.chatAppActivityTick = nil
-		}
 	}
 }
 

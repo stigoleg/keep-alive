@@ -1,5 +1,4 @@
 //go:build windows
-// +build windows
 
 package integration
 
@@ -26,4 +25,3 @@ func sendSIGTSTP(proc *os.Process) error {
 	// SIGTSTP not available on Windows, use SIGTERM instead
 	return proc.Signal(syscall.SIGTERM)
 }
-

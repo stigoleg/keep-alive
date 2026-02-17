@@ -94,6 +94,3 @@ func assertLinuxBehavior(t *testing.T) {
 		assert.Contains(t, string(output), "inactive")
 	}
 }
-
-// execCommand wraps exec.Command for testing
-var execCommand = exec.Command

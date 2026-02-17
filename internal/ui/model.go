@@ -27,7 +27,6 @@ type Model struct {
 	State              state
 	Selected           int
 	textInput          textinput.Model
-	durationStringMode bool
 	KeepAlive          *keepalive.Keeper
 	ErrorMessage       string
 	StartTime          time.Time
@@ -49,7 +48,6 @@ func InitialModel() Model {
 		State:              stateMenu,
 		Selected:           0,
 		textInput:          newMinutesTextInput(),
-		durationStringMode: false,
 		KeepAlive:          &keepalive.Keeper{},
 		ShowHelp:           false,
 		ShowDependencyInfo: false,

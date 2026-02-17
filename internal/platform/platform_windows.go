@@ -14,13 +14,6 @@ import (
 	"unsafe"
 )
 
-// runBestEffort executes a command ignoring any errors (best-effort)
-func runBestEffort(name string, args ...string) {
-	if err := exec.Command(name, args...).Run(); err != nil {
-		log.Printf("windows: best-effort command %s failed: %v", name, err)
-	}
-}
-
 // run executes a command and returns any error
 func run(name string, args ...string) error {
 	return exec.Command(name, args...).Run()
@@ -79,11 +72,6 @@ func getIdleTime() (time.Duration, error) {
 	return time.Duration(idleMillis) * time.Millisecond, nil
 }
 
-type windowsCapabilities struct {
-	nativeAPIAvailable  bool
-	powerShellAvailable bool
-}
-
 // windowsKeepAlive implements the KeepAlive interface for Windows
 type windowsKeepAlive struct {
 	mu           sync.Mutex
@@ -140,18 +128,6 @@ func setPowerShellKeepAlive() error {
 	`)
 }
 
-func detectWindowsCapabilities() windowsCapabilities {
-	return windowsCapabilities{
-		nativeAPIAvailable:  true, // Always available on Windows
-		powerShellAvailable: hasCommandWindows("powershell"),
-	}
-}
-
-func hasCommandWindows(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
-}
-
 func (k *windowsKeepAlive) activateKeepAliveMethod() error {
 	err := setWindowsKeepAlive()
 	if err != nil {
@@ -169,17 +145,18 @@ func (k *windowsKeepAlive) activateKeepAliveMethod() error {
 }
 
 func (k *windowsKeepAlive) startActivityTickerLocked(ctx context.Context) {
-	k.activityTick = time.NewTicker(ActivityInterval)
+	ticker := time.NewTicker(ActivityInterval)
+	k.activityTick = ticker
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
-		defer k.activityTick.Stop()
+		defer ticker.Stop()
 
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-k.activityTick.C:
+			case <-ticker.C:
 				// Refresh the keep-alive state
 				setWindowsKeepAlive()
 			}
@@ -192,17 +169,18 @@ func (k *windowsKeepAlive) startChatAppTickerLocked(ctx context.Context) {
 		return
 	}
 
-	k.chatAppTick = time.NewTicker(ChatAppActivityInterval)
+	ticker := time.NewTicker(ChatAppActivityInterval)
+	k.chatAppTick = ticker
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
-		defer k.chatAppTick.Stop()
+		defer ticker.Stop()
 
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-k.chatAppTick.C:
+			case <-ticker.C:
 				k.simulateChatAppActivity()
 			}
 		}
@@ -210,6 +188,13 @@ func (k *windowsKeepAlive) startChatAppTickerLocked(ctx context.Context) {
 }
 
 func (k *windowsKeepAlive) simulateChatAppActivity() {
+	k.mu.Lock()
+	simulate := k.simulateActivity
+	k.mu.Unlock()
+	if !simulate {
+		return
+	}
+
 	idle, err := getIdleTime()
 	if err != nil {
 		log.Printf("windows: idle detection failed: %v", err)
@@ -390,11 +375,7 @@ func (k *windowsKeepAlive) SetSimulateActivity(simulate bool) {
 			k.startChatAppTickerLocked(k.ctx)
 		}
 	} else {
-		// Stop chat app ticker
-		if k.chatAppTick != nil {
-			k.chatAppTick.Stop()
-			k.chatAppTick = nil
-		}
+		// Keep ticker alive and gate behavior via simulateActivity flag.
 	}
 }
 
