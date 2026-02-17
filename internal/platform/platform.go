@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -17,7 +18,7 @@ import (
 )
 
 const (
-	permissionWarnEvery = 60 * time.Second
+	jitterWarnEvery = 60 * time.Second
 
 	// scriptExecutionTimeout limits how long we wait for osascript to complete.
 	// This protects against hangs if Accessibility is misconfigured or the
@@ -31,16 +32,58 @@ type darwinCapabilities struct {
 	osascriptAvailable  bool
 }
 
-// runBestEffort executes a command ignoring any errors (best effort)
-func runBestEffort(name string, args ...string) {
-	out, err := exec.Command(name, args...).CombinedOutput()
-	if err != nil {
-		log.Printf("darwin: best effort command %s failed: %v (output: %q)", name, err, string(out))
-	}
-}
-
 // getIdleTime returns the system idle time on macOS
 func getIdleTime() (time.Duration, error) {
+	idle, err := getIdleTimeCoreGraphics()
+	if err == nil {
+		return idle, nil
+	}
+
+	return getIdleTimeIOReg()
+}
+
+func getIdleTimeCoreGraphics() (time.Duration, error) {
+	if _, err := exec.LookPath("osascript"); err != nil {
+		return 0, err
+	}
+
+	script := `
+ObjC.import('CoreGraphics');
+var seconds = $.CGEventSourceSecondsSinceLastEventType($.kCGEventSourceStateHIDSystemState, $.kCGAnyInputEventType);
+console.log(seconds);
+`
+
+	out, err := runJXAScript(script)
+	if err != nil {
+		return 0, err
+	}
+
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return 0, fmt.Errorf("empty idle-time output")
+	}
+
+	seconds, parseErr := strconv.ParseFloat(trimmed, 64)
+	if parseErr != nil {
+		re := regexp.MustCompile(`([0-9]+(?:\.[0-9]+)?)`)
+		match := re.FindStringSubmatch(trimmed)
+		if len(match) < 2 {
+			return 0, fmt.Errorf("failed to parse coregraphics idle output %q: %v", trimmed, parseErr)
+		}
+		seconds, parseErr = strconv.ParseFloat(match[1], 64)
+		if parseErr != nil {
+			return 0, fmt.Errorf("failed to parse coregraphics idle output %q: %v", trimmed, parseErr)
+		}
+	}
+
+	if seconds < 0 {
+		seconds = 0
+	}
+
+	return time.Duration(seconds * float64(time.Second)), nil
+}
+
+func getIdleTimeIOReg() (time.Duration, error) {
 	out, err := exec.Command("ioreg", "-c", "IOHIDSystem").Output()
 	if err != nil {
 		return 0, err
@@ -79,11 +122,17 @@ type darwinKeepAlive struct {
 	// closed when cmd.Wait returns
 	waitDone chan struct{}
 
-	// last time we warned about Accessibility, unix nanos
-	lastPermWarnNS int64
+	// last time we warned about jitter failure, unix nanos
+	lastJitterWarnNS int64
 
 	// last time we logged that user is active (to avoid spam)
 	lastActiveLogNS int64
+
+	// last time we executed activity jitter (unix nanos)
+	lastJitterNS int64
+
+	// last time user activity was observed (unix nanos)
+	lastUserActiveNS int64
 
 	// random source for jitter
 	rnd *rand.Rand
@@ -104,6 +153,10 @@ func (k *darwinKeepAlive) Start(ctx context.Context) error {
 	k.ctx, k.cancel = context.WithCancel(ctx)
 	k.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 	k.patternGen = NewMousePatternGenerator(k.rnd)
+	atomic.StoreInt64(&k.lastActiveLogNS, 0)
+	atomic.StoreInt64(&k.lastJitterNS, 0)
+	atomic.StoreInt64(&k.lastUserActiveNS, time.Now().UnixNano())
+	atomic.StoreInt64(&k.lastJitterWarnNS, 0)
 
 	caps, err := detectDarwinCapabilities()
 	if err != nil {
@@ -116,7 +169,6 @@ func (k *darwinKeepAlive) Start(ctx context.Context) error {
 		return err
 	}
 
-	k.startActivityTickerLocked(caps)
 	k.maybeStartChatAppTickerLocked()
 	k.logPmsetAssertions(caps)
 	k.setActiveMethod(caps)
@@ -149,7 +201,7 @@ func detectDarwinCapabilities() (darwinCapabilities, error) {
 }
 
 func (k *darwinKeepAlive) startCaffeinateLocked() error {
-	k.cmd = exec.CommandContext(k.ctx, "caffeinate", "-s", "-d", "-m", "-i", "-u")
+	k.cmd = exec.CommandContext(k.ctx, "caffeinate", "-s", "-d", "-m", "-i")
 	k.cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 		Pgid:    0,
@@ -171,29 +223,6 @@ func (k *darwinKeepAlive) startCaffeinateLocked() error {
 	return nil
 }
 
-func (k *darwinKeepAlive) startActivityTickerLocked(caps darwinCapabilities) {
-	ticker := time.NewTicker(ActivityInterval)
-	k.activityTick = ticker
-
-	k.wg.Add(1)
-	go func() {
-		defer k.wg.Done()
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-k.ctx.Done():
-				return
-			case <-ticker.C:
-				if caps.pmsetAvailable {
-					runBestEffort("pmset", "touch")
-				}
-				runBestEffort("caffeinate", "-u", "-t", "1")
-			}
-		}
-	}()
-}
-
 func (k *darwinKeepAlive) maybeStartChatAppTickerLocked() {
 	if atomic.LoadUint32(&k.simulateActivity) != 1 || k.ctx == nil {
 		return
@@ -203,7 +232,7 @@ func (k *darwinKeepAlive) maybeStartChatAppTickerLocked() {
 		return
 	}
 
-	ticker := time.NewTicker(ChatAppActivityInterval)
+	ticker := time.NewTicker(ChatAppCheckInterval)
 	k.chatAppActivityTick = ticker
 
 	k.wg.Add(1)
@@ -237,12 +266,8 @@ func (k *darwinKeepAlive) logPmsetAssertions(caps darwinCapabilities) {
 }
 
 func (k *darwinKeepAlive) setActiveMethod(caps darwinCapabilities) {
-	method := "caffeinate"
-	if caps.pmsetAvailable {
-		method = "caffeinate+pmset"
-	}
-
-	k.activeMethod = method
+	_ = caps
+	k.activeMethod = "caffeinate"
 	log.Printf("darwin: active method: %s", k.activeMethod)
 }
 
@@ -264,13 +289,35 @@ func (k *darwinKeepAlive) simulateChatAppActivity() {
 	// Only simulate activity if user has been idle for more than threshold
 	nowNS := time.Now().UnixNano()
 	lastActiveLog := atomic.LoadInt64(&k.lastActiveLogNS)
+	lastJitterNS := atomic.LoadInt64(&k.lastJitterNS)
+	lastUserActiveNS := atomic.LoadInt64(&k.lastUserActiveNS)
 
-	if idle <= IdleThreshold {
+	if lastJitterNS != 0 {
+		expectedIdle := time.Duration(nowNS - lastJitterNS)
+		if expectedIdle > 0 && idle+SyntheticIdleResetTolerance < expectedIdle {
+			atomic.StoreInt64(&k.lastJitterNS, 0)
+			atomic.StoreInt64(&k.lastUserActiveNS, observedActiveTimestamp(nowNS, idle))
+			if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
+				atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
+				log.Printf("darwin: user activity detected (idle: %v); pausing activity simulation", idle)
+			}
+			return
+		}
+	}
+
+	idleQualified := idle >= IdleThreshold || lastJitterNS != 0
+	if !idleQualified {
+		atomic.StoreInt64(&k.lastJitterNS, 0)
+		atomic.StoreInt64(&k.lastUserActiveNS, observedActiveTimestamp(nowNS, idle))
 		// Log occasionally (every 2 minutes) that we're skipping due to active use
 		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
 			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
 			log.Printf("darwin: user is active (idle: %v); skipping simulation to avoid interference", idle)
 		}
+		return
+	}
+
+	if lastUserActiveNS != 0 && time.Duration(nowNS-lastUserActiveNS) < IdleThreshold {
 		return
 	}
 
@@ -280,45 +327,18 @@ func (k *darwinKeepAlive) simulateChatAppActivity() {
 		log.Printf("darwin: user became idle (%v); resuming activity simulation", idle)
 	}
 
-	// User is idle - simulate natural, human-like activity
-	// First, try a simple keyboard event (Shift key press/release)
-	// This is often more effective than mouse movement alone
-	if err := k.simulateKeyboardActivity(); err != nil {
-		// Only log if it consistently fails (warnAccessibilityOnce handles rate limiting)
-		log.Printf("darwin: keyboard simulation failed: %v", err)
-	}
-
-	// Use the natural, user-like mouse movement patterns
-	// This creates realistic movement patterns (circles, squares, zigzags, random walks)
-	// with variable speeds, pauses, and acceleration/deceleration
-	if err := k.jitterMouseRandomShape(); err != nil {
-		k.warnAccessibilityOnce(err)
+	if lastJitterNS != 0 && time.Duration(nowNS-lastJitterNS) < ChatAppActivityInterval {
 		return
 	}
 
-	log.Printf("darwin: idle detected (%v); simulated natural user activity", idle)
-}
-
-// simulateKeyboardActivity simulates a keyboard event (Shift key press/release)
-// This generates system-level keyboard activity that Teams/Slack can detect
-func (k *darwinKeepAlive) simulateKeyboardActivity() error {
-	script := `
-ObjC.import('CoreGraphics');
-
-var shiftKeyDown = $.CGEventCreateKeyboardEvent(null, 0x38, true);  // Shift key down
-var shiftKeyUp = $.CGEventCreateKeyboardEvent(null, 0x38, false);  // Shift key up
-
-$.CGEventPost($.kCGHIDEventTap, shiftKeyDown);
-delay(0.01);
-$.CGEventPost($.kCGHIDEventTap, shiftKeyUp);
-
-console.log("ok");
-`
-	out, err := runJXAScript(script)
-	if err != nil {
-		return fmt.Errorf("keyboard simulation failed: %v (output: %q)", err, string(out))
+	sessionDuration := k.patternGen.JitterSessionDuration()
+	if err := k.jitterMouseRoundPattern(sessionDuration); err != nil {
+		k.warnJitterFailureOnce(err)
+		return
 	}
-	return nil
+	atomic.StoreInt64(&k.lastJitterNS, nowNS)
+
+	log.Printf("darwin: idle detected (%v); jittered round mouse pattern (%v)", idle, sessionDuration)
 }
 
 func runJXAScript(script string) ([]byte, error) {
@@ -335,24 +355,21 @@ func runJXAScript(script string) ([]byte, error) {
 	return out, err
 }
 
-func (k *darwinKeepAlive) warnAccessibilityOnce(err error) {
+func (k *darwinKeepAlive) warnJitterFailureOnce(err error) {
 	nowNS := time.Now().UnixNano()
-	last := atomic.LoadInt64(&k.lastPermWarnNS)
-	if last != 0 && time.Duration(nowNS-last) < permissionWarnEvery {
+	last := atomic.LoadInt64(&k.lastJitterWarnNS)
+	if last != 0 && time.Duration(nowNS-last) < jitterWarnEvery {
 		return
 	}
-	atomic.StoreInt64(&k.lastPermWarnNS, nowNS)
+	atomic.StoreInt64(&k.lastJitterWarnNS, nowNS)
 
-	log.Printf(
-		"darwin: mouse jitter blocked or failed (%v). On macOS you must enable Accessibility for the process doing the warp. If you run from Terminal, enable Terminal. If this is a packaged app, enable the app in System Settings, Privacy and Security, Accessibility.",
-		err,
-	)
+	log.Printf("darwin: mouse jitter failed (%v). This can happen in headless/remote sessions where cursor warping is unavailable.", err)
 }
 
-// jitterMouseRandomShape moves the mouse in a random pattern and returns it to origin
-func (k *darwinKeepAlive) jitterMouseRandomShape() error {
-	points := k.patternGen.GenerateShapePoints()
-	script := k.buildMouseMovementScript(points)
+// jitterMouseRoundPattern applies a small random round pattern and returns to origin.
+func (k *darwinKeepAlive) jitterMouseRoundPattern(sessionDuration time.Duration) error {
+	points := k.patternGen.GenerateRoundJitterPoints()
+	script := k.buildMouseMovementScript(points, sessionDuration)
 
 	out, err := runJXAScript(script)
 	if err != nil {
@@ -361,7 +378,9 @@ func (k *darwinKeepAlive) jitterMouseRandomShape() error {
 	return nil
 }
 
-func (k *darwinKeepAlive) buildMouseMovementScript(points []MousePoint) string {
+func (k *darwinKeepAlive) buildMouseMovementScript(points []MousePoint, sessionDuration time.Duration) string {
+	stepDelay := jitterStepDelay(sessionDuration, len(points))
+
 	script := `
 ObjC.import('CoreGraphics');
 
@@ -372,50 +391,25 @@ function loc() {
 }
 
 function moveMouse(x, y) {
-	// Use CGEventPost to create actual mouse move events that applications can detect
-	var moveEvent = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, {x: x, y: y}, $.kCGMouseButtonLeft);
-	$.CGEventPost($.kCGHIDEventTap, moveEvent);
+	$.CGWarpMouseCursorPosition($.CGPointMake(x, y));
 }
 
 var origin = loc();
 var x0 = origin.x;
 var y0 = origin.y;
 
-// Test if mouse movement works (small test movement)
-moveMouse(x0 + 1, y0 + 1);
-delay(0.02);
-var test = loc();
-if (Math.abs(test.x - (x0 + 1)) > 0.5 || Math.abs(test.y - (y0 + 1)) > 0.5) {
-	moveMouse(x0, y0);
-	throw new Error("mouse movement appears blocked (Accessibility not granted)");
-}
-
-// Move through points with variable speed (natural user-like movement)
+// Move through points with steady timing for predictable jitter session duration
 `
 
-	for i, pt := range points {
-		distance := SegmentDistance(points, i)
-		delay := k.patternGen.MovementDelay(distance)
-
-		script += fmt.Sprintf("moveMouse(x0 + %f, y0 + %f);\ndelay(%f);\n", pt.X, pt.Y, delay.Seconds())
-
-		if k.patternGen.ShouldPause() {
-			pauseDelay := k.patternGen.PauseDelay()
-			script += fmt.Sprintf("// Pause\ndelay(%f);\n", pauseDelay.Seconds())
-		}
-
-		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
-			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
-			script += fmt.Sprintf("moveMouse(x0 + %f, y0 + %f);\ndelay(%f);\n", midPt.X, midPt.Y, midDelay.Seconds())
-		}
+	for _, pt := range points {
+		script += fmt.Sprintf("moveMouse(x0 + %f, y0 + %f);\ndelay(%f);\n", pt.X, pt.Y, stepDelay.Seconds())
 	}
 
 	script += `
-// Return to origin with variable speed (natural return movement)
+// Return to origin
 `
 
-	returnDelay := k.patternGen.ReturnDelay()
-	script += fmt.Sprintf("moveMouse(x0, y0);\ndelay(%f);\n", returnDelay.Seconds())
+	script += fmt.Sprintf("moveMouse(x0, y0);\ndelay(%f);\n", stepDelay.Seconds())
 	script += `
 console.log("ok");
 `
@@ -543,6 +537,10 @@ func (k *darwinKeepAlive) Stop() error {
 	k.activityTick = nil
 	k.chatAppActivityTick = nil
 	k.waitDone = nil
+	atomic.StoreInt64(&k.lastActiveLogNS, 0)
+	atomic.StoreInt64(&k.lastJitterNS, 0)
+	atomic.StoreInt64(&k.lastUserActiveNS, 0)
+	atomic.StoreInt64(&k.lastJitterWarnNS, 0)
 	k.mu.Unlock()
 
 	log.Printf("darwin: stopped; cleanup complete")
@@ -557,7 +555,7 @@ func (k *darwinKeepAlive) SetSimulateActivity(simulate bool) {
 		atomic.StoreUint32(&k.simulateActivity, 1)
 		// Start chat app activity ticker if not already running and we have a context
 		if k.chatAppActivityTick == nil && k.isRunning && k.ctx != nil {
-			ticker := time.NewTicker(ChatAppActivityInterval)
+			ticker := time.NewTicker(ChatAppCheckInterval)
 			k.chatAppActivityTick = ticker
 			k.wg.Add(1)
 			go func() {

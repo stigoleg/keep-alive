@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -37,9 +38,23 @@ func main() {
 	if cfg.EnableLogging {
 		f, err := tea.LogToFile("debug.log", "debug")
 		if err != nil {
-			log.Fatal(err)
+			fallbackPath := filepath.Join(os.TempDir(), "keepalive-debug.log")
+			fallbackFile, fallbackErr := os.OpenFile(fallbackPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+			if fallbackErr != nil {
+				log.Fatalf("failed to enable logging: primary error=%v fallback error=%v", err, fallbackErr)
+			}
+			logFile = fallbackFile
+			log.SetOutput(fallbackFile)
+			log.Printf("logging enabled via fallback file %s (primary debug.log unavailable: %v)", fallbackPath, err)
+		} else {
+			logFile = f
+			log.SetOutput(f)
+			if absPath, err := filepath.Abs("debug.log"); err == nil {
+				log.Printf("logging enabled; writing debug logs to %s", absPath)
+			} else {
+				log.Printf("logging enabled; writing debug logs to debug.log")
+			}
 		}
-		logFile = f
 	} else {
 		log.SetOutput(io.Discard)
 		logFile = nil

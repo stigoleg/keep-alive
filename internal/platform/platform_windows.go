@@ -88,6 +88,12 @@ type windowsKeepAlive struct {
 	// last time we logged that user is active (to avoid spam)
 	lastActiveLogNS int64
 
+	// last time we executed activity jitter (unix nanos)
+	lastJitterNS int64
+
+	// last time user activity was observed (unix nanos)
+	lastUserActiveNS int64
+
 	// random source and pattern generator for natural mouse movements
 	rnd        *rand.Rand
 	patternGen *MousePatternGenerator
@@ -169,7 +175,7 @@ func (k *windowsKeepAlive) startChatAppTickerLocked(ctx context.Context) {
 		return
 	}
 
-	ticker := time.NewTicker(ChatAppActivityInterval)
+	ticker := time.NewTicker(ChatAppCheckInterval)
 	k.chatAppTick = ticker
 	k.wg.Add(1)
 	go func() {
@@ -203,13 +209,35 @@ func (k *windowsKeepAlive) simulateChatAppActivity() {
 
 	nowNS := time.Now().UnixNano()
 	lastActiveLog := atomic.LoadInt64(&k.lastActiveLogNS)
+	lastJitterNS := atomic.LoadInt64(&k.lastJitterNS)
+	lastUserActiveNS := atomic.LoadInt64(&k.lastUserActiveNS)
 
-	if idle <= IdleThreshold {
+	if lastJitterNS != 0 {
+		expectedIdle := time.Duration(nowNS - lastJitterNS)
+		if expectedIdle > 0 && idle+SyntheticIdleResetTolerance < expectedIdle {
+			atomic.StoreInt64(&k.lastJitterNS, 0)
+			atomic.StoreInt64(&k.lastUserActiveNS, observedActiveTimestamp(nowNS, idle))
+			if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
+				atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
+				log.Printf("windows: user activity detected (idle: %v); pausing activity simulation", idle)
+			}
+			return
+		}
+	}
+
+	idleQualified := idle >= IdleThreshold || lastJitterNS != 0
+	if !idleQualified {
+		atomic.StoreInt64(&k.lastJitterNS, 0)
+		atomic.StoreInt64(&k.lastUserActiveNS, observedActiveTimestamp(nowNS, idle))
 		// Log occasionally (every 2 minutes) that we're skipping due to active use
 		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
 			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
 			log.Printf("windows: user is active (idle: %v); skipping simulation to avoid interference", idle)
 		}
+		return
+	}
+
+	if lastUserActiveNS != 0 && time.Duration(nowNS-lastUserActiveNS) < IdleThreshold {
 		return
 	}
 
@@ -219,59 +247,59 @@ func (k *windowsKeepAlive) simulateChatAppActivity() {
 		log.Printf("windows: user became idle (%v); resuming activity simulation", idle)
 	}
 
-	points := k.patternGen.GenerateShapePoints()
-	k.executeMousePattern(points)
+	if lastJitterNS != 0 && time.Duration(nowNS-lastJitterNS) < ChatAppActivityInterval {
+		return
+	}
+
+	points := k.patternGen.GenerateRoundJitterPoints()
+	sessionDuration := k.patternGen.JitterSessionDuration()
+	k.executeMousePattern(points, sessionDuration)
+	atomic.StoreInt64(&k.lastJitterNS, nowNS)
+	log.Printf("windows: idle detected (%v); jittered round mouse pattern (%v)", idle, sessionDuration)
 }
 
-func (k *windowsKeepAlive) executeMousePattern(points []MousePoint) {
-	for i, pt := range points {
-		dx := int32(pt.X)
-		dy := int32(pt.Y)
+func (k *windowsKeepAlive) executeMousePattern(points []MousePoint, sessionDuration time.Duration) {
+	if len(points) == 0 {
+		return
+	}
 
-		var inputEv input
-		inputEv.inputType = inputMouse
-		inputEv.mi = mouseInput{dx: dx, dy: dy, dwFlags: mouseEventMove}
+	stepDelay := jitterStepDelay(sessionDuration, len(points))
 
-		procSendInput.Call(
-			uintptr(1),
-			uintptr(unsafe.Pointer(&inputEv)),
-			uintptr(unsafe.Sizeof(inputEv)),
-		)
+	currentX := 0
+	currentY := 0
 
-		distance := SegmentDistance(points, i)
-		delay := k.patternGen.MovementDelay(distance)
-		time.Sleep(delay)
+	for _, pt := range points {
+		dx, dy, targetX, targetY := relativeStepToPoint(currentX, currentY, pt)
 
-		if k.patternGen.ShouldPause() {
-			time.Sleep(k.patternGen.PauseDelay())
+		if dx != 0 || dy != 0 {
+			k.sendMouseMove(int32(dx), int32(dy))
+			currentX = targetX
+			currentY = targetY
 		}
 
-		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
-			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
-			var midInput input
-			midInput.inputType = inputMouse
-			midInput.mi = mouseInput{dx: int32(midPt.X), dy: int32(midPt.Y), dwFlags: mouseEventMove}
-			procSendInput.Call(
-				uintptr(1),
-				uintptr(unsafe.Pointer(&midInput)),
-				uintptr(unsafe.Sizeof(midInput)),
-			)
-			time.Sleep(midDelay)
-		}
+		time.Sleep(stepDelay)
 	}
 
 	// Return to origin
-	lastPt := points[len(points)-1]
-	returnDelay := k.patternGen.ReturnDelay()
-	var returnInput input
-	returnInput.inputType = inputMouse
-	returnInput.mi = mouseInput{dx: -int32(lastPt.X), dy: -int32(lastPt.Y), dwFlags: mouseEventMove}
-	procSendInput.Call(
+	if currentX != 0 || currentY != 0 {
+		k.sendMouseMove(int32(-currentX), int32(-currentY))
+	}
+	time.Sleep(stepDelay)
+}
+
+func (k *windowsKeepAlive) sendMouseMove(dx, dy int32) {
+	var inputEv input
+	inputEv.inputType = inputMouse
+	inputEv.mi = mouseInput{dx: dx, dy: dy, dwFlags: mouseEventMove}
+
+	r1, _, err := procSendInput.Call(
 		uintptr(1),
-		uintptr(unsafe.Pointer(&returnInput)),
-		uintptr(unsafe.Sizeof(returnInput)),
+		uintptr(unsafe.Pointer(&inputEv)),
+		uintptr(unsafe.Sizeof(inputEv)),
 	)
-	time.Sleep(returnDelay)
+	if r1 == 0 {
+		log.Printf("windows: SendInput move failed dx=%d dy=%d: %v", dx, dy, err)
+	}
 }
 
 // Start initiates the keep-alive functionality
@@ -288,6 +316,9 @@ func (k *windowsKeepAlive) Start(ctx context.Context) error {
 	// Initialize random source and pattern generator
 	k.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 	k.patternGen = NewMousePatternGenerator(k.rnd)
+	atomic.StoreInt64(&k.lastActiveLogNS, 0)
+	atomic.StoreInt64(&k.lastJitterNS, 0)
+	atomic.StoreInt64(&k.lastUserActiveNS, time.Now().UnixNano())
 
 	// Activate keep-alive method
 	if err := k.activateKeepAliveMethod(); err != nil {
@@ -353,6 +384,9 @@ func (k *windowsKeepAlive) Stop() error {
 	k.ctx = nil
 	k.cancel = nil
 	k.activityTick = nil
+	atomic.StoreInt64(&k.lastActiveLogNS, 0)
+	atomic.StoreInt64(&k.lastJitterNS, 0)
+	atomic.StoreInt64(&k.lastUserActiveNS, 0)
 	k.mu.Unlock()
 
 	log.Printf("windows: stopped; cleanup complete")
