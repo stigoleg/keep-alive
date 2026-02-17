@@ -97,18 +97,17 @@ func main() {
 		tea.WithoutSignalHandler(),
 	)
 
-	// Handle signals in a separate goroutine
+	// Handle first termination signal in a separate goroutine.
 	go func() {
-		for sig := range sigChan {
-			log.Printf("Received signal: %v", sig)
+		sig := <-sigChan
+		log.Printf("Received signal: %v", sig)
 
-			// Handle SIGTSTP (Ctrl+Z) - prevent suspension and initiate shutdown
-			if isSIGTSTP(sig) {
-				log.Printf("SIGTSTP received: preventing suspension and initiating graceful shutdown")
-			}
-
-			executeCleanup(p)
+		// Handle SIGTSTP (Ctrl+Z) - prevent suspension and initiate shutdown
+		if isSIGTSTP(sig) {
+			log.Printf("SIGTSTP received: preventing suspension and initiating graceful shutdown")
 		}
+
+		executeCleanup(p)
 	}()
 
 	if _, err := p.Run(); err != nil {

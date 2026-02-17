@@ -9,6 +9,7 @@ import (
 
 func getSignalsForPlatform() []os.Signal {
 	return []os.Signal{
+		syscall.SIGHUP,
 		syscall.SIGINT,
 		syscall.SIGTERM,
 		syscall.SIGQUIT,

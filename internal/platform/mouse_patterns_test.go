@@ -94,3 +94,29 @@ func TestJitterSessionDurationRange(t *testing.T) {
 		}
 	}
 }
+
+func TestJitterStepDelay(t *testing.T) {
+	delay := jitterStepDelay(500*time.Millisecond, 9)
+	if delay != 50*time.Millisecond {
+		t.Fatalf("jitterStepDelay = %v, want 50ms", delay)
+	}
+
+	minDelay := jitterStepDelay(0, 1000)
+	if minDelay < time.Millisecond {
+		t.Fatalf("jitterStepDelay minimum = %v, want >=1ms", minDelay)
+	}
+}
+
+func TestObservedActiveTimestamp(t *testing.T) {
+	nowNS := int64(10 * time.Second)
+	idle := 1500 * time.Millisecond
+	got := observedActiveTimestamp(nowNS, idle)
+	want := int64(8500 * time.Millisecond)
+	if got != want {
+		t.Fatalf("observedActiveTimestamp = %d, want %d", got, want)
+	}
+
+	if observedActiveTimestamp(100, 2*time.Second) != 0 {
+		t.Fatal("observedActiveTimestamp should clamp at zero")
+	}
+}
