@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"os/exec"
 	"regexp"
@@ -34,12 +35,12 @@ type darwinCapabilities struct {
 
 // getIdleTime returns the system idle time on macOS
 func getIdleTime() (time.Duration, error) {
-	idle, err := getIdleTimeCoreGraphics()
+	idle, err := getIdleTimeIOReg()
 	if err == nil {
 		return idle, nil
 	}
 
-	return getIdleTimeIOReg()
+	return getIdleTimeCoreGraphics()
 }
 
 func getIdleTimeCoreGraphics() (time.Duration, error) {
@@ -89,19 +90,23 @@ func getIdleTimeIOReg() (time.Duration, error) {
 		return 0, err
 	}
 
-	// Extract HIDIdleTime value (in nanoseconds)
-	re := regexp.MustCompile(`"HIDIdleTime"\s*=\s*(\d+)`)
+	// Extract HIDIdleTime value (in nanoseconds, decimal or hex)
+	re := regexp.MustCompile(`"HIDIdleTime"\s*=\s*(0x[0-9a-fA-F]+|\d+)`)
 	matches := re.FindSubmatch(out)
 	if len(matches) < 2 {
 		return 0, fmt.Errorf("HIDIdleTime not found in ioreg output")
 	}
 
-	nanos, err := strconv.ParseInt(string(matches[1]), 10, 64)
+	idleValue := string(matches[1])
+	nanos, err := strconv.ParseUint(idleValue, 0, 64)
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse HIDIdleTime: %v", err)
+		return 0, fmt.Errorf("failed to parse HIDIdleTime %q: %v", idleValue, err)
+	}
+	if nanos > math.MaxInt64 {
+		nanos = math.MaxInt64
 	}
 
-	return time.Duration(nanos), nil
+	return time.Duration(int64(nanos)), nil
 }
 
 // darwinKeepAlive implements the KeepAlive interface for macOS
