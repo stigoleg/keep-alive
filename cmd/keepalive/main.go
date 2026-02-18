@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	appVersion      = "1.4.8"
+	appVersion      = "1.5.0"
 	shutdownTimeout = 5 * time.Second
 )
 
