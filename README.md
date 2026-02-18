@@ -104,13 +104,12 @@ keepalive -d 1h --log        # Keep system awake for 1 hour with logging enabled
 Keep-Alive uses platform-specific APIs and techniques to prevent your system from entering sleep mode:
 
 ### macOS
-- Uses the `caffeinate` command with multiple flags (`-s`, `-d`, `-m`, `-i`, `-u`).
-- Periodically asserts user activity using `pmset touch`.
-- **Active Status**: Optionally jitters the mouse by 1 pixel via native scripting to maintain application-level activity.
+- Uses the `caffeinate` command with multiple flags (`-s`, `-d`, `-m`, `-i`).
+- **Active Status**: Optionally performs a visible random round mouse pattern every 30 seconds after 2 minutes of user inactivity (lasting about 0.5s ± 0.1s), then returns to the original position.
 
 ### Windows
 - Utilizes the Windows `SetThreadExecutionState` API.
-- **Active Status**: Optionally uses the native `SendInput` API to simulate tiny, non-intrusive mouse movements.
+- **Active Status**: Optionally uses the native `SendInput` API to perform a visible random round mouse pattern every 30 seconds after 2 minutes of inactivity (lasting about 0.5s ± 0.1s), then returns to the original position.
 - Restores default power settings on exit.
 
 ### Linux
@@ -118,7 +117,7 @@ Keep-Alive uses a multi-layered approach:
 - **Systemd**: Uses `systemd-inhibit` (preferred, works on all systems).
 - **Desktop DBus**: Native inhibition for Cosmic (Pop OS), GNOME, KDE, XFCE, and MATE.
 - **gsettings**: For GNOME-based desktops (including Cosmic).
-- **Active Status**: Uses multiple methods with automatic fallback:
+- **Active Status**: Uses multiple methods with automatic fallback and performs a visible random round mouse pattern every 30 seconds after 2 minutes of inactivity (lasting about 0.5s ± 0.1s), then returns to the original position:
   - **uinput** (native, works on both X11 and Wayland, requires permissions)
   - **ydotool** (recommended for Wayland, works on X11 too)
   - **wtype** (Wayland-native, limited mouse support)
@@ -135,6 +134,7 @@ Keep-Alive uses a multi-layered approach:
     - `ydotool` (recommended, works on both X11 and Wayland): `sudo apt install ydotool` (Debian/Ubuntu) or equivalent
     - `xdotool` (X11 only): `sudo apt install xdotool` (Debian/Ubuntu) or equivalent
     - `wtype` (Wayland only, limited support): Install from your distribution's repository
+    - `xprintidle` (X11 only, recommended for robust idle-aware `--active` behavior): `sudo apt install xprintidle`
     - Native uinput (requires proper permissions, see Troubleshooting)
   - A terminal that supports TUI applications
 

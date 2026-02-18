@@ -67,9 +67,6 @@ func menuView(m Model) string {
 		activeStatus = "[x]"
 	}
 	activeText := fmt.Sprintf("%s Simulate activity (Slack/Teams)", activeStatus)
-	if m.Selected == -1 { // Placeholder if we wanted to select it, but for now we'll just show it
-		// For now we'll just toggle it with 'a' regardless of selection
-	}
 	b.WriteString(Current.Unselected.Render(activeText) + " " + Current.Unselected.Render("(press 'a' to toggle)"))
 	b.WriteString("\n")
 

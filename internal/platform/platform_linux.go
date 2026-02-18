@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +45,7 @@ const (
 	inhibitorVerifyDelay = 100 * time.Millisecond
 	stopTimeout          = 2 * time.Second
 	activeLogInterval    = 2 * time.Minute
+	idleProbeTimeout     = 2 * time.Second
 
 	// uinput constants
 	uinputDevicePath = "/dev/uinput"
@@ -79,6 +81,21 @@ func runVerbose(name string, args ...string) (string, error) {
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 	err := cmd.Run()
+	return strings.TrimSpace(buf.String()), err
+}
+
+func runVerboseTimeout(timeout time.Duration, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		return strings.TrimSpace(buf.String()), fmt.Errorf("command timed out after %s", timeout)
+	}
 	return strings.TrimSpace(buf.String()), err
 }
 
@@ -353,11 +370,11 @@ func checkMissingDependencies(caps linuxCapabilities, displayServer string, hasU
 		}
 	}
 
-	// Check xprintidle (X11 only, optional - used for idle detection)
+	// Check xprintidle (X11 only, optional but recommended for robust idle detection)
 	if displayServer == displayServerX11 && !caps.xprintidleAvailable {
 		installCmd, _ := generateInstallCommand("xprintidle", distro, pkgManager)
-		whyNeeded := "Provides idle time detection on X11 (optional, activity simulation works without it)"
-		alt := "Not needed on Wayland or if you don't need idle detection"
+		whyNeeded := "Provides reliable idle time detection on X11 for --active jitter behavior"
+		alt := "The app will fall back to DBus idle detection when available"
 		missing = append(missing, DependencyInfo{
 			Name:        "xprintidle",
 			WhyNeeded:   whyNeeded,
@@ -694,25 +711,60 @@ func (x *xsetInhibitor) Deactivate() error {
 	return nil
 }
 
-// getLinuxIdleTime returns the system idle time on Linux using xprintidle (best-effort).
-// Note: xprintidle only works on X11, not Wayland.
+// getLinuxIdleTime returns the system idle time on Linux using the best available method.
+// Priority: xprintidle (X11) -> GNOME Mutter IdleMonitor (gdbus) -> freedesktop ScreenSaver (dbus-send).
 func getLinuxIdleTime() (time.Duration, error) {
 	displayServer := detectDisplayServer()
-	if displayServer == displayServerWayland {
-		return 0, fmt.Errorf("xprintidle does not work on Wayland (only X11)")
+
+	if displayServer == displayServerX11 && hasCommand("xprintidle") {
+		out, err := runVerboseTimeout(idleProbeTimeout, "xprintidle")
+		if err == nil {
+			millis, parseErr := strconv.ParseInt(out, 10, 64)
+			if parseErr == nil {
+				return time.Duration(millis) * time.Millisecond, nil
+			}
+		}
 	}
-	if !hasCommand("xprintidle") {
-		return 0, fmt.Errorf("xprintidle not found")
+
+	if hasCommand("gdbus") {
+		out, err := runVerboseTimeout(
+			idleProbeTimeout,
+			"gdbus", "call", "--session",
+			"--dest", "org.gnome.Mutter.IdleMonitor",
+			"--object-path", "/org/gnome/Mutter/IdleMonitor/Core",
+			"--method", "org.gnome.Mutter.IdleMonitor.GetIdletime",
+		)
+		if err == nil {
+			re := regexp.MustCompile(`(\d+)`)
+			m := re.FindStringSubmatch(out)
+			if len(m) > 1 {
+				if millis, parseErr := strconv.ParseInt(m[1], 10, 64); parseErr == nil {
+					return time.Duration(millis) * time.Millisecond, nil
+				}
+			}
+		}
 	}
-	out, err := runVerbose("xprintidle")
-	if err != nil {
-		return 0, err
+
+	if hasCommand("dbus-send") {
+		out, err := runVerboseTimeout(
+			idleProbeTimeout,
+			"dbus-send", "--session", "--print-reply",
+			"--dest=org.freedesktop.ScreenSaver",
+			"/org/freedesktop/ScreenSaver",
+			"org.freedesktop.ScreenSaver.GetSessionIdleTime",
+		)
+		if err == nil {
+			re := regexp.MustCompile(`uint(?:32|64)\s+(\d+)`)
+			m := re.FindStringSubmatch(out)
+			if len(m) > 1 {
+				if millis, parseErr := strconv.ParseInt(m[1], 10, 64); parseErr == nil {
+					return time.Duration(millis) * time.Millisecond, nil
+				}
+			}
+		}
 	}
-	millis, err := strconv.ParseInt(out, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse xprintidle output %q: %v", out, err)
-	}
-	return time.Duration(millis) * time.Millisecond, nil
+
+	return 0, fmt.Errorf("no supported idle detection method available")
 }
 
 // uinputSimulator provides native Linux mouse simulation using the uinput kernel interface.
@@ -844,6 +896,8 @@ type linuxCapabilities struct {
 	uinputAvailable     bool
 	ydotoolAvailable    bool
 	wtypeAvailable      bool
+	gdbusAvailable      bool
+	dbusSendAvailable   bool
 	displayServer       string
 	desktopEnvironment  string
 }
@@ -865,6 +919,12 @@ type linuxKeepAlive struct {
 	// last time we logged that user is active (to avoid spam)
 	lastActiveLogNS int64
 
+	// last time we executed activity jitter (unix nanos)
+	lastJitterNS int64
+
+	// last time user activity was observed (unix nanos)
+	lastUserActiveNS int64
+
 	// random source and pattern generator for natural mouse movements
 	rnd        *rand.Rand
 	patternGen *MousePatternGenerator
@@ -880,6 +940,8 @@ func detectLinuxCapabilities() linuxCapabilities {
 		uinputAvailable:     true, // Will be tested during setup
 		ydotoolAvailable:    hasCommand("ydotool"),
 		wtypeAvailable:      hasCommand("wtype"),
+		gdbusAvailable:      hasCommand("gdbus"),
+		dbusSendAvailable:   hasCommand("dbus-send"),
 		displayServer:       displayServer,
 		desktopEnvironment:  detectDesktopEnvironment(),
 	}
@@ -1093,17 +1155,18 @@ func (k *linuxKeepAlive) setupUinput() {
 }
 
 func (k *linuxKeepAlive) startActivityTickerLocked(ctx context.Context) {
-	k.activityTick = time.NewTicker(ActivityInterval)
+	ticker := time.NewTicker(ActivityInterval)
+	k.activityTick = ticker
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
-		defer k.activityTick.Stop()
+		defer ticker.Stop()
 
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-k.activityTick.C:
+			case <-ticker.C:
 				k.simulateSystemActivity()
 			}
 		}
@@ -1211,74 +1274,90 @@ func (k *linuxKeepAlive) startChatAppTickerLocked(ctx context.Context, caps linu
 		return
 	}
 
-	k.chatAppTick = time.NewTicker(ChatAppActivityInterval)
+	ticker := time.NewTicker(ChatAppCheckInterval)
+	k.chatAppTick = ticker
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
-		defer k.chatAppTick.Stop()
-
-		if !caps.xprintidleAvailable {
-			log.Printf("linux: xprintidle not found; will simulate activity without idle check")
-		}
+		defer ticker.Stop()
 
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-k.chatAppTick.C:
-				k.simulateChatAppActivity(ctx, caps)
+			case <-ticker.C:
+				k.simulateChatAppActivity(caps)
 			}
 		}
 	}()
 }
 
-func (k *linuxKeepAlive) simulateChatAppActivity(ctx context.Context, caps linuxCapabilities) {
-	shouldSimulate := true
-	var idle time.Duration
-	var idleErr error
-
-	if caps.xprintidleAvailable {
-		idle, idleErr = getLinuxIdleTime()
-		if idleErr == nil && idle <= IdleThreshold {
-			shouldSimulate = false
-		} else if idleErr != nil {
-			log.Printf("linux: idle time check failed: %v (will simulate anyway)", idleErr)
-		}
-	} else if caps.displayServer == displayServerWayland {
-		// xprintidle doesn't work on Wayland, so we'll simulate anyway
-		log.Printf("linux: xprintidle not available on Wayland; simulating activity")
+func (k *linuxKeepAlive) simulateChatAppActivity(caps linuxCapabilities) {
+	k.mu.Lock()
+	simulate := k.simulateActivity
+	k.mu.Unlock()
+	if !simulate {
+		return
 	}
+
+	idle, idleErr := getLinuxIdleTime()
 
 	nowNS := time.Now().UnixNano()
 	lastActiveLog := atomic.LoadInt64(&k.lastActiveLogNS)
-
-	if !shouldSimulate {
-		// Log occasionally that we're skipping due to active use
+	lastJitterNS := atomic.LoadInt64(&k.lastJitterNS)
+	lastUserActiveNS := atomic.LoadInt64(&k.lastUserActiveNS)
+	if idleErr != nil {
 		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > activeLogInterval {
 			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
-			if caps.xprintidleAvailable && idleErr == nil {
-				log.Printf("linux: user is active (idle: %v); skipping simulation to avoid interference", idle)
-			} else {
-				log.Printf("linux: user is active; skipping simulation to avoid interference")
-			}
+			log.Printf("linux: idle detection failed (%v); skipping activity simulation to avoid interference", idleErr)
 		}
 		return
 	}
 
-	// User became idle or idle check unavailable - log if we were previously active
-	if lastActiveLog != 0 {
-		atomic.StoreInt64(&k.lastActiveLogNS, 0)
-		if caps.xprintidleAvailable && idleErr == nil {
-			log.Printf("linux: user became idle (%v); resuming activity simulation", idle)
-		} else if idleErr != nil {
-			log.Printf("linux: idle check failed; resuming activity simulation (unable to determine user state)")
-		} else {
-			log.Printf("linux: resuming activity simulation")
+	if lastJitterNS != 0 {
+		expectedIdle := time.Duration(nowNS - lastJitterNS)
+		if expectedIdle > 0 && idle+SyntheticIdleResetTolerance < expectedIdle {
+			atomic.StoreInt64(&k.lastJitterNS, 0)
+			atomic.StoreInt64(&k.lastUserActiveNS, observedActiveTimestamp(nowNS, idle))
+			if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > activeLogInterval {
+				atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
+				log.Printf("linux: user activity detected (idle: %v); pausing activity simulation", idle)
+			}
+			return
 		}
 	}
 
-	points := k.patternGen.GenerateShapePoints()
-	k.executeMousePattern(points, caps)
+	idleQualified := idle >= IdleThreshold || lastJitterNS != 0
+	if !idleQualified {
+		atomic.StoreInt64(&k.lastJitterNS, 0)
+		atomic.StoreInt64(&k.lastUserActiveNS, observedActiveTimestamp(nowNS, idle))
+		// Log occasionally that we're skipping due to active use
+		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > activeLogInterval {
+			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
+			log.Printf("linux: user is active (idle: %v); skipping simulation to avoid interference", idle)
+		}
+		return
+	}
+
+	if lastUserActiveNS != 0 && time.Duration(nowNS-lastUserActiveNS) < IdleThreshold {
+		return
+	}
+
+	// User became idle - log if we were previously active
+	if lastActiveLog != 0 {
+		atomic.StoreInt64(&k.lastActiveLogNS, 0)
+		log.Printf("linux: user became idle (%v); resuming activity simulation", idle)
+	}
+
+	if lastJitterNS != 0 && time.Duration(nowNS-lastJitterNS) < ChatAppActivityInterval {
+		return
+	}
+
+	points := k.patternGen.GenerateRoundJitterPoints()
+	sessionDuration := k.patternGen.JitterSessionDuration()
+	k.executeMousePattern(points, caps, sessionDuration)
+	atomic.StoreInt64(&k.lastJitterNS, nowNS)
+	log.Printf("linux: idle detected (%v); jittered round mouse pattern (%v)", idle, sessionDuration)
 }
 
 // mouseMover defines an interface for executing mouse movements.
@@ -1288,78 +1367,73 @@ type mouseMover interface {
 }
 
 // executePatternCommon executes a mouse pattern using the provided mover.
-func (k *linuxKeepAlive) executePatternCommon(points []MousePoint, mover mouseMover) bool {
+func (k *linuxKeepAlive) executePatternCommon(points []MousePoint, mover mouseMover, sessionDuration time.Duration) bool {
 	if mover == nil {
 		return false
 	}
+	if len(points) == 0 {
+		return false
+	}
 
-	// Execute pattern with natural timing
-	for i, pt := range points {
-		dx := int(pt.X)
-		dy := int(pt.Y)
-		if err := mover.move(dx, dy); err != nil {
-			log.Printf("linux: %s move failed: %v", mover.name(), err)
-			return false
-		}
+	stepDelay := jitterStepDelay(sessionDuration, len(points))
 
-		distance := SegmentDistance(points, i)
-		delay := k.patternGen.MovementDelay(distance)
-		time.Sleep(delay)
+	currentX := 0
+	currentY := 0
 
-		if k.patternGen.ShouldPause() {
-			time.Sleep(k.patternGen.PauseDelay())
-		}
-
-		if k.patternGen.ShouldAddIntermediate(points, i, distance) {
-			midPt, midDelay := k.patternGen.IntermediatePoint(points, i, delay)
-			if err := mover.move(int(midPt.X), int(midPt.Y)); err != nil {
+	for _, pt := range points {
+		dx, dy, targetX, targetY := relativeStepToPoint(currentX, currentY, pt)
+		if dx != 0 || dy != 0 {
+			if err := mover.move(dx, dy); err != nil {
 				log.Printf("linux: %s move failed: %v", mover.name(), err)
 				return false
 			}
-			time.Sleep(midDelay)
+			currentX = targetX
+			currentY = targetY
 		}
+
+		time.Sleep(stepDelay)
 	}
 
 	// Return to origin
-	lastPt := points[len(points)-1]
-	returnDelay := k.patternGen.ReturnDelay()
-	if err := mover.move(-int(lastPt.X), -int(lastPt.Y)); err != nil {
-		log.Printf("linux: %s move failed: %v", mover.name(), err)
-		return false
+	if currentX != 0 || currentY != 0 {
+		if err := mover.move(-currentX, -currentY); err != nil {
+			log.Printf("linux: %s move failed: %v", mover.name(), err)
+			return false
+		}
 	}
-	time.Sleep(returnDelay)
+	time.Sleep(stepDelay)
 	return true
 }
 
-func (k *linuxKeepAlive) executeMousePattern(points []MousePoint, caps linuxCapabilities) {
+func (k *linuxKeepAlive) executeMousePattern(points []MousePoint, caps linuxCapabilities, sessionDuration time.Duration) {
 	// Execute pattern using available methods based on display server
 	// Priority: uinput → ydotool → xdotool (X11 only) → wtype (Wayland only) → DBus fallback
 	// Stop after first successful method to avoid redundant execution
 
 	// Try uinput first (works on both X11 and Wayland if permissions allow)
 	if k.uinput != nil {
-		if k.executePatternUinput(points) {
+		if k.executePatternUinput(points, sessionDuration) {
 			return
 		}
 	}
 
 	// Try ydotool (works on both X11 and Wayland)
 	if caps.ydotoolAvailable {
-		if k.executePatternYdotool(points) {
+		if k.executePatternYdotool(points, sessionDuration) {
 			return
 		}
 	}
 
 	// Try xdotool (X11 only)
 	if caps.displayServer == displayServerX11 && caps.xdotoolAvailable {
-		if k.executePatternXdotool(points) {
+		if k.executePatternXdotool(points, sessionDuration) {
 			return
 		}
 	}
 
 	// Try wtype (Wayland-native, but limited mouse support)
 	if caps.displayServer == displayServerWayland && caps.wtypeAvailable {
-		if k.executePatternWtype(points) {
+		if k.executePatternWtype(points, sessionDuration) {
 			return
 		}
 	}
@@ -1385,12 +1459,12 @@ func (u *uinputMover) name() string {
 	return "uinput"
 }
 
-func (k *linuxKeepAlive) executePatternUinput(points []MousePoint) bool {
+func (k *linuxKeepAlive) executePatternUinput(points []MousePoint, sessionDuration time.Duration) bool {
 	if k.uinput == nil {
 		return false
 	}
 	mover := &uinputMover{sim: k.uinput}
-	return k.executePatternCommon(points, mover)
+	return k.executePatternCommon(points, mover, sessionDuration)
 }
 
 // commandMover implements mouseMover for command-line tools.
@@ -1409,27 +1483,29 @@ func (c *commandMover) name() string {
 	return c.cmd
 }
 
-func (k *linuxKeepAlive) executePatternXdotool(points []MousePoint) bool {
+func (k *linuxKeepAlive) executePatternXdotool(points []MousePoint, sessionDuration time.Duration) bool {
 	mover := &commandMover{
 		cmd:  "xdotool",
 		args: []string{"mousemove_relative", "--"},
 	}
-	return k.executePatternCommon(points, mover)
+	return k.executePatternCommon(points, mover, sessionDuration)
 }
 
 // executePatternYdotool executes mouse pattern using ydotool (works on both X11 and Wayland).
-func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint) bool {
+func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint, sessionDuration time.Duration) bool {
 	mover := &commandMover{
 		cmd:  "ydotool",
 		args: []string{"mousemove", "--"},
 	}
-	return k.executePatternCommon(points, mover)
+	return k.executePatternCommon(points, mover, sessionDuration)
 }
 
 // executePatternWtype executes mouse pattern using wtype (Wayland-native)
 // Note: wtype doesn't support relative mouse movement directly, so we use absolute coordinates
 // This is a simplified implementation - wtype may need different approach
-func (k *linuxKeepAlive) executePatternWtype(points []MousePoint) bool {
+func (k *linuxKeepAlive) executePatternWtype(points []MousePoint, sessionDuration time.Duration) bool {
+	_ = points
+	_ = sessionDuration
 	// wtype doesn't have direct mouse movement commands in the same way
 	// We'll use a workaround: simulate small keyboard events or use wlrctl if available
 	// For now, log that wtype is not fully supported for mouse movement
@@ -1456,14 +1532,17 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 	// Initialize random source and pattern generator
 	k.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 	k.patternGen = NewMousePatternGenerator(k.rnd)
+	atomic.StoreInt64(&k.lastActiveLogNS, 0)
+	atomic.StoreInt64(&k.lastJitterNS, 0)
+	atomic.StoreInt64(&k.lastUserActiveNS, time.Now().UnixNano())
 
 	// Detect capabilities and log diagnostics
 	caps := detectLinuxCapabilities()
 	log.Printf("linux: === Startup Diagnostics ===")
 	log.Printf("linux: Desktop Environment: %s", caps.desktopEnvironment)
 	log.Printf("linux: Display Server: %s", caps.displayServer)
-	log.Printf("linux: Available tools: xdotool=%v, ydotool=%v, wtype=%v, xprintidle=%v",
-		caps.xdotoolAvailable, caps.ydotoolAvailable, caps.wtypeAvailable, caps.xprintidleAvailable)
+	log.Printf("linux: Available tools: xdotool=%v, ydotool=%v, wtype=%v, xprintidle=%v, gdbus=%v, dbus-send=%v",
+		caps.xdotoolAvailable, caps.ydotoolAvailable, caps.wtypeAvailable, caps.xprintidleAvailable, caps.gdbusAvailable, caps.dbusSendAvailable)
 
 	// Check uinput permissions and log status
 	hasUinputAccess, uinputErrMsg := checkUinputPermissions()
@@ -1601,6 +1680,9 @@ func (k *linuxKeepAlive) Stop() error {
 	k.isRunning = false
 	k.ctx = nil
 	k.cancel = nil
+	atomic.StoreInt64(&k.lastActiveLogNS, 0)
+	atomic.StoreInt64(&k.lastJitterNS, 0)
+	atomic.StoreInt64(&k.lastUserActiveNS, 0)
 	k.mu.Unlock()
 
 	if len(deactivateErrors) > 0 {
@@ -1632,11 +1714,7 @@ func (k *linuxKeepAlive) SetSimulateActivity(simulate bool) {
 			k.startChatAppTickerLocked(k.ctx, caps)
 		}
 	} else {
-		// Stop chat app ticker
-		if k.chatAppTick != nil {
-			k.chatAppTick.Stop()
-			k.chatAppTick = nil
-		}
+		// Keep ticker alive and gate behavior via simulateActivity flag.
 	}
 }
 

@@ -1,5 +1,4 @@
 //go:build !windows
-// +build !windows
 
 package main
 
@@ -10,6 +9,7 @@ import (
 
 func getSignalsForPlatform() []os.Signal {
 	return []os.Signal{
+		syscall.SIGHUP,
 		syscall.SIGINT,
 		syscall.SIGTERM,
 		syscall.SIGQUIT,
@@ -20,4 +20,3 @@ func getSignalsForPlatform() []os.Signal {
 func isSIGTSTPForPlatform(sig os.Signal) bool {
 	return sig == syscall.SIGTSTP
 }
-

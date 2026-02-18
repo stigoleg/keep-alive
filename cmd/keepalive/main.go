@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 )
 
 const (
-	appVersion      = "1.4.8"
+	appVersion      = "1.5.0"
 	shutdownTimeout = 5 * time.Second
 )
 
@@ -37,9 +38,23 @@ func main() {
 	if cfg.EnableLogging {
 		f, err := tea.LogToFile("debug.log", "debug")
 		if err != nil {
-			log.Fatal(err)
+			fallbackPath := filepath.Join(os.TempDir(), "keepalive-debug.log")
+			fallbackFile, fallbackErr := os.OpenFile(fallbackPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+			if fallbackErr != nil {
+				log.Fatalf("failed to enable logging: primary error=%v fallback error=%v", err, fallbackErr)
+			}
+			logFile = fallbackFile
+			log.SetOutput(fallbackFile)
+			log.Printf("logging enabled via fallback file %s (primary debug.log unavailable: %v)", fallbackPath, err)
+		} else {
+			logFile = f
+			log.SetOutput(f)
+			if absPath, err := filepath.Abs("debug.log"); err == nil {
+				log.Printf("logging enabled; writing debug logs to %s", absPath)
+			} else {
+				log.Printf("logging enabled; writing debug logs to debug.log")
+			}
 		}
-		logFile = f
 	} else {
 		log.SetOutput(io.Discard)
 		logFile = nil
@@ -82,18 +97,17 @@ func main() {
 		tea.WithoutSignalHandler(),
 	)
 
-	// Handle signals in a separate goroutine
+	// Handle first termination signal in a separate goroutine.
 	go func() {
-		for sig := range sigChan {
-			log.Printf("Received signal: %v", sig)
+		sig := <-sigChan
+		log.Printf("Received signal: %v", sig)
 
-			// Handle SIGTSTP (Ctrl+Z) - prevent suspension and initiate shutdown
-			if isSIGTSTP(sig) {
-				log.Printf("SIGTSTP received: preventing suspension and initiating graceful shutdown")
-			}
-
-			executeCleanup(p)
+		// Handle SIGTSTP (Ctrl+Z) - prevent suspension and initiate shutdown
+		if isSIGTSTP(sig) {
+			log.Printf("SIGTSTP received: preventing suspension and initiating graceful shutdown")
 		}
+
+		executeCleanup(p)
 	}()
 
 	if _, err := p.Run(); err != nil {

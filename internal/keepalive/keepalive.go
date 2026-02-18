@@ -117,9 +117,8 @@ func (k *Keeper) Stop() error {
 // StopWithTimeout stops keeping the system alive with a timeout
 func (k *Keeper) StopWithTimeout(timeout time.Duration) error {
 	k.mu.Lock()
-	defer k.mu.Unlock()
-
 	if !k.running {
+		k.mu.Unlock()
 		return nil
 	}
 
@@ -127,33 +126,34 @@ func (k *Keeper) StopWithTimeout(timeout time.Duration) error {
 		timeout = 5 * time.Second
 	}
 
+	timer := k.timer
+	cancel := k.cancel
+	platformKeeper := k.keeper
+
+	k.timer = nil
+	k.cancel = nil
+	k.endTime = time.Time{}
+	k.running = false
+	k.mu.Unlock()
+
+	if timer != nil {
+		timer.Stop()
+	}
+
+	if cancel != nil {
+		cancel()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	done := make(chan error, 1)
 	go func() {
-		var err error
-		defer func() {
-			done <- err
-		}()
-
-		if k.timer != nil {
-			k.timer.Stop()
-			k.timer = nil
+		if platformKeeper == nil {
+			done <- nil
+			return
 		}
-
-		if k.cancel != nil {
-			k.cancel()
-			k.cancel = nil
-		}
-
-		if k.keeper != nil {
-			if stopErr := k.keeper.Stop(); stopErr != nil {
-				err = stopErr
-			}
-		}
-
-		k.running = false
+		done <- platformKeeper.Stop()
 	}()
 
 	select {

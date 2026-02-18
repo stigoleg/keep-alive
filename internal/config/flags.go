@@ -15,7 +15,6 @@ import (
 type Config struct {
 	Duration         int
 	Clock            time.Time
-	ShowVersion      bool
 	SimulateActivity bool
 	EnableLogging    bool
 }
@@ -119,7 +118,6 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 	return &Config{
 		Duration:         minutes,
 		Clock:            clockTime,
-		ShowVersion:      *showVersion,
 		SimulateActivity: *simulateActivity,
 		EnableLogging:    *enableLogging,
 	}, nil

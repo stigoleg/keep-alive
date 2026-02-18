@@ -22,116 +22,73 @@ func NewMousePatternGenerator(rnd *rand.Rand) *MousePatternGenerator {
 	return &MousePatternGenerator{rnd: rnd}
 }
 
-// GenerateShapePoints generates a random mouse movement pattern
-// Returns points relative to origin (0,0) that should be applied as offsets
-func (g *MousePatternGenerator) GenerateShapePoints() []MousePoint {
-	shapeType := g.rnd.Intn(4) // 0=circle, 1=square, 2=zigzag, 3=random walk
+// GenerateRoundJitterPoints generates a small round random pattern around origin.
+// Points are absolute offsets relative to origin (0,0).
+func (g *MousePatternGenerator) GenerateRoundJitterPoints() []MousePoint {
+	pointCount := MouseJitterPointsMin + g.rnd.Intn(MouseJitterPointsMax-MouseJitterPointsMin+1)
+	radius := MouseJitterRadiusMin + g.rnd.Float64()*(MouseJitterRadiusMax-MouseJitterRadiusMin)
 
-	size := MouseMinSizePixels + g.rnd.Float64()*(MouseMaxSizePixels-MouseMinSizePixels)
-	numPoints := 4 + g.rnd.Intn(8) // 4-11 points
-
-	if numPoints < 4 {
-		numPoints = 4
+	direction := 1.0
+	if g.rnd.Intn(2) == 0 {
+		direction = -1.0
 	}
 
-	switch shapeType {
-	case 0:
-		return g.buildCirclePoints(numPoints, size)
-	case 1:
-		return g.buildSquarePoints(numPoints, size)
-	case 2:
-		return g.buildZigZagPoints(numPoints, size)
-	default:
-		return g.buildRandomWalkPoints(numPoints, size)
-	}
-}
+	startAngle := g.rnd.Float64() * 2 * math.Pi
+	points := make([]MousePoint, 0, pointCount)
 
-// buildCirclePoints generates points in a circular pattern
-func (g *MousePatternGenerator) buildCirclePoints(numPoints int, size float64) []MousePoint {
-	points := make([]MousePoint, 0, numPoints)
-	for i := 0; i < numPoints; i++ {
-		angle := 2 * math.Pi * float64(i) / float64(numPoints)
+	for i := 0; i < pointCount; i++ {
+		angle := startAngle + direction*(2*math.Pi*float64(i)/float64(pointCount))
+		localRadius := radius * (1 + (g.rnd.Float64()-0.5)*MouseJitterRadiusVariation)
 		points = append(points, MousePoint{
-			X: size * math.Cos(angle),
-			Y: size * math.Sin(angle),
-		})
-	}
-	return points
-}
-
-// buildSquarePoints generates points in a square pattern
-func (g *MousePatternGenerator) buildSquarePoints(numPoints int, size float64) []MousePoint {
-	side := int(math.Sqrt(float64(numPoints)))
-	if side < 2 {
-		side = 2
-	}
-
-	points := make([]MousePoint, 0, side*4)
-
-	// Top edge
-	for i := 0; i < side; i++ {
-		points = append(points, MousePoint{
-			X: size * float64(i) / float64(side-1),
-			Y: 0,
-		})
-	}
-	// Right edge
-	for i := 1; i < side; i++ {
-		points = append(points, MousePoint{
-			X: size,
-			Y: size * float64(i) / float64(side-1),
-		})
-	}
-	// Bottom edge
-	for i := side - 2; i >= 0; i-- {
-		points = append(points, MousePoint{
-			X: size * float64(i) / float64(side-1),
-			Y: size,
-		})
-	}
-	// Left edge
-	for i := side - 2; i > 0; i-- {
-		points = append(points, MousePoint{
-			X: 0,
-			Y: size * float64(i) / float64(side-1),
+			X: localRadius * math.Cos(angle),
+			Y: localRadius * math.Sin(angle),
 		})
 	}
 
 	return points
 }
 
-// buildZigZagPoints generates points in a zigzag pattern
-func (g *MousePatternGenerator) buildZigZagPoints(numPoints int, size float64) []MousePoint {
-	points := make([]MousePoint, 0, numPoints)
-
-	for i := 0; i < numPoints; i++ {
-		x := size * float64(i) / float64(numPoints-1)
-		y := size * 0.5
-		if i%2 == 0 {
-			y = -size * 0.5
-		}
-		points = append(points, MousePoint{X: x, Y: y})
+// JitterSessionDuration returns a random jitter session duration around 0.5s.
+func (g *MousePatternGenerator) JitterSessionDuration() time.Duration {
+	if MouseJitterSessionDurationMax <= MouseJitterSessionDurationMin {
+		return MouseJitterSessionDurationMin
 	}
 
-	return points
+	rangeDuration := MouseJitterSessionDurationMax - MouseJitterSessionDurationMin
+	return MouseJitterSessionDurationMin + time.Duration(g.rnd.Int63n(int64(rangeDuration)+1))
 }
 
-// buildRandomWalkPoints generates points in a random walk pattern
-func (g *MousePatternGenerator) buildRandomWalkPoints(numPoints int, size float64) []MousePoint {
-	points := make([]MousePoint, 0, numPoints)
-
-	x, y := 0.0, 0.0
-	points = append(points, MousePoint{X: 0, Y: 0})
-	step := size / 3
-
-	for i := 1; i < numPoints; i++ {
-		angle := g.rnd.Float64() * 2 * math.Pi
-		x += step * math.Cos(angle)
-		y += step * math.Sin(angle)
-		points = append(points, MousePoint{X: x, Y: y})
+func jitterStepDelay(total time.Duration, pointCount int) time.Duration {
+	if total <= 0 {
+		total = MouseJitterSessionDurationMin
 	}
 
-	return points
+	steps := pointCount + 1 // include return-to-origin
+	if steps <= 0 {
+		steps = 1
+	}
+
+	step := total / time.Duration(steps)
+	if step < time.Millisecond {
+		return time.Millisecond
+	}
+
+	return step
+}
+
+func observedActiveTimestamp(nowNS int64, idle time.Duration) int64 {
+	activeNS := nowNS - int64(idle)
+	if activeNS < 0 {
+		return 0
+	}
+	return activeNS
+}
+
+// relativeStepToPoint converts an absolute point to a relative step from current integer position.
+func relativeStepToPoint(currentX, currentY int, pt MousePoint) (dx, dy, targetX, targetY int) {
+	targetX = int(math.Round(pt.X))
+	targetY = int(math.Round(pt.Y))
+	return targetX - currentX, targetY - currentY, targetX, targetY
 }
 
 // SegmentDistance calculates the distance from a point to the next point (or origin if last)
