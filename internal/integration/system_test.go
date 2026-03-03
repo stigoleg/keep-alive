@@ -86,7 +86,7 @@ func TestConcurrentInstances(t *testing.T) {
 	// Start multiple instances
 	instances := make([]*keepalive.Keeper, 3)
 	for i := range instances {
-		keeper := &keepalive.Keeper{}
+		keeper := keepalive.NewKeeper()
 		err := keeper.StartTimed(5 * time.Second)
 		require.NoError(t, err, "keeper %d should start", i)
 		instances[i] = keeper

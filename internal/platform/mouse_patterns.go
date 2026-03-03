@@ -76,6 +76,17 @@ func jitterStepDelay(total time.Duration, pointCount int) time.Duration {
 	return step
 }
 
+// JitterStepDelayWithVariance applies ±MouseStepDelayVariance random jitter
+// to a base step delay, producing more natural mouse movement timing.
+func (g *MousePatternGenerator) JitterStepDelayWithVariance(base time.Duration) time.Duration {
+	factor := 1.0 + (g.rnd.Float64()*2-1)*MouseStepDelayVariance
+	d := time.Duration(float64(base) * factor)
+	if d < time.Millisecond {
+		return time.Millisecond
+	}
+	return d
+}
+
 func observedActiveTimestamp(nowNS int64, idle time.Duration) int64 {
 	activeNS := nowNS - int64(idle)
 	if activeNS < 0 {

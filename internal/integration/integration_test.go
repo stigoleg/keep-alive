@@ -25,7 +25,7 @@ func TestKeepAliveIntegration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			keeper := &keepalive.Keeper{}
+			keeper := keepalive.NewKeeper()
 			err := keeper.StartTimed(tt.duration)
 			require.NoError(t, err, "keeper should start without error")
 

@@ -44,7 +44,6 @@ const (
 	healthCheckInterval  = 30 * time.Second
 	inhibitorVerifyDelay = 100 * time.Millisecond
 	stopTimeout          = 2 * time.Second
-	activeLogInterval    = 2 * time.Minute
 	idleProbeTimeout     = 2 * time.Second
 
 	// uinput constants
@@ -914,20 +913,14 @@ type linuxKeepAlive struct {
 	inhibitors   []inhibitor
 	uinput       *uinputSimulator
 
-	simulateActivity bool
-
-	// last time we logged that user is active (to avoid spam)
-	lastActiveLogNS int64
-
-	// last time we executed activity jitter (unix nanos)
-	lastJitterNS int64
-
-	// last time user activity was observed (unix nanos)
-	lastUserActiveNS int64
+	simulateActivity atomic.Bool
 
 	// random source and pattern generator for natural mouse movements
 	rnd        *rand.Rand
 	patternGen *MousePatternGenerator
+
+	// shared activity controller for idle-gated jitter
+	activityCtrl *ActivityController
 }
 
 func detectLinuxCapabilities() linuxCapabilities {
@@ -1270,7 +1263,7 @@ func (k *linuxKeepAlive) verifyInhibitors() {
 }
 
 func (k *linuxKeepAlive) startChatAppTickerLocked(ctx context.Context, caps linuxCapabilities) {
-	if !k.simulateActivity {
+	if !k.simulateActivity.Load() {
 		return
 	}
 
@@ -1293,71 +1286,16 @@ func (k *linuxKeepAlive) startChatAppTickerLocked(ctx context.Context, caps linu
 }
 
 func (k *linuxKeepAlive) simulateChatAppActivity(caps linuxCapabilities) {
-	k.mu.Lock()
-	simulate := k.simulateActivity
-	k.mu.Unlock()
-	if !simulate {
+	if !k.simulateActivity.Load() {
 		return
 	}
 
-	idle, idleErr := getLinuxIdleTime()
-
-	nowNS := time.Now().UnixNano()
-	lastActiveLog := atomic.LoadInt64(&k.lastActiveLogNS)
-	lastJitterNS := atomic.LoadInt64(&k.lastJitterNS)
-	lastUserActiveNS := atomic.LoadInt64(&k.lastUserActiveNS)
-	if idleErr != nil {
-		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > activeLogInterval {
-			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
-			log.Printf("linux: idle detection failed (%v); skipping activity simulation to avoid interference", idleErr)
-		}
-		return
-	}
-
-	if lastJitterNS != 0 {
-		expectedIdle := time.Duration(nowNS - lastJitterNS)
-		if expectedIdle > 0 && idle+SyntheticIdleResetTolerance < expectedIdle {
-			atomic.StoreInt64(&k.lastJitterNS, 0)
-			atomic.StoreInt64(&k.lastUserActiveNS, observedActiveTimestamp(nowNS, idle))
-			if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > activeLogInterval {
-				atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
-				log.Printf("linux: user activity detected (idle: %v); pausing activity simulation", idle)
-			}
-			return
-		}
-	}
-
-	idleQualified := idle >= IdleThreshold || lastJitterNS != 0
-	if !idleQualified {
-		atomic.StoreInt64(&k.lastJitterNS, 0)
-		atomic.StoreInt64(&k.lastUserActiveNS, observedActiveTimestamp(nowNS, idle))
-		// Log occasionally that we're skipping due to active use
-		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > activeLogInterval {
-			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
-			log.Printf("linux: user is active (idle: %v); skipping simulation to avoid interference", idle)
-		}
-		return
-	}
-
-	if lastUserActiveNS != 0 && time.Duration(nowNS-lastUserActiveNS) < IdleThreshold {
-		return
-	}
-
-	// User became idle - log if we were previously active
-	if lastActiveLog != 0 {
-		atomic.StoreInt64(&k.lastActiveLogNS, 0)
-		log.Printf("linux: user became idle (%v); resuming activity simulation", idle)
-	}
-
-	if lastJitterNS != 0 && time.Duration(nowNS-lastJitterNS) < ChatAppActivityInterval {
-		return
-	}
-
-	points := k.patternGen.GenerateRoundJitterPoints()
-	sessionDuration := k.patternGen.JitterSessionDuration()
-	k.executeMousePattern(points, caps, sessionDuration)
-	atomic.StoreInt64(&k.lastJitterNS, nowNS)
-	log.Printf("linux: idle detected (%v); jittered round mouse pattern (%v)", idle, sessionDuration)
+	k.activityCtrl.MaybeJitter(
+		getLinuxIdleTime,
+		func(points []MousePoint, sessionDuration time.Duration) {
+			k.executeMousePattern(points, caps, sessionDuration)
+		},
+	)
 }
 
 // mouseMover defines an interface for executing mouse movements.
@@ -1381,6 +1319,15 @@ func (k *linuxKeepAlive) executePatternCommon(points []MousePoint, mover mouseMo
 	currentY := 0
 
 	for _, pt := range points {
+		select {
+		case <-k.ctx.Done():
+			if currentX != 0 || currentY != 0 {
+				_ = mover.move(-currentX, -currentY)
+			}
+			return false
+		default:
+		}
+
 		dx, dy, targetX, targetY := relativeStepToPoint(currentX, currentY, pt)
 		if dx != 0 || dy != 0 {
 			if err := mover.move(dx, dy); err != nil {
@@ -1391,7 +1338,7 @@ func (k *linuxKeepAlive) executePatternCommon(points []MousePoint, mover mouseMo
 			currentY = targetY
 		}
 
-		time.Sleep(stepDelay)
+		time.Sleep(k.patternGen.JitterStepDelayWithVariance(stepDelay))
 	}
 
 	// Return to origin
@@ -1401,7 +1348,7 @@ func (k *linuxKeepAlive) executePatternCommon(points []MousePoint, mover mouseMo
 			return false
 		}
 	}
-	time.Sleep(stepDelay)
+	time.Sleep(k.patternGen.JitterStepDelayWithVariance(stepDelay))
 	return true
 }
 
@@ -1530,11 +1477,9 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 	k.ctx, k.cancel = context.WithCancel(ctx)
 
 	// Initialize random source and pattern generator
-	k.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
+	k.rnd = newCryptoSeededRand()
 	k.patternGen = NewMousePatternGenerator(k.rnd)
-	atomic.StoreInt64(&k.lastActiveLogNS, 0)
-	atomic.StoreInt64(&k.lastJitterNS, 0)
-	atomic.StoreInt64(&k.lastUserActiveNS, time.Now().UnixNano())
+	k.activityCtrl = NewActivityController("linux", k.patternGen)
 
 	// Detect capabilities and log diagnostics
 	caps := detectLinuxCapabilities()
@@ -1680,9 +1625,9 @@ func (k *linuxKeepAlive) Stop() error {
 	k.isRunning = false
 	k.ctx = nil
 	k.cancel = nil
-	atomic.StoreInt64(&k.lastActiveLogNS, 0)
-	atomic.StoreInt64(&k.lastJitterNS, 0)
-	atomic.StoreInt64(&k.lastUserActiveNS, 0)
+	if k.activityCtrl != nil {
+		k.activityCtrl.Reset()
+	}
 	k.mu.Unlock()
 
 	if len(deactivateErrors) > 0 {
@@ -1695,10 +1640,10 @@ func (k *linuxKeepAlive) Stop() error {
 }
 
 func (k *linuxKeepAlive) SetSimulateActivity(simulate bool) {
+	k.simulateActivity.Store(simulate)
+
 	k.mu.Lock()
 	defer k.mu.Unlock()
-
-	k.simulateActivity = simulate
 
 	if !k.isRunning {
 		return
@@ -1713,8 +1658,6 @@ func (k *linuxKeepAlive) SetSimulateActivity(simulate bool) {
 			}
 			k.startChatAppTickerLocked(k.ctx, caps)
 		}
-	} else {
-		// Keep ticker alive and gate behavior via simulateActivity flag.
 	}
 }
 

@@ -122,7 +122,7 @@ type darwinKeepAlive struct {
 	activeMethod        string
 
 	// 0 or 1
-	simulateActivity uint32
+	simulateActivity atomic.Bool
 
 	// closed when cmd.Wait returns
 	waitDone chan struct{}
@@ -130,20 +130,14 @@ type darwinKeepAlive struct {
 	// last time we warned about jitter failure, unix nanos
 	lastJitterWarnNS int64
 
-	// last time we logged that user is active (to avoid spam)
-	lastActiveLogNS int64
-
-	// last time we executed activity jitter (unix nanos)
-	lastJitterNS int64
-
-	// last time user activity was observed (unix nanos)
-	lastUserActiveNS int64
-
 	// random source for jitter
 	rnd *rand.Rand
 
 	// mouse pattern generator for natural movement patterns
 	patternGen *MousePatternGenerator
+
+	// shared activity controller for idle-gated jitter
+	activityCtrl *ActivityController
 }
 
 // Start initiates the keep-alive functionality.
@@ -156,11 +150,9 @@ func (k *darwinKeepAlive) Start(ctx context.Context) error {
 	}
 
 	k.ctx, k.cancel = context.WithCancel(ctx)
-	k.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
+	k.rnd = newCryptoSeededRand()
 	k.patternGen = NewMousePatternGenerator(k.rnd)
-	atomic.StoreInt64(&k.lastActiveLogNS, 0)
-	atomic.StoreInt64(&k.lastJitterNS, 0)
-	atomic.StoreInt64(&k.lastUserActiveNS, time.Now().UnixNano())
+	k.activityCtrl = NewActivityController("darwin", k.patternGen)
 	atomic.StoreInt64(&k.lastJitterWarnNS, 0)
 
 	caps, err := detectDarwinCapabilities()
@@ -229,7 +221,7 @@ func (k *darwinKeepAlive) startCaffeinateLocked() error {
 }
 
 func (k *darwinKeepAlive) maybeStartChatAppTickerLocked() {
-	if atomic.LoadUint32(&k.simulateActivity) != 1 || k.ctx == nil {
+	if !k.simulateActivity.Load() || k.ctx == nil {
 		return
 	}
 
@@ -276,74 +268,21 @@ func (k *darwinKeepAlive) setActiveMethod(caps darwinCapabilities) {
 	log.Printf("darwin: active method: %s", k.activeMethod)
 }
 
-// simulateChatAppActivity simulates natural user activity to keep Teams/Slack active
-// Only triggers when the user is idle to avoid interfering with actual computer use
+// simulateChatAppActivity simulates natural user activity to keep Teams/Slack active.
+// Only triggers when the user is idle to avoid interfering with actual computer use.
 func (k *darwinKeepAlive) simulateChatAppActivity() {
-	if atomic.LoadUint32(&k.simulateActivity) != 1 {
+	if !k.simulateActivity.Load() {
 		return
 	}
 
-	// Check if user is idle - only simulate when idle
-	idle, err := getIdleTime()
-	if err != nil {
-		log.Printf("darwin: idle detection failed: %v", err)
-		// If we can't detect idle, don't simulate to avoid interfering
-		return
-	}
-
-	// Only simulate activity if user has been idle for more than threshold
-	nowNS := time.Now().UnixNano()
-	lastActiveLog := atomic.LoadInt64(&k.lastActiveLogNS)
-	lastJitterNS := atomic.LoadInt64(&k.lastJitterNS)
-	lastUserActiveNS := atomic.LoadInt64(&k.lastUserActiveNS)
-
-	if lastJitterNS != 0 {
-		expectedIdle := time.Duration(nowNS - lastJitterNS)
-		if expectedIdle > 0 && idle+SyntheticIdleResetTolerance < expectedIdle {
-			atomic.StoreInt64(&k.lastJitterNS, 0)
-			atomic.StoreInt64(&k.lastUserActiveNS, observedActiveTimestamp(nowNS, idle))
-			if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
-				atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
-				log.Printf("darwin: user activity detected (idle: %v); pausing activity simulation", idle)
+	k.activityCtrl.MaybeJitter(
+		getIdleTime,
+		func(points []MousePoint, sessionDuration time.Duration) {
+			if err := k.jitterMouseRoundPattern(sessionDuration); err != nil {
+				k.warnJitterFailureOnce(err)
 			}
-			return
-		}
-	}
-
-	idleQualified := idle >= IdleThreshold || lastJitterNS != 0
-	if !idleQualified {
-		atomic.StoreInt64(&k.lastJitterNS, 0)
-		atomic.StoreInt64(&k.lastUserActiveNS, observedActiveTimestamp(nowNS, idle))
-		// Log occasionally (every 2 minutes) that we're skipping due to active use
-		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
-			atomic.StoreInt64(&k.lastActiveLogNS, nowNS)
-			log.Printf("darwin: user is active (idle: %v); skipping simulation to avoid interference", idle)
-		}
-		return
-	}
-
-	if lastUserActiveNS != 0 && time.Duration(nowNS-lastUserActiveNS) < IdleThreshold {
-		return
-	}
-
-	// User became idle - log if we were previously active
-	if lastActiveLog != 0 {
-		atomic.StoreInt64(&k.lastActiveLogNS, 0)
-		log.Printf("darwin: user became idle (%v); resuming activity simulation", idle)
-	}
-
-	if lastJitterNS != 0 && time.Duration(nowNS-lastJitterNS) < ChatAppActivityInterval {
-		return
-	}
-
-	sessionDuration := k.patternGen.JitterSessionDuration()
-	if err := k.jitterMouseRoundPattern(sessionDuration); err != nil {
-		k.warnJitterFailureOnce(err)
-		return
-	}
-	atomic.StoreInt64(&k.lastJitterNS, nowNS)
-
-	log.Printf("darwin: idle detected (%v); jittered round mouse pattern (%v)", idle, sessionDuration)
+		},
+	)
 }
 
 func runJXAScript(script string) ([]byte, error) {
@@ -386,6 +325,9 @@ func (k *darwinKeepAlive) jitterMouseRoundPattern(sessionDuration time.Duration)
 func (k *darwinKeepAlive) buildMouseMovementScript(points []MousePoint, sessionDuration time.Duration) string {
 	stepDelay := jitterStepDelay(sessionDuration, len(points))
 
+	// Use CGEventCreateMouseEvent + CGEventPost to generate real HID mouse-move
+	// events. These are recognized by applications (Slack, Teams) as genuine user
+	// input, unlike CGWarpMouseCursorPosition which only repositions the cursor.
 	script := `
 ObjC.import('CoreGraphics');
 
@@ -395,28 +337,30 @@ function loc() {
 	return {x: p.x, y: p.y};
 }
 
-function moveMouse(x, y) {
-	$.CGWarpMouseCursorPosition($.CGPointMake(x, y));
+function moveTo(x, y) {
+	var pt = $.CGPointMake(x, y);
+	var ev = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, pt, $.kCGMouseButtonLeft);
+	if (ev != null) {
+		$.CGEventPost($.kCGHIDEventTap, ev);
+	} else {
+		// Fallback: warp cursor directly if event creation fails
+		$.CGWarpMouseCursorPosition(pt);
+	}
 }
 
 var origin = loc();
 var x0 = origin.x;
 var y0 = origin.y;
-
-// Move through points with steady timing for predictable jitter session duration
 `
 
 	for _, pt := range points {
-		script += fmt.Sprintf("moveMouse(x0 + %f, y0 + %f);\ndelay(%f);\n", pt.X, pt.Y, stepDelay.Seconds())
+		d := k.patternGen.JitterStepDelayWithVariance(stepDelay)
+		script += fmt.Sprintf("moveTo(x0 + %f, y0 + %f);\ndelay(%f);\n", pt.X, pt.Y, d.Seconds())
 	}
 
-	script += `
-// Return to origin
-`
-
-	script += fmt.Sprintf("moveMouse(x0, y0);\ndelay(%f);\n", stepDelay.Seconds())
-	script += `
-console.log("ok");
+	returnD := k.patternGen.JitterStepDelayWithVariance(stepDelay)
+	script += fmt.Sprintf("\n// Return to origin\nmoveTo(x0, y0);\ndelay(%f);\n", returnD.Seconds())
+	script += `console.log("ok");
 `
 	return script
 }
@@ -542,9 +486,9 @@ func (k *darwinKeepAlive) Stop() error {
 	k.activityTick = nil
 	k.chatAppActivityTick = nil
 	k.waitDone = nil
-	atomic.StoreInt64(&k.lastActiveLogNS, 0)
-	atomic.StoreInt64(&k.lastJitterNS, 0)
-	atomic.StoreInt64(&k.lastUserActiveNS, 0)
+	if k.activityCtrl != nil {
+		k.activityCtrl.Reset()
+	}
 	atomic.StoreInt64(&k.lastJitterWarnNS, 0)
 	k.mu.Unlock()
 
@@ -557,8 +501,11 @@ func (k *darwinKeepAlive) SetSimulateActivity(simulate bool) {
 	defer k.mu.Unlock()
 
 	if simulate {
-		atomic.StoreUint32(&k.simulateActivity, 1)
-		// Start chat app activity ticker if not already running and we have a context
+		k.simulateActivity.Store(true)
+		// Start chat app activity ticker if not already running and we have a context.
+		// When simulate is toggled off, the goroutine stays alive but is gated by the
+		// atomic flag, so chatAppActivityTick remains non-nil. This intentionally
+		// prevents spawning duplicate goroutines on repeated on/off toggles.
 		if k.chatAppActivityTick == nil && k.isRunning && k.ctx != nil {
 			ticker := time.NewTicker(ChatAppCheckInterval)
 			k.chatAppActivityTick = ticker
@@ -578,7 +525,9 @@ func (k *darwinKeepAlive) SetSimulateActivity(simulate bool) {
 			}()
 		}
 	} else {
-		atomic.StoreUint32(&k.simulateActivity, 0)
+		k.simulateActivity.Store(false)
+		// The ticker goroutine remains alive but no-ops via the atomic flag check.
+		// It will be cleaned up when the context is cancelled (on Stop).
 	}
 }
 

@@ -60,7 +60,7 @@ func TestSIGINTHelper(t *testing.T) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
-	keeper := &keepalive.Keeper{}
+	keeper := keepalive.NewKeeper()
 	err := keeper.StartIndefinite()
 	if err != nil {
 		os.Exit(1)
@@ -148,7 +148,7 @@ func TestSIGQUITHelper(t *testing.T) {
 	signals := getUnixSignals()
 	signal.Notify(sigChan, signals...)
 
-	keeper := &keepalive.Keeper{}
+	keeper := keepalive.NewKeeper()
 	err := keeper.StartIndefinite()
 	if err != nil {
 		os.Exit(1)
@@ -211,7 +211,7 @@ func TestSIGTSTPHelper(t *testing.T) {
 	signals := getUnixSignalsWithSIGTSTP()
 	signal.Notify(sigChan, signals...)
 
-	keeper := &keepalive.Keeper{}
+	keeper := keepalive.NewKeeper()
 	err := keeper.StartIndefinite()
 	if err != nil {
 		os.Exit(1)
@@ -231,7 +231,7 @@ func TestCleanupTimeout(t *testing.T) {
 		t.Skip("skipping cleanup test in short mode")
 	}
 
-	keeper := &keepalive.Keeper{}
+	keeper := keepalive.NewKeeper()
 	err := keeper.StartIndefinite()
 	require.NoError(t, err, "should start keeper")
 
@@ -253,7 +253,7 @@ func TestMultipleSignals(t *testing.T) {
 	}
 
 	// Test idempotency directly without sending signals to test process
-	keeper := &keepalive.Keeper{}
+	keeper := keepalive.NewKeeper()
 	err := keeper.StartIndefinite()
 	require.NoError(t, err, "should start keeper")
 
@@ -332,7 +332,7 @@ func TestCleanupHelper(t *testing.T) {
 	signals := getUnixSignals()
 	signal.Notify(sigChan, signals...)
 
-	keeper := &keepalive.Keeper{}
+	keeper := keepalive.NewKeeper()
 	err := keeper.StartIndefinite()
 	if err != nil {
 		os.Exit(1)
@@ -378,7 +378,7 @@ func TestConcurrentCleanup(t *testing.T) {
 		t.Skip("skipping cleanup test in short mode")
 	}
 
-	keeper := &keepalive.Keeper{}
+	keeper := keepalive.NewKeeper()
 	err := keeper.StartIndefinite()
 	require.NoError(t, err)
 

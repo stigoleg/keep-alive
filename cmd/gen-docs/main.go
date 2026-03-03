@@ -27,6 +27,8 @@ func main() {
 	flags := []flagDef{
 		{Short: "-d", Long: "--duration", Arg: "<string>", Desc: "Duration to keep system alive (e.g., \"2h30m\" or \"150\")"},
 		{Short: "-c", Long: "--clock", Arg: "<string>", Desc: "Time to keep system alive until (e.g., \"22:00\" or \"10:00PM\")"},
+		{Short: "-a", Long: "--active", Arg: "", Desc: "Keep chat apps (Slack/Teams) active by simulating activity"},
+		{Short: "-l", Long: "--log", Arg: "", Desc: "Enable logging to debug.log file"},
 		{Short: "-v", Long: "--version", Arg: "", Desc: "Show version information"},
 		{Short: "-h", Long: "--help", Arg: "", Desc: "Show help message"},
 	}

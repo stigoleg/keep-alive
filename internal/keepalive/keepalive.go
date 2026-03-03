@@ -23,6 +23,11 @@ type Keeper struct {
 	simulateActivity bool
 }
 
+// NewKeeper creates a new Keeper instance.
+func NewKeeper() *Keeper {
+	return &Keeper{}
+}
+
 // IsRunning returns whether the keep-alive is currently active
 func (k *Keeper) IsRunning() bool {
 	k.mu.Lock()
@@ -166,7 +171,6 @@ func (k *Keeper) StopWithTimeout(timeout time.Duration) error {
 		return nil
 	case <-ctx.Done():
 		log.Printf("keeper: stop timeout exceeded after %v", timeout)
-		k.running = false
 		return ctx.Err()
 	}
 }

@@ -86,7 +86,7 @@ func TestUpdate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.model.KeepAlive = &keepalive.Keeper{}
+			tt.model.KeepAlive = keepalive.NewKeeper()
 			got, _ := Update(tt.msg, tt.model)
 			if got.State != tt.wantType {
 				t.Errorf("Update() state = %v, want %v", got.State, tt.wantType)
@@ -98,7 +98,7 @@ func TestUpdate(t *testing.T) {
 func TestTimedInputView(t *testing.T) {
 	m := Model{
 		State:     stateTimedInput,
-		KeepAlive: &keepalive.Keeper{},
+		KeepAlive: keepalive.NewKeeper(),
 	}
 	m.textInput = newMinutesTextInput()
 	m.textInput.SetValue("5")
@@ -114,7 +114,7 @@ func TestTimedInputView(t *testing.T) {
 
 func TestTimedInputValidationErrors(t *testing.T) {
 	// Empty input
-	m := Model{State: stateTimedInput, KeepAlive: &keepalive.Keeper{}}
+	m := Model{State: stateTimedInput, KeepAlive: keepalive.NewKeeper()}
 	m.textInput = newMinutesTextInput()
 	m.textInput.SetValue("")
 	got, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
@@ -123,7 +123,7 @@ func TestTimedInputValidationErrors(t *testing.T) {
 	}
 
 	// Zero minutes
-	m2 := Model{State: stateTimedInput, KeepAlive: &keepalive.Keeper{}}
+	m2 := Model{State: stateTimedInput, KeepAlive: keepalive.NewKeeper()}
 	m2.textInput = newMinutesTextInput()
 	m2.textInput.SetValue("0")
 	got2, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m2)
@@ -137,7 +137,7 @@ func TestRunningView(t *testing.T) {
 		State:     stateRunning,
 		StartTime: time.Now(),
 		Duration:  5 * time.Minute,
-		KeepAlive: &keepalive.Keeper{},
+		KeepAlive: keepalive.NewKeeper(),
 	}
 	view := View(m)
 
@@ -156,7 +156,7 @@ func TestErrorDisplay(t *testing.T) {
 	m := Model{
 		State:        stateMenu,
 		ErrorMessage: "test error",
-		KeepAlive:    &keepalive.Keeper{},
+		KeepAlive:    keepalive.NewKeeper(),
 	}
 	view := View(m)
 
@@ -187,7 +187,7 @@ func TestTimeRemaining(t *testing.T) {
 	})
 
 	// Create a keeper with a short duration
-	k := &keepalive.Keeper{}
+	k := keepalive.NewKeeper()
 	defer k.Stop() // Ensure cleanup even if test fails
 
 	// Start timed with a short duration

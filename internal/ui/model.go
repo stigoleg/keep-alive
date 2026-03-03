@@ -48,7 +48,7 @@ func InitialModel() Model {
 		State:              stateMenu,
 		Selected:           0,
 		textInput:          newMinutesTextInput(),
-		KeepAlive:          &keepalive.Keeper{},
+		KeepAlive:          keepalive.NewKeeper(),
 		ShowHelp:           false,
 		ShowDependencyInfo: false,
 		DependencyWarning:  "",

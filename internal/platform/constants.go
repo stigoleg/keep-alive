@@ -53,6 +53,9 @@ const (
 	MouseSpeedFactorLongDist   = 1.2
 	MouseLongDistanceThreshold = 10.0
 
+	// Step delay variance applies ±20% jitter to per-step delays
+	MouseStepDelayVariance = 0.20
+
 	// Intermediate point parameters
 	MouseIntermediatePositionFactor = 0.4
 	MouseIntermediateJitter         = 1.5
