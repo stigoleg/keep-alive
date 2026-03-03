@@ -14,6 +14,10 @@ import (
 	"unsafe"
 )
 
+func run(name string, args ...string) error {
+	return exec.Command(name, args...).Run()
+}
+
 const (
 	esSystemRequired  = 0x00000001
 	esDisplayRequired = 0x00000002
