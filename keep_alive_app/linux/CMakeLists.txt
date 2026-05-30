@@ -126,3 +126,13 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# Desktop file for launcher integration.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/com.stigoleg.keep_alive_app.desktop"
+  DESTINATION "share/applications"
+  COMPONENT Runtime)
+
+# AppStream metadata for software centers.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/com.stigoleg.keep_alive_app.metainfo.xml"
+  DESTINATION "share/metainfo"
+  COMPONENT Runtime)

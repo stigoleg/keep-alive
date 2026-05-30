@@ -1,0 +1,118 @@
+name: Flutter Release
+
+on:
+  push:
+    tags:
+      - 'flutter-v*'
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: keep_alive_app
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+            artifact_name: keep-alive-linux-x64
+            archive_ext: tar.gz
+          - os: macos-latest
+            target: macos
+            artifact_name: keep-alive-macos
+            archive_ext: tar.gz
+          - os: windows-latest
+            target: windows
+            artifact_name: keep-alive-windows-x64
+            archive_ext: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.x'
+          channel: stable
+          cache: true
+
+      - name: Install Linux dependencies
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang pkg-config libgtk-3-dev
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build ${{ matrix.target }}
+        run: flutter build ${{ matrix.target }} --release
+
+      - name: Package (Linux)
+        if: matrix.target == 'linux'
+        run: |
+          cd build/linux/x64/release/bundle
+          tar -czf ${{ matrix.artifact_name }}.tar.gz .
+          mv ${{ matrix.artifact_name }}.tar.gz ../${{ matrix.artifact_name }}.tar.gz
+
+      - name: Package (macOS)
+        if: matrix.target == 'macos'
+        run: |
+          cd build/macos/Build/Products/Release
+          tar -czf ${{ matrix.artifact_name }}-${{ runner.arch }}.tar.gz keep_alive_app.app
+          mv ${{ matrix.artifact_name }}-${{ runner.arch }}.tar.gz ../../../${{ matrix.artifact_name }}-${{ runner.arch }}.tar.gz
+
+      - name: Package (Windows)
+        if: matrix.target == 'windows'
+        run: |
+          cd build/windows/x64/runner/Release
+          7z a -tzip ..\..\${{ matrix.artifact_name }}.zip .
+
+      - name: Upload build artifact (Linux)
+        if: matrix.target == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: keep_alive_app/build/linux/x64/${{ matrix.artifact_name }}.tar.gz
+
+      - name: Upload build artifact (macOS)
+        if: matrix.target == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: keep_alive_app/build/macos/${{ matrix.artifact_name }}-${{ runner.arch }}.tar.gz
+
+      - name: Upload build artifact (Windows)
+        if: matrix.target == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: keep_alive_app/build/windows/x64/${{ matrix.artifact_name }}.zip
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true

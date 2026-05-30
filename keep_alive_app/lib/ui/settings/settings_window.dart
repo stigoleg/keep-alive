@@ -277,10 +277,10 @@ class _AboutSection extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AppTheme.spacing8),
-        _SettingRow(
+        const _SettingRow(
           label: AppConstants.appName,
           subtitle: 'Version ${AppConstants.appVersion}',
-          child: const SizedBox.shrink(),
+          child: SizedBox.shrink(),
         ),
         const SizedBox(height: AppTheme.spacing8),
         Row(

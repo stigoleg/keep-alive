@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=KeepAlive
+Comment=Keep your system awake — prevent sleep and screen lock
+Exec=keep_alive_app
+Icon=keep_alive_app
+Type=Application
+Categories=Utility;
+Terminal=false
+NoDisplay=false
+StartupNotify=false

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.stigoleg.keep_alive_app</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>KeepAlive</name>
+  <summary>Keep your system awake — prevent sleep and screen lock</summary>
+  <description>
+    <p>
+      KeepAlive is a lightweight, cross-platform system tray application that prevents
+      your computer from sleeping or locking. It wraps the KeepAlive Go CLI under the hood,
+      providing a convenient menu bar / system tray interface with configurable timers,
+      battery thresholds, and activity simulation.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Prevent system sleep indefinitely or with a timer</li>
+      <li>Stop when battery drops below a configurable threshold</li>
+      <li>Simulate user activity to keep chat apps active</li>
+      <li>Runs quietly in the system tray / menu bar</li>
+      <li>Self-updating backend via GitHub Releases</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">com.stigoleg.keep_alive_app.desktop</launchable>
+  <screenshots>
+    <screenshot type="default">
+      <caption>KeepAlive popup panel in the system tray</caption>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>Utility</category>
+  </categories>
+  <releases>
+    <release version="1.0.0" date="2026-05-30">
+      <description>
+        <p>Initial release of the KeepAlive Flutter menu bar app.</p>
+      </description>
+    </release>
+  </releases>
+  <url type="homepage">https://github.com/stigoleg/keep-alive</url>
+</component>
