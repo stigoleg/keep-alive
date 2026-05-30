@@ -266,6 +266,32 @@ func TestHelpPopupHasCompleteBorderAtSmallHeight(t *testing.T) {
 	}
 }
 
+func TestCLIHelpRendersFullMenuWithoutScrollFooter(t *testing.T) {
+	m := InitialModel()
+	m.ShowHelp = true
+	m.Width = 80
+	m.Height = 0
+
+	view := View(m)
+	if strings.Contains(view, "pgup/pgdn") || strings.Contains(view, "esc/q close") {
+		t.Fatalf("CLI help should not render scroll footer:\n%s", view)
+	}
+	if !strings.Contains(view, "Examples:") || !strings.Contains(view, "Navigation:") {
+		t.Fatalf("CLI help should render full help content:\n%s", view)
+	}
+}
+
+func TestHelpPopupUsesMoreAvailableSpace(t *testing.T) {
+	width, height := helpPopupSize(120, 40)
+
+	if width != maxHelpPopupWidth {
+		t.Fatalf("helpPopupSize() width = %d, want %d", width, maxHelpPopupWidth)
+	}
+	if height != maxHelpPopupHeight {
+		t.Fatalf("helpPopupSize() height = %d, want %d", height, maxHelpPopupHeight)
+	}
+}
+
 func TestHelpTableBordersFitNormalWidth(t *testing.T) {
 	m := InitialModel()
 	m.Width = 80

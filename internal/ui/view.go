@@ -14,9 +14,9 @@ import (
 const (
 	minHelpPopupWidth  = 24
 	minHelpPopupHeight = 8
-	maxHelpPopupWidth  = 88
-	maxHelpPopupHeight = 28
-	helpPopupMargin    = 2
+	maxHelpPopupWidth  = 104
+	maxHelpPopupHeight = 34
+	helpPopupMargin    = 1
 )
 
 // View renders the current state of the model to a string.
@@ -319,6 +319,12 @@ func helpFooter(m Model, width int) string {
 		position = fmt.Sprintf("%d%%", int(m.HelpViewport.ScrollPercent()*100))
 	}
 	text := fmt.Sprintf("up/down scroll  pgup/pgdn page  esc/q close  %s", position)
+	if width < 58 {
+		text = fmt.Sprintf("up/down scroll  esc/q close  %s", position)
+	}
+	if width < 36 {
+		text = fmt.Sprintf("scroll up/down  close esc/q  %s", position)
+	}
 	return lipgloss.NewStyle().
 		Width(width).
 		Foreground(defaultColors.Subtle).
