@@ -11,6 +11,7 @@ A lightweight, cross-platform utility to prevent your system from going to sleep
 ## Features
 
 - 🔄 Configurable keep-alive duration
+- 🔋 Battery threshold mode
 - 💻 Cross-platform support (macOS, Windows, Linux)
 - 💬 **Active Status Simulation** (optional, for Slack/Teams)
 - ⚡ Lightweight and efficient
@@ -73,9 +74,11 @@ keepalive
 ```
 
 2. Use arrow keys (↑/↓) or j/k to navigate the menu.
-3. **Toggle Active Status**: Press `a` to toggle activity simulation (Slack/Teams).
-4. Press Enter to select an option.
-5. Press q or Esc to quit.
+3. Choose indefinite, duration, or clock-time mode.
+4. **Toggle Active Status**: Press `a` to toggle activity simulation (Slack/Teams).
+5. **Set Battery Threshold**: Press `b` to set or change a battery threshold, and `B` to clear it.
+6. Press Enter to select an option.
+7. Press q or Esc to quit.
 
 ### Command-Line Options
 
@@ -83,6 +86,7 @@ keepalive
 Flags:
     -d, --duration string   Duration to keep system alive (e.g., "2h30m" or "150")
     -c, --clock string     Time to keep system alive until (e.g., "22:00" or "10:00PM")
+    -b, --battery int      Keep system awake until battery reaches this percentage
     -a, --active           Keep chat apps (Slack/Teams) active by simulating activity
     -l, --log              Enable logging to debug.log file
     -v, --version          Show version information
@@ -95,9 +99,15 @@ keepalive                    # Start with interactive TUI
 keepalive --active           # Start with active status simulation
 keepalive -d 2h30m --active  # Keep system/Slack awake for 2.5 hours
 keepalive -c 17:00           # Keep system awake until 5 PM
+keepalive -b 20              # Keep system awake until battery is 20% or lower
+keepalive -b 30 --active     # Keep system/Slack awake until battery is 30% or lower
+keepalive -d 20 -b 65        # Exit when 20 minutes pass or battery reaches 65%
+keepalive -c 17:00 -b 65     # Exit at 5 PM or when battery reaches 65%
 keepalive --log              # Enable logging to debug.log file
 keepalive -d 1h --log        # Keep system awake for 1 hour with logging enabled
 ```
+
+Battery mode can be combined with duration or clock mode. Keep-Alive exits when the first configured limit is reached. The battery threshold must be lower than the current battery percentage when the app starts.
 
 ## How It Works
 

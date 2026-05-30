@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,12 +14,45 @@ import (
 	"github.com/stigoleg/keep-alive/internal/util"
 )
 
+type batteryStatusMsg struct {
+	status platform.BatteryStatus
+	err    error
+}
+
+var readBatteryStatus = platform.GetBatteryStatus
+
+func batteryPollCmd() tea.Cmd {
+	return tea.Tick(batteryPollInterval, func(time.Time) tea.Msg {
+		status, err := readBatteryStatus()
+		return batteryStatusMsg{status: status, err: err}
+	})
+}
+
+func runningCommands(m Model) tea.Cmd {
+	var cmds []tea.Cmd
+	if m.Duration > 0 {
+		cmds = append(cmds, m.timer.Init(), m.progress.SetPercent(0))
+	}
+	if m.BatteryThreshold > 0 {
+		cmds = append(cmds, batteryPollCmd())
+	}
+	return tea.Batch(cmds...)
+}
+
 // Update handles messages and updates the model accordingly.
 func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
+	if sizeMsg, ok := msg.(tea.WindowSizeMsg); ok {
+		m.Width = sizeMsg.Width
+		m.Height = sizeMsg.Height
+		m.Help.Width = sizeMsg.Width
+		m = syncHelpViewport(m)
+		return m, nil
+	}
+
 	if m.ShowDependencyInfo {
 		// Still process timer messages so progress and timeout continue under the overlay
 		switch msg.(type) {
-		case timer.TickMsg, timer.TimeoutMsg:
+		case timer.TickMsg, timer.TimeoutMsg, batteryStatusMsg:
 			return handleRunningState(msg, m)
 		}
 		return handleDependencyInfoState(msg, m)
@@ -25,7 +60,7 @@ func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
 	if m.ShowHelp {
 		// Still process timer messages so progress and timeout continue under the overlay
 		switch msg.(type) {
-		case timer.TickMsg, timer.TimeoutMsg:
+		case timer.TickMsg, timer.TimeoutMsg, batteryStatusMsg:
 			return handleRunningState(msg, m)
 		}
 		return handleHelpState(msg, m)
@@ -36,6 +71,10 @@ func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
 		return handleMenuState(msg, m)
 	case stateTimedInput:
 		return handleTimedInputState(msg, m)
+	case stateClockInput:
+		return handleClockInputState(msg, m)
+	case stateBatteryInput:
+		return handleBatteryInputState(msg, m)
 	case stateRunning:
 		return handleRunningState(msg, m)
 	}
@@ -49,13 +88,19 @@ func handleHelpState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 		switch {
 		case key.Matches(keyMsg, m.Keys.ToggleHelp):
 			m.ShowHelp = false
+			return m, nil
 		case key.Matches(keyMsg, m.Keys.Quit):
 			m.ShowHelp = false
+			return m, nil
 		case key.Matches(keyMsg, m.Keys.Back):
 			m.ShowHelp = false
+			return m, nil
 		}
 	}
-	return m, nil
+
+	var cmd tea.Cmd
+	m.HelpViewport, cmd = m.HelpViewport.Update(msg)
+	return m, cmd
 }
 
 // handleDependencyInfoState handles messages when dependency info is being displayed
@@ -87,6 +132,7 @@ func handleMenuKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.Keys.ToggleHelp):
 		m.ShowHelp = true
+		m = syncHelpViewport(m)
 	case key.Matches(msg, m.Keys.ToggleDependencyInfo):
 		if m.DependencyWarning != "" || m.ActivityWarning != "" {
 			m.ShowDependencyInfo = true
@@ -96,7 +142,7 @@ func handleMenuKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 			m.Selected--
 		}
 	case key.Matches(msg, m.Keys.Down):
-		if m.Selected < 2 {
+		if m.Selected < 3 {
 			m.Selected++
 		}
 	case key.Matches(msg, m.Keys.Select):
@@ -110,6 +156,17 @@ func handleMenuKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 		m.SimulateActivity = !m.SimulateActivity
 		m.ActivityWarning = activityWarningFor(m.SimulateActivity)
 		return m, nil
+	case msg.String() == "b":
+		m.State = stateBatteryInput
+		m.ErrorMessage = ""
+		m.textInput = newBatteryTextInput(m.BatteryThreshold)
+		return m, nil
+	case msg.String() == "B":
+		m.BatteryThreshold = 0
+		m.BatteryPercentage = 0
+		m.BatteryError = ""
+		m.ErrorMessage = ""
+		return m, nil
 	}
 	return m, nil
 }
@@ -118,21 +175,147 @@ func handleMenuKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 func handleMenuSelection(m Model) (Model, tea.Cmd) {
 	switch m.Selected {
 	case 0:
-		m.ActivityWarning = activityWarningFor(m.SimulateActivity)
-		m.KeepAlive.SetSimulateActivity(m.SimulateActivity)
-		if err := m.KeepAlive.StartIndefinite(); err != nil {
-			m.ErrorMessage = err.Error()
-			return m, nil
-		}
-		m.State = stateRunning
-		m.Duration = 0
+		return startSession(m, 0, time.Time{})
 	case 1:
 		m.State = stateTimedInput
 		m.ErrorMessage = ""
 		m.textInput = newMinutesTextInput()
 	case 2:
+		m.State = stateClockInput
+		m.ErrorMessage = ""
+		m.textInput = newClockTextInput()
+	case 3:
 		return handleQuit(m)
 	}
+	return m, nil
+}
+
+// handleClockInputState handles messages in the clock input state
+func handleClockInputState(msg tea.Msg, m Model) (Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		return handleClockInputKeyMsg(msg, m)
+	}
+	return m, nil
+}
+
+func handleClockInputKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.Keys.ToggleHelp):
+		m.ShowHelp = true
+		m = syncHelpViewport(m)
+		return m, nil
+	case key.Matches(msg, m.Keys.Back):
+		m.State = stateMenu
+		m.ErrorMessage = ""
+		return m, nil
+	case key.Matches(msg, m.Keys.Submit) || msg.Type == tea.KeyEnter:
+		return handleClockInputSubmit(m)
+	}
+
+	var cmd tea.Cmd
+	m.textInput, cmd = m.textInput.Update(msg)
+
+	if m.textInput.Value() == "" {
+		m.ErrorMessage = "Clock Required • Enter a time (e.g., 22:00 or 10:00PM)"
+	} else {
+		m.ErrorMessage = ""
+	}
+
+	return m, cmd
+}
+
+func handleClockInputSubmit(m Model) (Model, tea.Cmd) {
+	value := m.textInput.Value()
+	if value == "" {
+		m.ErrorMessage = "Clock Required • Enter a time (e.g., 22:00 or 10:00PM)"
+		return m, nil
+	}
+
+	now := time.Now()
+	target, err := util.ParseTimeStringWithNow(value, now)
+	if err != nil {
+		m.ErrorMessage = err.Error()
+		return m, nil
+	}
+	if target.Before(now) {
+		target = target.Add(24 * time.Hour)
+	}
+	if !target.After(now) {
+		m.ErrorMessage = "Invalid Clock • Please enter a future time"
+		return m, nil
+	}
+
+	return startSession(m, target.Sub(now), target)
+}
+
+// handleBatteryInputState handles messages in the battery input state
+func handleBatteryInputState(msg tea.Msg, m Model) (Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		return handleBatteryInputKeyMsg(msg, m)
+	}
+	return m, nil
+}
+
+func handleBatteryInputKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.Keys.ToggleHelp):
+		m.ShowHelp = true
+		m = syncHelpViewport(m)
+		return m, nil
+	case key.Matches(msg, m.Keys.Back):
+		m.State = stateMenu
+		m.ErrorMessage = ""
+		return m, nil
+	case key.Matches(msg, m.Keys.Submit) || msg.Type == tea.KeyEnter:
+		return handleBatteryInputSubmit(m)
+	}
+
+	var cmd tea.Cmd
+	m.textInput, cmd = m.textInput.Update(msg)
+
+	if m.textInput.Value() == "" {
+		m.ErrorMessage = "Battery Required • Enter a percentage from 1 to 100"
+	} else {
+		m.ErrorMessage = ""
+	}
+
+	return m, cmd
+}
+
+func handleBatteryInputSubmit(m Model) (Model, tea.Cmd) {
+	value := strings.TrimSpace(m.textInput.Value())
+	if value == "" {
+		m.ErrorMessage = "Battery Required • Enter a percentage from 1 to 100"
+		return m, nil
+	}
+
+	threshold, err := strconv.Atoi(value)
+	if err != nil {
+		m.ErrorMessage = "Invalid Battery • Enter a whole percentage from 1 to 100"
+		return m, nil
+	}
+	if threshold < 1 || threshold > 100 {
+		m.ErrorMessage = "Invalid Battery • Enter a percentage from 1 to 100"
+		return m, nil
+	}
+
+	status, err := readBatteryStatus()
+	if err != nil {
+		m.ErrorMessage = "Battery Error • " + err.Error()
+		return m, nil
+	}
+	if status.Percentage <= threshold {
+		m.ErrorMessage = fmt.Sprintf("Invalid Battery • Current battery is %d%%, threshold must be lower", status.Percentage)
+		return m, nil
+	}
+
+	m.BatteryThreshold = threshold
+	m.BatteryPercentage = status.Percentage
+	m.BatteryError = ""
+	m.ErrorMessage = ""
+	m.State = stateMenu
 	return m, nil
 }
 
@@ -148,6 +331,10 @@ func handleTimedInputState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 // handleTimedInputKeyMsg handles keyboard input in the timed input state
 func handleTimedInputKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 	switch {
+	case key.Matches(msg, m.Keys.ToggleHelp):
+		m.ShowHelp = true
+		m = syncHelpViewport(m)
+		return m, nil
 	case key.Matches(msg, m.Keys.Back):
 		m.State = stateMenu
 		m.ErrorMessage = ""
@@ -189,9 +376,20 @@ func handleTimedInputSubmit(m Model) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.KeepAlive.SetSimulateActivity(m.SimulateActivity)
+	return startSession(m, dur, time.Time{})
+}
+
+func startSession(m Model, dur time.Duration, clock time.Time) (Model, tea.Cmd) {
 	m.ActivityWarning = activityWarningFor(m.SimulateActivity)
-	if err := m.KeepAlive.StartTimed(dur); err != nil {
+	m.KeepAlive.SetSimulateActivity(m.SimulateActivity)
+
+	var err error
+	if dur > 0 {
+		err = m.KeepAlive.StartTimed(dur)
+	} else {
+		err = m.KeepAlive.StartIndefinite()
+	}
+	if err != nil {
 		m.ErrorMessage = "System Error • " + err.Error()
 		return m, nil
 	}
@@ -199,12 +397,12 @@ func handleTimedInputSubmit(m Model) (Model, tea.Cmd) {
 	m.State = stateRunning
 	m.StartTime = time.Now()
 	m.Duration = dur
-	m.timer = timer.NewWithInterval(dur, time.Second/10)
-	m.ErrorMessage = "" // Clear any previous error message
-	return m, tea.Batch(
-		m.timer.Init(),
-		m.progress.SetPercent(0),
-	)
+	m.Clock = clock
+	m.ErrorMessage = ""
+	if dur > 0 {
+		m.timer = timer.NewWithInterval(dur, time.Second/10)
+	}
+	return m, runningCommands(m)
 }
 
 // handleRunningState handles messages in the running state
@@ -249,11 +447,33 @@ func handleRunningState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case timer.TimeoutMsg:
 		return handleQuit(m)
+	case batteryStatusMsg:
+		return handleBatteryStatusMsg(msg, m)
 	}
 	if len(cmds) > 0 {
 		return m, tea.Batch(cmds...)
 	}
 	return m, nil
+}
+
+func handleBatteryStatusMsg(msg batteryStatusMsg, m Model) (Model, tea.Cmd) {
+	if m.BatteryThreshold == 0 {
+		return m, nil
+	}
+
+	if msg.err != nil {
+		m.BatteryError = msg.err.Error()
+		return m, batteryPollCmd()
+	}
+
+	m.BatteryPercentage = msg.status.Percentage
+	m.BatteryError = ""
+	if m.BatteryPercentage <= m.BatteryThreshold {
+		m.ErrorMessage = fmt.Sprintf("Battery reached %d%% threshold", m.BatteryThreshold)
+		return handleQuit(m)
+	}
+
+	return m, batteryPollCmd()
 }
 
 // handleRunningKeyMsg handles keyboard input in the running state
@@ -263,6 +483,7 @@ func handleRunningKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 		return handleQuit(m)
 	case key.Matches(msg, m.Keys.ToggleHelp):
 		m.ShowHelp = true
+		m = syncHelpViewport(m)
 	case key.Matches(msg, m.Keys.ToggleDependencyInfo):
 		if m.DependencyWarning != "" || m.ActivityWarning != "" {
 			m.ShowDependencyInfo = true
@@ -293,8 +514,12 @@ func cleanup(m Model) (Model, error) {
 	// Reset all state
 	m.State = stateMenu
 	m.Duration = 0
+	m.Clock = time.Time{}
 	m.StartTime = time.Time{}
 	m.ErrorMessage = ""
+	m.BatteryThreshold = 0
+	m.BatteryPercentage = 0
+	m.BatteryError = ""
 	// Reset timer and progress models
 	m.timer = timer.Model{}
 	m.progress = progress.New(progress.WithDefaultGradient(), progress.WithWidth(34))

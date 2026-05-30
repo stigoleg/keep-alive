@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stigoleg/keep-alive/internal/keepalive"
+	"github.com/stigoleg/keep-alive/internal/platform"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -34,7 +36,9 @@ func TestMenuView(t *testing.T) {
 	expectedOptions := []string{
 		"Keep system awake indefinitely",
 		"Keep system awake for X minutes",
+		"Keep system awake until clock time",
 		"Quit keep-alive",
+		"Battery threshold",
 	}
 
 	for _, opt := range expectedOptions {
@@ -82,6 +86,18 @@ func TestUpdate(t *testing.T) {
 			model:    Model{State: stateMenu, Selected: 1},
 			wantType: stateTimedInput,
 		},
+		{
+			name:     "enter on clock option moves to clock input state",
+			msg:      tea.KeyMsg{Type: tea.KeyEnter},
+			model:    Model{State: stateMenu, Selected: 2},
+			wantType: stateClockInput,
+		},
+		{
+			name:     "b key moves to battery input state",
+			msg:      tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}},
+			model:    Model{State: stateMenu, Selected: 0},
+			wantType: stateBatteryInput,
+		},
 	}
 
 	for _, tt := range tests {
@@ -109,6 +125,60 @@ func TestTimedInputView(t *testing.T) {
 	}
 	if !strings.Contains(view, "5") {
 		t.Error("expected view to show input value")
+	}
+}
+
+func TestClockInputView(t *testing.T) {
+	m := Model{
+		State:     stateClockInput,
+		KeepAlive: keepalive.NewKeeper(),
+	}
+	m.textInput = newClockTextInput()
+	m.textInput.SetValue("22:00")
+	view := View(m)
+
+	if !strings.Contains(view, "clock time") {
+		t.Error("expected view to contain clock prompt")
+	}
+	if !strings.Contains(view, "22:00") {
+		t.Error("expected view to show input value")
+	}
+}
+
+func TestBatteryInputSetsThreshold(t *testing.T) {
+	restore := stubBatteryStatus(platformBatteryStatus(80), nil)
+	defer restore()
+
+	m := Model{State: stateBatteryInput, KeepAlive: keepalive.NewKeeper()}
+	m.textInput = newBatteryTextInput(0)
+	m.textInput.SetValue("65")
+
+	got, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
+	if got.State != stateMenu {
+		t.Fatalf("Update() state = %v, want %v", got.State, stateMenu)
+	}
+	if got.BatteryThreshold != 65 {
+		t.Fatalf("Update() BatteryThreshold = %d, want 65", got.BatteryThreshold)
+	}
+	if got.BatteryPercentage != 80 {
+		t.Fatalf("Update() BatteryPercentage = %d, want 80", got.BatteryPercentage)
+	}
+}
+
+func TestBatteryInputRejectsThresholdAtCurrentBattery(t *testing.T) {
+	restore := stubBatteryStatus(platformBatteryStatus(65), nil)
+	defer restore()
+
+	m := Model{State: stateBatteryInput, KeepAlive: keepalive.NewKeeper()}
+	m.textInput = newBatteryTextInput(0)
+	m.textInput.SetValue("65")
+
+	got, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
+	if got.State != stateBatteryInput {
+		t.Fatalf("Update() state = %v, want %v", got.State, stateBatteryInput)
+	}
+	if got.ErrorMessage == "" {
+		t.Fatal("expected battery validation error")
 	}
 }
 
@@ -152,6 +222,218 @@ func TestRunningView(t *testing.T) {
 	}
 }
 
+func TestRunningViewBatteryMode(t *testing.T) {
+	m := Model{
+		State:             stateRunning,
+		KeepAlive:         keepalive.NewKeeper(),
+		BatteryThreshold:  20,
+		BatteryPercentage: 42,
+	}
+	view := View(m)
+
+	if !strings.Contains(view, "Battery: 42%") {
+		t.Error("expected view to show current battery percentage")
+	}
+	if !strings.Contains(view, "Stopping at or below: 20%") {
+		t.Error("expected view to show battery threshold")
+	}
+}
+
+func TestRunningViewCombinedLimits(t *testing.T) {
+	m := Model{
+		State:             stateRunning,
+		StartTime:         time.Now(),
+		Duration:          5 * time.Minute,
+		KeepAlive:         keepalive.NewKeeper(),
+		BatteryThreshold:  20,
+		BatteryPercentage: 42,
+	}
+	view := View(m)
+
+	if !strings.Contains(view, "remaining") {
+		t.Error("expected view to show remaining time")
+	}
+	if !strings.Contains(view, "Battery: 42%") {
+		t.Error("expected view to show battery percentage")
+	}
+}
+
+func TestBatteryStatusAtThresholdQuits(t *testing.T) {
+	m := Model{
+		State:            stateRunning,
+		KeepAlive:        keepalive.NewKeeper(),
+		BatteryThreshold: 20,
+	}
+
+	got, cmd := Update(batteryStatusMsg{status: platformBatteryStatus(20)}, m)
+	if got.State != stateMenu {
+		t.Fatalf("Update() state = %v, want %v", got.State, stateMenu)
+	}
+	if cmd == nil {
+		t.Fatal("Update() command is nil, want quit command")
+	}
+}
+
+func TestBatteryStatusAboveThresholdKeepsRunning(t *testing.T) {
+	m := Model{
+		State:            stateRunning,
+		KeepAlive:        keepalive.NewKeeper(),
+		BatteryThreshold: 20,
+	}
+
+	got, cmd := Update(batteryStatusMsg{status: platformBatteryStatus(21)}, m)
+	if got.State != stateRunning {
+		t.Fatalf("Update() state = %v, want %v", got.State, stateRunning)
+	}
+	if got.BatteryPercentage != 21 {
+		t.Fatalf("Update() BatteryPercentage = %d, want 21", got.BatteryPercentage)
+	}
+	if cmd == nil {
+		t.Fatal("Update() command is nil, want next battery poll command")
+	}
+}
+
+func TestWindowSizeUpdatesModel(t *testing.T) {
+	m := InitialModel()
+	got, _ := Update(tea.WindowSizeMsg{Width: 44, Height: 12}, m)
+
+	if got.Width != 44 {
+		t.Fatalf("Update() Width = %d, want 44", got.Width)
+	}
+	if got.Height != 12 {
+		t.Fatalf("Update() Height = %d, want 12", got.Height)
+	}
+}
+
+func TestHelpViewFitsNarrowWidth(t *testing.T) {
+	m := InitialModel()
+	m.ShowHelp = true
+	m.Width = 40
+	m.Height = 14
+	view := View(m)
+
+	for _, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > m.Width {
+			t.Fatalf("help line width = %d, want <= %d: %q", got, m.Width, line)
+		}
+	}
+}
+
+func TestHelpPopupHasCompleteBorderAtSmallHeight(t *testing.T) {
+	m := InitialModel()
+	m.ShowHelp = true
+	m.Width = 48
+	m.Height = 10
+	view := View(m)
+
+	if !strings.Contains(view, "╭") {
+		t.Fatalf("expected help popup top border, got:\n%s", view)
+	}
+	if !strings.Contains(view, "╰") {
+		t.Fatalf("expected help popup bottom border, got:\n%s", view)
+	}
+}
+
+func TestCLIHelpRendersFullMenuWithoutScrollFooter(t *testing.T) {
+	m := InitialModel()
+	m.ShowHelp = true
+	m.Width = 80
+	m.Height = 0
+
+	view := View(m)
+	if strings.Contains(view, "pgup/pgdn") || strings.Contains(view, "esc/q close") {
+		t.Fatalf("CLI help should not render scroll footer:\n%s", view)
+	}
+	if !strings.Contains(view, "Examples:") || !strings.Contains(view, "Navigation:") {
+		t.Fatalf("CLI help should render full help content:\n%s", view)
+	}
+}
+
+func TestHelpPopupUsesMoreAvailableSpace(t *testing.T) {
+	width, height := helpPopupSize(120, 40)
+
+	if width != maxHelpPopupWidth {
+		t.Fatalf("helpPopupSize() width = %d, want %d", width, maxHelpPopupWidth)
+	}
+	if height != maxHelpPopupHeight {
+		t.Fatalf("helpPopupSize() height = %d, want %d", height, maxHelpPopupHeight)
+	}
+}
+
+func TestHelpTableBordersFitNormalWidth(t *testing.T) {
+	m := InitialModel()
+	m.Width = 80
+	m.Height = 24
+	content := helpContent(m)
+
+	for _, line := range strings.Split(content, "\n") {
+		if got := lipgloss.Width(line); got > helpBodyWidth(m) {
+			t.Fatalf("help content line width = %d, want <= %d: %q", got, helpBodyWidth(m), line)
+		}
+	}
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "─┐" || trimmed == "─┤" || trimmed == "─┘" {
+			t.Fatalf("table border fragment appears on its own line:\n%s", content)
+		}
+	}
+}
+
+func TestNavigationRowsRenderOnOneLine(t *testing.T) {
+	content := renderKeyValueRows(navigationHelpRows(), 64)
+
+	if !strings.Contains(content, "up/k, down/j  Navigate menu") {
+		t.Fatalf("expected navigation key and description on one line, got:\n%s", content)
+	}
+	if strings.Contains(content, "up/k, down/j\n") {
+		t.Fatalf("navigation key rendered without description on same line:\n%s", content)
+	}
+}
+
+func TestHelpViewportScrolls(t *testing.T) {
+	m := InitialModel()
+	m.ShowHelp = true
+	m.Width = 56
+	m.Height = 10
+	m = syncHelpViewport(m)
+
+	if m.HelpViewport.TotalLineCount() <= m.HelpViewport.VisibleLineCount() {
+		t.Fatalf("expected help content to overflow viewport")
+	}
+
+	got, _ := Update(tea.KeyMsg{Type: tea.KeyDown}, m)
+	if got.HelpViewport.YOffset <= m.HelpViewport.YOffset {
+		t.Fatalf("expected help viewport to scroll down, before=%d after=%d", m.HelpViewport.YOffset, got.HelpViewport.YOffset)
+	}
+}
+
+func TestHelpCloseDoesNotQuit(t *testing.T) {
+	m := InitialModel()
+	m.ShowHelp = true
+	m = syncHelpViewport(m)
+
+	got, cmd := Update(tea.KeyMsg{Type: tea.KeyEsc}, m)
+	if got.ShowHelp {
+		t.Fatalf("expected help to close")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no quit command when closing help")
+	}
+}
+
+func TestErrorBannerHasOwnLines(t *testing.T) {
+	banner := ErrorBanner("invalid flag")
+	if !strings.HasPrefix(banner, "\n") {
+		t.Fatalf("ErrorBanner() = %q, want leading newline", banner)
+	}
+	if !strings.HasSuffix(banner, "\n") {
+		t.Fatalf("ErrorBanner() = %q, want trailing newline", banner)
+	}
+	if !strings.Contains(banner, "invalid flag") {
+		t.Fatalf("ErrorBanner() = %q, want message", banner)
+	}
+}
+
 func TestErrorDisplay(t *testing.T) {
 	m := Model{
 		State:        stateMenu,
@@ -162,6 +444,20 @@ func TestErrorDisplay(t *testing.T) {
 
 	if !strings.Contains(view, "test error") {
 		t.Error("expected view to show error message")
+	}
+}
+
+func platformBatteryStatus(percentage int) platform.BatteryStatus {
+	return platform.BatteryStatus{Percentage: percentage, Available: true}
+}
+
+func stubBatteryStatus(status platform.BatteryStatus, err error) func() {
+	original := readBatteryStatus
+	readBatteryStatus = func() (platform.BatteryStatus, error) {
+		return status, err
+	}
+	return func() {
+		readBatteryStatus = original
 	}
 }
 
