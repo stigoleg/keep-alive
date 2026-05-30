@@ -21,6 +21,20 @@ class BatteryInfo {
     );
   }
 
+  Map<String, dynamic> toJson() => {
+        'percentage': percentage,
+        'isCharging': isCharging,
+        'isPresent': isPresent,
+      };
+
+  factory BatteryInfo.fromJson(Map<String, dynamic> json) {
+    return BatteryInfo(
+      percentage: (json['percentage'] as num).toDouble(),
+      isCharging: json['isCharging'] as bool? ?? false,
+      isPresent: json['isPresent'] as bool? ?? true,
+    );
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||

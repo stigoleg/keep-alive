@@ -7,6 +7,11 @@ class AppConstants {
   static const String cliBinaryName = 'keepalive';
   static const String githubApiBaseUrl = 'https://api.github.com';
   static const String githubReleasesPath = '/repos/stigoleg/keep-alive/releases';
+  static const String githubDownloadBaseUrl =
+      'https://github.com/stigoleg/keep-alive/releases/download';
+
+  static const String cliVersionArg = '--version';
+  static const String cliLogArg = '--log';
 
   static const Duration batteryPollInterval = Duration(seconds: 30);
   static const Duration updateCheckInterval = Duration(hours: 24);

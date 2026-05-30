@@ -33,6 +33,42 @@ class CliProcessState {
     );
   }
 
+  Map<String, dynamic> toJson() => {
+        'status': status.name,
+        'pid': pid,
+        'startTime': startTime?.toIso8601String(),
+        'exitCode': exitCode,
+        'errorMessage': errorMessage,
+      };
+
+  factory CliProcessState.fromJson(Map<String, dynamic> json) {
+    return CliProcessState(
+      status: CliProcessStatus.values.firstWhere(
+        (s) => s.name == json['status'],
+        orElse: () => CliProcessStatus.idle,
+      ),
+      pid: json['pid'] as int?,
+      startTime:
+          json['startTime'] != null ? DateTime.parse(json['startTime'] as String) : null,
+      exitCode: json['exitCode'] as int?,
+      errorMessage: json['errorMessage'] as String?,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CliProcessState &&
+          status == other.status &&
+          pid == other.pid &&
+          startTime == other.startTime &&
+          exitCode == other.exitCode &&
+          errorMessage == other.errorMessage;
+
+  @override
+  int get hashCode =>
+      status.hashCode ^ pid.hashCode ^ startTime.hashCode ^ exitCode.hashCode ^ errorMessage.hashCode;
+
   @override
   String toString() =>
       'CliProcessState(status: $status, pid: $pid, exitCode: $exitCode)';
