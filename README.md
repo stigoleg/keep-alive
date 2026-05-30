@@ -117,11 +117,11 @@ Keep-Alive uses a multi-layered approach:
 - **Systemd**: Uses `systemd-inhibit` (preferred, works on all systems).
 - **Desktop DBus**: Native inhibition for Cosmic (Pop OS), GNOME, KDE, XFCE, and MATE.
 - **gsettings**: For GNOME-based desktops (including Cosmic).
-- **Active Status**: Uses multiple methods with automatic fallback and performs a visible random round mouse pattern every 30 seconds after 2 minutes of inactivity (lasting about 0.5s ± 0.1s), then returns to the original position:
+- **Active Status**: Uses real mouse input backends and performs a visible random round mouse pattern every 30 seconds after 2 minutes of inactivity (lasting about 0.5s ± 0.1s), then returns to the original position:
   - **uinput** (native, works on both X11 and Wayland, requires permissions)
   - **ydotool** (recommended for Wayland, works on X11 too)
-  - **wtype** (Wayland-native, limited mouse support)
   - **xdotool** (X11 only)
+  - DBus idle resets are still used for system sleep prevention, but not as `--active` chat-app activity simulation.
 
 ## Dependencies
 
@@ -133,7 +133,6 @@ Keep-Alive uses a multi-layered approach:
   - **For mouse simulation (`--active` flag)**:
     - `ydotool` (recommended, works on both X11 and Wayland): `sudo apt install ydotool` (Debian/Ubuntu) or equivalent
     - `xdotool` (X11 only): `sudo apt install xdotool` (Debian/Ubuntu) or equivalent
-    - `wtype` (Wayland only, limited support): Install from your distribution's repository
     - `xprintidle` (X11 only, recommended for robust idle-aware `--active` behavior): `sudo apt install xprintidle`
     - Native uinput (requires proper permissions, see Troubleshooting)
   - A terminal that supports TUI applications
@@ -186,7 +185,7 @@ If you see permission errors for `/dev/uinput`, you have two options:
 - **Wayland**: Install `ydotool` for best compatibility: `sudo apt install ydotool` (Debian/Ubuntu) or equivalent
 - **X11**: `xdotool` works: `sudo apt install xdotool` (Debian/Ubuntu) or equivalent
 - Check your display server: `echo $XDG_SESSION_TYPE` or `echo $WAYLAND_DISPLAY`
-- If on Wayland without `ydotool`, the application will fall back to DBus simulation (less effective)
+- If no real input backend is available, `--active` reports a degraded state instead of claiming Slack/Teams activity simulation is working.
 
 **Missing Dependencies:**
 - The application will log warnings if required tools are missing

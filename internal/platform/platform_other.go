@@ -27,6 +27,13 @@ func GetDependencyMessage() string {
 	return ""
 }
 
+func GetActivitySimulationStatus() ActivitySimulationStatus {
+	return ActivitySimulationStatus{
+		Available: false,
+		Message:   "Active status simulation is unavailable on this platform.",
+	}
+}
+
 // NewKeepAlive creates a new platform-specific keep-alive instance
 func NewKeepAlive() (KeepAlive, error) {
 	return &unsupportedKeepAlive{}, nil

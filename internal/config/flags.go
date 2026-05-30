@@ -3,6 +3,7 @@ package config
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ type Config struct {
 	Clock            time.Time
 	SimulateActivity bool
 	EnableLogging    bool
+	ShowVersion      bool
 }
 
 func formatError(err error) string {
@@ -50,7 +52,8 @@ func ParseFlags(version string) (*Config, error) {
 // ParseFlagsWithNow is like ParseFlags but accepts a custom "now" time
 // This is primarily used for testing to ensure consistent results
 func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
-	flags := flag.NewFlagSet("keepalive", flag.ExitOnError)
+	flags := flag.NewFlagSet("keepalive", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
 	flags.Usage = func() {
 		model := ui.InitialModel()
 		model.ShowHelp = true
@@ -75,14 +78,13 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		if err == flag.ErrHelp {
-			os.Exit(0)
+			return nil, err
 		}
 		return nil, err
 	}
 
 	if *showVersion {
-		fmt.Printf("Keep-Alive Version: %s\n", version)
-		os.Exit(0)
+		return &Config{ShowVersion: true}, nil
 	}
 
 	var minutes int
@@ -95,15 +97,13 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 	if *duration != "" {
 		d, err := util.ParseDuration(*duration)
 		if err != nil {
-			fmt.Println(formatError(err))
-			os.Exit(1)
+			return nil, fmt.Errorf("%s", formatError(err))
 		}
 		minutes = int(d.Minutes())
 	} else if *clock != "" {
 		t, err := util.ParseTimeStringWithNow(*clock, now)
 		if err != nil {
-			fmt.Println(formatError(err))
-			os.Exit(1)
+			return nil, fmt.Errorf("%s", formatError(err))
 		}
 
 		if t.Before(now) {

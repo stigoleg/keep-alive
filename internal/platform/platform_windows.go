@@ -364,6 +364,14 @@ func GetDependencyMessage() string {
 	return ""
 }
 
+func GetActivitySimulationStatus() ActivitySimulationStatus {
+	return ActivitySimulationStatus{
+		Available: true,
+		Method:    "SendInput",
+		Message:   "Active status simulation uses the Windows SendInput API.",
+	}
+}
+
 // NewKeepAlive creates a new platform-specific keep-alive instance
 func NewKeepAlive() (KeepAlive, error) {
 	return &windowsKeepAlive{}, nil

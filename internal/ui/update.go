@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/timer"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stigoleg/keep-alive/internal/platform"
 	"github.com/stigoleg/keep-alive/internal/util"
 )
 
@@ -86,7 +88,7 @@ func handleMenuKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 	case key.Matches(msg, m.Keys.ToggleHelp):
 		m.ShowHelp = true
 	case key.Matches(msg, m.Keys.ToggleDependencyInfo):
-		if m.DependencyWarning != "" {
+		if m.DependencyWarning != "" || m.ActivityWarning != "" {
 			m.ShowDependencyInfo = true
 		}
 	case key.Matches(msg, m.Keys.Up):
@@ -106,6 +108,7 @@ func handleMenuKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 		return handleQuit(m)
 	case msg.String() == "a":
 		m.SimulateActivity = !m.SimulateActivity
+		m.ActivityWarning = activityWarningFor(m.SimulateActivity)
 		return m, nil
 	}
 	return m, nil
@@ -115,6 +118,7 @@ func handleMenuKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 func handleMenuSelection(m Model) (Model, tea.Cmd) {
 	switch m.Selected {
 	case 0:
+		m.ActivityWarning = activityWarningFor(m.SimulateActivity)
 		m.KeepAlive.SetSimulateActivity(m.SimulateActivity)
 		if err := m.KeepAlive.StartIndefinite(); err != nil {
 			m.ErrorMessage = err.Error()
@@ -186,6 +190,7 @@ func handleTimedInputSubmit(m Model) (Model, tea.Cmd) {
 	}
 
 	m.KeepAlive.SetSimulateActivity(m.SimulateActivity)
+	m.ActivityWarning = activityWarningFor(m.SimulateActivity)
 	if err := m.KeepAlive.StartTimed(dur); err != nil {
 		m.ErrorMessage = "System Error • " + err.Error()
 		return m, nil
@@ -259,13 +264,24 @@ func handleRunningKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 	case key.Matches(msg, m.Keys.ToggleHelp):
 		m.ShowHelp = true
 	case key.Matches(msg, m.Keys.ToggleDependencyInfo):
-		if m.DependencyWarning != "" {
+		if m.DependencyWarning != "" || m.ActivityWarning != "" {
 			m.ShowDependencyInfo = true
 		}
 	case key.Matches(msg, m.Keys.Stop):
 		return handleStopAndReturn(m)
 	}
 	return m, nil
+}
+
+func activityWarningFor(enabled bool) string {
+	if !enabled {
+		return ""
+	}
+	status := platform.GetActivitySimulationStatus()
+	if status.Available {
+		return ""
+	}
+	return strings.TrimSpace(status.Message)
 }
 
 // cleanup stops the keep-alive process and resets the model state

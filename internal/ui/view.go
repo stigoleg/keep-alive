@@ -71,9 +71,9 @@ func menuView(m Model) string {
 	b.WriteString("\n")
 
 	// Dependency warning notification
-	if m.DependencyWarning != "" && !m.ShowDependencyInfo {
+	if hasInfoWarning(m) && !m.ShowDependencyInfo {
 		b.WriteString("\n")
-		warningText := "⚠ Missing optional dependencies detected. Press 'i' for details."
+		warningText := "Missing activity/dependency information. Press 'i' for details."
 		b.WriteString(Current.Error.Render(warningText))
 		b.WriteString("\n")
 	}
@@ -124,6 +124,14 @@ func runningView(m Model) string {
 
 	b.WriteString(Current.Awake.Render("System is being kept awake"))
 	b.WriteString("\n")
+	if m.SimulateActivity {
+		if m.ActivityWarning != "" {
+			b.WriteString(Current.Error.Render("Activity simulation unavailable"))
+		} else {
+			b.WriteString(Current.Unselected.Render("Activity simulation enabled"))
+		}
+		b.WriteString("\n")
+	}
 
 	// Show countdown and progress bar if this is a timed session
 	if m.Duration > time.Duration(0) {
@@ -160,12 +168,15 @@ Usage:
 Flags:
   -d, --duration string   Duration to keep system alive (e.g., "2h30m" or "150")
   -c, --clock string     Time to keep system alive until (e.g., "22:00" or "10:00PM")
+  -a, --active           Simulate activity when a real input backend is available
+  -l, --log              Enable logging to debug.log
   -v, --version          Show version information
   -h, --help            Show help message
 
 Examples:
   keepalive                    # Start with interactive TUI
   keepalive -d 2h30m          # Keep system awake for 2 hours and 30 minutes
+  keepalive --active          # Keep system awake and simulate activity when supported
   keepalive -d 150            # Keep system awake for 150 minutes
   keepalive -c 22:00          # Keep system awake until 10:00 PM
   keepalive -c 10:00PM        # Keep system awake until 10:00 PM
@@ -183,7 +194,8 @@ Navigation:
 
 // dependencyInfoView displays detailed dependency information
 func dependencyInfoView(m Model) string {
-	if m.DependencyWarning == "" {
+	message := infoMessage(m)
+	if message == "" {
 		return Current.Help.Render("No dependency information available.")
 	}
 
@@ -194,5 +206,20 @@ Version: %s
 
 Press 'i' or 'Esc' to close this view.
 `
-	return Current.Help.Render(fmt.Sprintf(header, m.Version(), m.DependencyWarning))
+	return Current.Help.Render(fmt.Sprintf(header, m.Version(), message))
+}
+
+func hasInfoWarning(m Model) bool {
+	return m.DependencyWarning != "" || m.ActivityWarning != ""
+}
+
+func infoMessage(m Model) string {
+	var parts []string
+	if m.ActivityWarning != "" {
+		parts = append(parts, m.ActivityWarning)
+	}
+	if m.DependencyWarning != "" {
+		parts = append(parts, m.DependencyWarning)
+	}
+	return strings.Join(parts, "\n\n")
 }

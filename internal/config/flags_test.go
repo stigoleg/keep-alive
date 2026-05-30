@@ -19,7 +19,8 @@ func TestParseFlags(t *testing.T) {
 		name        string
 		args        []string
 		wantMinutes int
-		skip        bool // Skip test cases that would cause os.Exit
+		wantErr     bool
+		wantVersion bool
 	}{
 		{
 			name:        "valid duration flag",
@@ -44,19 +45,19 @@ func TestParseFlags(t *testing.T) {
 			args: []string{"keepalive", "-c", "09:45AM"},
 		},
 		{
-			name: "invalid clock format",
-			args: []string{"keepalive", "-c", "25:00"},
-			skip: true, // Would cause os.Exit(1)
+			name:    "invalid clock format",
+			args:    []string{"keepalive", "-c", "25:00"},
+			wantErr: true,
 		},
 		{
-			name: "both duration and clock flags",
-			args: []string{"keepalive", "-d", "2h30m", "-c", "22:30"},
-			skip: true, // Would cause os.Exit(1)
+			name:    "both duration and clock flags",
+			args:    []string{"keepalive", "-d", "2h30m", "-c", "22:30"},
+			wantErr: true,
 		},
 		{
-			name: "version flag",
-			args: []string{"keepalive", "--version"},
-			skip: true, // Would cause os.Exit(0)
+			name:        "version flag",
+			args:        []string{"keepalive", "--version"},
+			wantVersion: true,
 		},
 		{
 			name:        "no flags",
@@ -67,16 +68,24 @@ func TestParseFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.skip {
-				t.Skip("Skipping test case that would cause os.Exit")
-			}
-
 			// Set up test args
 			os.Args = tt.args
 
 			cfg, err := ParseFlagsWithNow("test-version", now)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("ParseFlags() expected error")
+				}
+				return
+			}
 			if err != nil {
 				t.Errorf("ParseFlags() unexpected error: %v", err)
+				return
+			}
+			if cfg.ShowVersion != tt.wantVersion {
+				t.Errorf("ParseFlags() ShowVersion = %v, want %v", cfg.ShowVersion, tt.wantVersion)
+			}
+			if tt.wantVersion {
 				return
 			}
 

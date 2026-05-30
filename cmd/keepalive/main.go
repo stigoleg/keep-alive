@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -32,7 +35,15 @@ var (
 func main() {
 	cfg, err := config.ParseFlags(appVersion)
 	if err != nil {
-		log.Fatal(err)
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if cfg.ShowVersion {
+		fmt.Printf("Keep-Alive Version: %s\n", appVersion)
+		return
 	}
 
 	if cfg.EnableLogging {
@@ -80,6 +91,13 @@ func main() {
 	if depMessage != "" {
 		model.SetDependencyWarning(depMessage)
 		log.Printf("linux: missing dependencies detected:\n%s", depMessage)
+	}
+	if cfg.SimulateActivity {
+		activeStatus := platform.GetActivitySimulationStatus()
+		if !activeStatus.Available {
+			model.SetActivityWarning(activeStatus.Message)
+			log.Printf("activity simulation unavailable: %s", activeStatus.Message)
+		}
 	}
 
 	keeperRef = model.KeepAlive

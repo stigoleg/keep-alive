@@ -23,6 +23,10 @@ const (
 	// time against the last synthetic jitter timestamp.
 	SyntheticIdleResetTolerance = 4 * time.Second
 
+	// ActivityWarningInterval limits repeated logs when --active cannot use a
+	// real input backend.
+	ActivityWarningInterval = 60 * time.Second
+
 	// Round jitter path geometry
 	MouseJitterRadiusMin       = 18.0
 	MouseJitterRadiusMax       = 45.0

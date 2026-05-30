@@ -536,6 +536,21 @@ func GetDependencyMessage() string {
 	return ""
 }
 
+func GetActivitySimulationStatus() ActivitySimulationStatus {
+	if _, err := exec.LookPath("osascript"); err != nil {
+		return ActivitySimulationStatus{
+			Available: false,
+			Message:   "Active status simulation is unavailable on macOS because osascript is not installed. KeepAlive will still prevent system sleep, but Slack/Teams activity cannot be simulated.",
+		}
+	}
+
+	return ActivitySimulationStatus{
+		Available: true,
+		Method:    "CoreGraphics mouse events",
+		Message:   "Active status simulation uses CoreGraphics mouse events. macOS Accessibility permissions may still be required in normal desktop sessions.",
+	}
+}
+
 // NewKeepAlive creates a new platform specific keep alive instance
 func NewKeepAlive() (KeepAlive, error) {
 	return &darwinKeepAlive{}, nil

@@ -351,24 +351,6 @@ func checkMissingDependencies(caps linuxCapabilities, displayServer string, hasU
 		})
 	}
 
-	// Check wtype (Wayland only, optional)
-	if displayServer == displayServerWayland && !caps.wtypeAvailable {
-		installCmd, note := generateInstallCommand("wtype", distro, pkgManager)
-		whyNeeded := "Provides Wayland-native mouse/keyboard simulation (optional, ydotool is preferred)"
-		alt := "ydotool is recommended instead, or use uinput"
-		missing = append(missing, DependencyInfo{
-			Name:        "wtype",
-			WhyNeeded:   whyNeeded,
-			InstallCmd:  installCmd,
-			Optional:    true,
-			Available:   note == "", // Available if no special note
-			Alternative: alt,
-		})
-		if note != "" {
-			missing[len(missing)-1].Alternative = note + "\n" + alt
-		}
-	}
-
 	// Check xprintidle (X11 only, optional but recommended for robust idle detection)
 	if displayServer == displayServerX11 && !caps.xprintidleAvailable {
 		installCmd, _ := generateInstallCommand("xprintidle", distro, pkgManager)
@@ -414,8 +396,8 @@ func formatDependencyMessages(missing []DependencyInfo, displayServer string, ha
 		b.WriteString("\n")
 	}
 
-	b.WriteString("Note: The app will work without these dependencies, but mouse\n")
-	b.WriteString("simulation may be limited. DBus simulation will be used as fallback.\n")
+	b.WriteString("Note: The app will keep preventing sleep without these dependencies,\n")
+	b.WriteString("but --active requires a real mouse input backend for Slack/Teams.\n")
 	b.WriteString("\n")
 	if !hasUinput {
 		b.WriteString("Tip: Setting up uinput permissions provides native mouse simulation\n")
@@ -921,6 +903,8 @@ type linuxKeepAlive struct {
 
 	// shared activity controller for idle-gated jitter
 	activityCtrl *ActivityController
+
+	lastActivityWarnNS int64
 }
 
 func detectLinuxCapabilities() linuxCapabilities {
@@ -1354,8 +1338,9 @@ func (k *linuxKeepAlive) executePatternCommon(points []MousePoint, mover mouseMo
 
 func (k *linuxKeepAlive) executeMousePattern(points []MousePoint, caps linuxCapabilities, sessionDuration time.Duration) {
 	// Execute pattern using available methods based on display server
-	// Priority: uinput → ydotool → xdotool (X11 only) → wtype (Wayland only) → DBus fallback
-	// Stop after first successful method to avoid redundant execution
+	// Priority: uinput → ydotool → xdotool (X11 only).
+	// These backends emit real pointer input. DBus idle resets are intentionally
+	// excluded from --active because chat apps may not treat them as user input.
 
 	// Try uinput first (works on both X11 and Wayland if permissions allow)
 	if k.uinput != nil {
@@ -1378,19 +1363,19 @@ func (k *linuxKeepAlive) executeMousePattern(points []MousePoint, caps linuxCapa
 		}
 	}
 
-	// Try wtype (Wayland-native, but limited mouse support)
-	if caps.displayServer == displayServerWayland && caps.wtypeAvailable {
-		if k.executePatternWtype(points, sessionDuration) {
-			return
-		}
-	}
+	k.warnActivityUnavailable(caps)
+}
 
-	// Soft simulation via DBus (works on both, but less effective) - only if no other method worked
-	k.simulateSystemActivity()
-
-	if caps.displayServer == displayServerWayland {
-		log.Printf("linux: warning: no Wayland-compatible mouse simulation method available. Install ydotool: sudo apt install ydotool (or equivalent for your distribution)")
+func (k *linuxKeepAlive) warnActivityUnavailable(caps linuxCapabilities) {
+	nowNS := time.Now().UnixNano()
+	last := atomic.LoadInt64(&k.lastActivityWarnNS)
+	if last != 0 && time.Duration(nowNS-last) < ActivityWarningInterval {
+		return
 	}
+	atomic.StoreInt64(&k.lastActivityWarnNS, nowNS)
+
+	status := linuxActivitySimulationStatus(caps, k.uinput != nil)
+	log.Printf("linux: %s", status.Message)
 }
 
 // uinputMover implements mouseMover for uinput.
@@ -1447,25 +1432,6 @@ func (k *linuxKeepAlive) executePatternYdotool(points []MousePoint, sessionDurat
 	return k.executePatternCommon(points, mover, sessionDuration)
 }
 
-// executePatternWtype executes mouse pattern using wtype (Wayland-native)
-// Note: wtype doesn't support relative mouse movement directly, so we use absolute coordinates
-// This is a simplified implementation - wtype may need different approach
-func (k *linuxKeepAlive) executePatternWtype(points []MousePoint, sessionDuration time.Duration) bool {
-	_ = points
-	_ = sessionDuration
-	// wtype doesn't have direct mouse movement commands in the same way
-	// We'll use a workaround: simulate small keyboard events or use wlrctl if available
-	// For now, log that wtype is not fully supported for mouse movement
-	log.Printf("linux: wtype mouse movement not fully implemented (wtype focuses on keyboard simulation)")
-	// Fall back to DBus simulation which works on Wayland
-	_, err := runVerbose("dbus-send", "--dest=org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver.SimulateUserActivity")
-	if err != nil {
-		log.Printf("linux: wtype/DBus simulation failed: %v", err)
-		return false
-	}
-	return true
-}
-
 func (k *linuxKeepAlive) Start(ctx context.Context) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -1516,6 +1482,11 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 		log.Printf("linux: uinput mouse simulation: disabled (permissions or unavailable)")
 	}
 
+	activeStatus := linuxActivitySimulationStatus(caps, hasUinput)
+	if k.simulateActivity.Load() && !activeStatus.Available {
+		log.Printf("linux: %s", activeStatus.Message)
+	}
+
 	// Check for missing dependencies and log messages
 	missingDeps := checkMissingDependencies(caps, caps.displayServer, hasUinput)
 	if len(missingDeps) > 0 {
@@ -1530,9 +1501,6 @@ func (k *linuxKeepAlive) Start(ctx context.Context) error {
 	}
 	if caps.ydotoolAvailable {
 		mouseMethods = append(mouseMethods, "ydotool")
-	}
-	if caps.wtypeAvailable && caps.displayServer == displayServerWayland {
-		mouseMethods = append(mouseMethods, "wtype")
 	}
 	if caps.xdotoolAvailable && caps.displayServer == displayServerX11 {
 		mouseMethods = append(mouseMethods, "xdotool")
@@ -1628,6 +1596,7 @@ func (k *linuxKeepAlive) Stop() error {
 	if k.activityCtrl != nil {
 		k.activityCtrl.Reset()
 	}
+	atomic.StoreInt64(&k.lastActivityWarnNS, 0)
 	k.mu.Unlock()
 
 	if len(deactivateErrors) > 0 {
@@ -1672,6 +1641,46 @@ func GetDependencyMessage() string {
 		return formatDependencyMessages(missingDeps, caps.displayServer, hasUinput)
 	}
 	return ""
+}
+
+func linuxActivitySimulationStatus(caps linuxCapabilities, hasUinput bool) ActivitySimulationStatus {
+	if hasUinput {
+		return ActivitySimulationStatus{
+			Available: true,
+			Method:    "uinput",
+			Message:   "Active status simulation uses Linux uinput mouse events.",
+		}
+	}
+	if caps.ydotoolAvailable {
+		return ActivitySimulationStatus{
+			Available: true,
+			Method:    "ydotool",
+			Message:   "Active status simulation uses ydotool mouse events.",
+		}
+	}
+	if caps.displayServer == displayServerX11 && caps.xdotoolAvailable {
+		return ActivitySimulationStatus{
+			Available: true,
+			Method:    "xdotool",
+			Message:   "Active status simulation uses xdotool mouse events.",
+		}
+	}
+
+	message := "Active status simulation is unavailable: no real Linux mouse input backend is available. KeepAlive will still prevent system sleep, but Slack/Teams activity cannot be simulated. Configure uinput permissions or install ydotool."
+	if caps.displayServer == displayServerX11 {
+		message += " On X11, xdotool is also supported."
+	}
+
+	return ActivitySimulationStatus{
+		Available: false,
+		Message:   message,
+	}
+}
+
+func GetActivitySimulationStatus() ActivitySimulationStatus {
+	caps := detectLinuxCapabilities()
+	hasUinput, _ := checkUinputPermissions()
+	return linuxActivitySimulationStatus(caps, hasUinput)
 }
 
 func NewKeepAlive() (KeepAlive, error) {
