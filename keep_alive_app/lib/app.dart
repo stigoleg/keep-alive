@@ -13,6 +13,7 @@ import 'ui/theme/app_theme.dart';
 import 'ui/theme/linux_theme.dart';
 import 'ui/theme/macos_theme.dart';
 import 'ui/theme/windows_theme.dart';
+import 'ui/popup/popup_panel.dart';
 import 'ui/tray/tray_manager.dart';
 import 'utils/platform_utils.dart';
 
@@ -147,18 +148,7 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
       themeMode: ThemeMode.system,
       theme: _lightTheme,
       darkTheme: _darkTheme,
-      home: const _PlaceholderBody(),
-    );
-  }
-}
-
-class _PlaceholderBody extends StatelessWidget {
-  const _PlaceholderBody();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(child: Text('KeepAlive')),
+      home: const PopupPanel(),
     );
   }
 }
