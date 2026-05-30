@@ -3,31 +3,60 @@
 
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
+#include <flutter/method_channel.h>
+#include <flutter/standard_method_codec.h>
 
 #include <memory>
+#include <functional>
 
 #include "win32_window.h"
 
-// A window that does nothing but host a Flutter view.
 class FlutterWindow : public Win32Window {
  public:
-  // Creates a new FlutterWindow hosting a Flutter view running |project|.
   explicit FlutterWindow(const flutter::DartProject& project);
   virtual ~FlutterWindow();
 
  protected:
-  // Win32Window:
   bool OnCreate() override;
   void OnDestroy() override;
   LRESULT MessageHandler(HWND window, UINT const message, WPARAM const wparam,
                          LPARAM const lparam) noexcept override;
 
  private:
-  // The project to run.
-  flutter::DartProject project_;
+  void InitMethodChannel();
+  void HandleMethodCall(
+      const flutter::MethodCall<flutter::EncodableValue>& call,
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
 
-  // The Flutter instance hosted by this window.
+  void HandleSetAutoStart(const flutter::EncodableMap& args,
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
+  void HandleIsAutoStartEnabled(
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
+  void HandleSetTrayIcon(const flutter::EncodableMap& args,
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
+  void HandleSetTrayTooltip(const flutter::EncodableMap& args,
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
+  void HandleShowContextMenu(const flutter::EncodableMap& args,
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
+  void HandleGetAppSupportDir(
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
+
+  void CreateTrayIcon();
+  void RemoveTrayIcon();
+  void UpdateTrayIcon();
+
+  flutter::DartProject project_;
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> platform_channel_;
+
+  static constexpr UINT WM_TRAY_ICON = WM_APP + 1;
+  static constexpr UINT TRAY_ICON_ID = 1;
+  NOTIFYICONDATAW nid_{};
+  bool tray_created_ = false;
+
+  static constexpr const wchar_t kAutoStartKeyPath[] =
+      L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+  static constexpr const wchar_t kAutoStartValueName[] = L"KeepAlive";
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

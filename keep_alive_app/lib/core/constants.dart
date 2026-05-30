@@ -16,6 +16,8 @@ class AppConstants {
   static const Duration batteryPollInterval = Duration(seconds: 30);
   static const Duration updateCheckInterval = Duration(hours: 24);
 
+  static const String platformChannelName = 'com.stigoleg.keepAliveApp/platform';
+
   static const int maxLogLines = 1000;
   static const int processGracefulTimeoutSeconds = 5;
 }

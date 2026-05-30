@@ -1,4 +1,35 @@
-/// Platform-specific behavior interface.
+import 'dart:io' show Platform;
+
+import 'platform_linux.dart';
+import 'platform_macos.dart';
+import 'platform_windows.dart';
+
 abstract class KeepAlivePlatform {
-  // TODO: Task 6 implementation
+  static KeepAlivePlatform get instance => _instance;
+  static final KeepAlivePlatform _instance = _createPlatformInstance();
+
+  static KeepAlivePlatform _createPlatformInstance() {
+    if (Platform.isMacOS) return KeepAlivePlatformMacOS();
+    if (Platform.isWindows) return KeepAlivePlatformWindows();
+    if (Platform.isLinux) return KeepAlivePlatformLinux();
+    throw UnsupportedError('Unsupported platform: ${Platform.operatingSystem}');
+  }
+
+  Future<String> getPlatformName();
+
+  Future<void> setAutoStart(bool enabled);
+
+  Future<bool> isAutoStartEnabled();
+
+  Future<void> setTrayIcon(String iconPath);
+
+  Future<void> setTrayTooltip(String tooltip);
+
+  Future<int?> showContextMenu(List<String> items);
+
+  Future<void> showPopover(double x, double y);
+
+  Future<void> hidePopover();
+
+  Future<String> getAppSupportDir();
 }
