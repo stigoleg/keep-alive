@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -922,6 +923,79 @@ func detectLinuxCapabilities() linuxCapabilities {
 		displayServer:       displayServer,
 		desktopEnvironment:  detectDesktopEnvironment(),
 	}
+}
+
+func parseLinuxBatteryCapacity(value string) (int, error) {
+	percentage, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse battery capacity %q: %v", strings.TrimSpace(value), err)
+	}
+	if percentage < 0 || percentage > 100 {
+		return 0, fmt.Errorf("battery capacity out of range: %d", percentage)
+	}
+	return percentage, nil
+}
+
+func readLinuxBatteryCapacities(root string) ([]int, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read power supply directory: %v", err)
+	}
+
+	var capacities []int
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		dir := filepath.Join(root, entry.Name())
+		typeBytes, err := os.ReadFile(filepath.Join(dir, "type"))
+		if err != nil || strings.TrimSpace(string(typeBytes)) != "Battery" {
+			continue
+		}
+
+		capacityBytes, err := os.ReadFile(filepath.Join(dir, "capacity"))
+		if err != nil {
+			return nil, fmt.Errorf("failed to read battery capacity for %s: %v", entry.Name(), err)
+		}
+		capacity, err := parseLinuxBatteryCapacity(string(capacityBytes))
+		if err != nil {
+			return nil, err
+		}
+		capacities = append(capacities, capacity)
+	}
+
+	if len(capacities) == 0 {
+		return nil, fmt.Errorf("no battery found")
+	}
+	return capacities, nil
+}
+
+func lowestBatteryCapacity(capacities []int) (int, error) {
+	if len(capacities) == 0 {
+		return 0, fmt.Errorf("no battery capacity available")
+	}
+
+	lowest := capacities[0]
+	for _, capacity := range capacities[1:] {
+		if capacity < lowest {
+			lowest = capacity
+		}
+	}
+	return lowest, nil
+}
+
+func GetBatteryStatus() (BatteryStatus, error) {
+	capacities, err := readLinuxBatteryCapacities("/sys/class/power_supply")
+	if err != nil {
+		return BatteryStatus{}, err
+	}
+
+	percentage, err := lowestBatteryCapacity(capacities)
+	if err != nil {
+		return BatteryStatus{}, err
+	}
+	return BatteryStatus{Percentage: percentage, Available: true}, nil
 }
 
 // createGNOMESuspendInhibitor creates a DBus inhibitor for GNOME suspend prevention.

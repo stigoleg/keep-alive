@@ -109,6 +109,37 @@ func getIdleTimeIOReg() (time.Duration, error) {
 	return time.Duration(int64(nanos)), nil
 }
 
+func parseDarwinBatteryPercentage(output string) (int, error) {
+	re := regexp.MustCompile(`(\d+)%`)
+	matches := re.FindStringSubmatch(output)
+	if len(matches) < 2 {
+		return 0, fmt.Errorf("battery percentage not found")
+	}
+
+	percentage, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse battery percentage %q: %v", matches[1], err)
+	}
+	if percentage < 0 || percentage > 100 {
+		return 0, fmt.Errorf("battery percentage out of range: %d", percentage)
+	}
+	return percentage, nil
+}
+
+func GetBatteryStatus() (BatteryStatus, error) {
+	out, err := exec.Command("pmset", "-g", "batt").CombinedOutput()
+	if err != nil {
+		return BatteryStatus{}, fmt.Errorf("failed to read battery status: %v", err)
+	}
+
+	percentage, err := parseDarwinBatteryPercentage(string(out))
+	if err != nil {
+		return BatteryStatus{}, err
+	}
+
+	return BatteryStatus{Percentage: percentage, Available: true}, nil
+}
+
 // darwinKeepAlive implements the KeepAlive interface for macOS
 type darwinKeepAlive struct {
 	mu                  sync.Mutex

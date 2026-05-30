@@ -16,6 +16,7 @@ import (
 type Config struct {
 	Duration         int
 	Clock            time.Time
+	BatteryThreshold int
 	SimulateActivity bool
 	EnableLogging    bool
 	ShowVersion      bool
@@ -38,10 +39,10 @@ func formatError(err error) string {
 				Foreground(lipgloss.Color("#999999")).
 				Render(parts[1])
 
-			return errorBox.Render(fmt.Sprintf("%s\n\n%s", header, details))
+			return "\n" + errorBox.Render(fmt.Sprintf("%s\n\n%s", header, details)) + "\n"
 		}
 	}
-	return ui.Current.Error.Render(msg)
+	return ui.ErrorBanner(msg)
 }
 
 // ParseFlags parses command line flags and returns the configuration
@@ -54,11 +55,13 @@ func ParseFlags(version string) (*Config, error) {
 func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 	flags := flag.NewFlagSet("keepalive", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	flags.Usage = func() {
+	flags.Usage = func() {}
+
+	printUsage := func() {
 		model := ui.InitialModel()
 		model.ShowHelp = true
 		model.SetVersion(version)
-		fmt.Print(model.View())
+		fmt.Println(model.View())
 	}
 
 	duration := flags.String("duration", "", "Duration to keep system alive (e.g., \"2h30m\")")
@@ -67,8 +70,14 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 	clock := flags.String("clock", "", "Time to keep system alive until (e.g., \"22:00\" or \"10:00PM\")")
 	flags.StringVar(clock, "c", "", "Time to keep system alive until (e.g., \"22:00\" or \"10:00PM\")")
 
+	battery := flags.Int("battery", 0, "Battery percentage threshold to keep system alive until")
+	flags.IntVar(battery, "b", 0, "Battery percentage threshold to keep system alive until")
+
 	showVersion := flags.Bool("version", false, "Show version information")
 	flags.BoolVar(showVersion, "v", false, "Show version information")
+
+	showHelp := flags.Bool("help", false, "Show help message")
+	flags.BoolVar(showHelp, "h", false, "Show help message")
 
 	simulateActivity := flags.Bool("active", false, "Simulate activity to keep chat apps active")
 	flags.BoolVar(simulateActivity, "a", false, "Simulate activity to keep chat apps active")
@@ -80,18 +89,32 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 		if err == flag.ErrHelp {
 			return nil, err
 		}
-		return nil, err
+		return nil, fmt.Errorf("%s", formatError(err))
 	}
 
 	if *showVersion {
 		return &Config{ShowVersion: true}, nil
+	}
+	if *showHelp {
+		printUsage()
+		return nil, flag.ErrHelp
+	}
+
+	batterySet := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "battery" || f.Name == "b" {
+			batterySet = true
+		}
+	})
+	if batterySet && (*battery < 1 || *battery > 100) {
+		return nil, fmt.Errorf("%s", formatError(fmt.Errorf("battery threshold must be between 1 and 100")))
 	}
 
 	var minutes int
 	var clockTime time.Time
 
 	if *duration != "" && *clock != "" {
-		return nil, fmt.Errorf("cannot specify both duration (-d) and clock time (-c)")
+		return nil, fmt.Errorf("%s", formatError(fmt.Errorf("cannot specify both duration (-d) and clock time (-c)")))
 	}
 
 	if *duration != "" {
@@ -118,6 +141,7 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 	return &Config{
 		Duration:         minutes,
 		Clock:            clockTime,
+		BatteryThreshold: *battery,
 		SimulateActivity: *simulateActivity,
 		EnableLogging:    *enableLogging,
 	}, nil

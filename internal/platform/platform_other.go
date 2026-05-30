@@ -34,6 +34,10 @@ func GetActivitySimulationStatus() ActivitySimulationStatus {
 	}
 }
 
+func GetBatteryStatus() (BatteryStatus, error) {
+	return BatteryStatus{}, errors.New("battery status is unsupported on this platform")
+}
+
 // NewKeepAlive creates a new platform-specific keep-alive instance
 func NewKeepAlive() (KeepAlive, error) {
 	return &unsupportedKeepAlive{}, nil

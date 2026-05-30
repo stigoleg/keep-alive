@@ -19,6 +19,7 @@ func TestParseFlags(t *testing.T) {
 		name        string
 		args        []string
 		wantMinutes int
+		wantBattery int
 		wantErr     bool
 		wantVersion bool
 	}{
@@ -60,6 +61,53 @@ func TestParseFlags(t *testing.T) {
 			wantVersion: true,
 		},
 		{
+			name:        "valid battery flag",
+			args:        []string{"keepalive", "-b", "20"},
+			wantBattery: 20,
+		},
+		{
+			name:        "valid battery long flag",
+			args:        []string{"keepalive", "--battery", "30"},
+			wantBattery: 30,
+		},
+		{
+			name:        "battery combines with duration",
+			args:        []string{"keepalive", "-d", "20", "-b", "65"},
+			wantMinutes: 20,
+			wantBattery: 65,
+		},
+		{
+			name:        "battery combines with clock",
+			args:        []string{"keepalive", "-c", "12:00", "-b", "65"},
+			wantMinutes: 120,
+			wantBattery: 65,
+		},
+		{
+			name:    "duration and clock still conflict with battery",
+			args:    []string{"keepalive", "-b", "25", "-d", "2h", "-c", "22:00"},
+			wantErr: true,
+		},
+		{
+			name:    "battery rejects zero",
+			args:    []string{"keepalive", "-b", "0"},
+			wantErr: true,
+		},
+		{
+			name:    "battery rejects negative",
+			args:    []string{"keepalive", "-b", "-1"},
+			wantErr: true,
+		},
+		{
+			name:    "battery rejects above one hundred",
+			args:    []string{"keepalive", "-b", "101"},
+			wantErr: true,
+		},
+		{
+			name:    "battery rejects non integer",
+			args:    []string{"keepalive", "-b", "twenty"},
+			wantErr: true,
+		},
+		{
 			name:        "no flags",
 			args:        []string{"keepalive"},
 			wantMinutes: 0,
@@ -88,9 +136,11 @@ func TestParseFlags(t *testing.T) {
 			if tt.wantVersion {
 				return
 			}
+			if cfg.BatteryThreshold != tt.wantBattery {
+				t.Errorf("ParseFlags() BatteryThreshold = %d, want %d", cfg.BatteryThreshold, tt.wantBattery)
+			}
 
-			// Skip duration check for clock flag tests
-			if len(tt.args) > 1 && tt.args[1] != "-c" && cfg.Duration != tt.wantMinutes {
+			if tt.wantMinutes != 0 && cfg.Duration != tt.wantMinutes {
 				t.Errorf("ParseFlags() got duration %d, want %d", cfg.Duration, tt.wantMinutes)
 			}
 
