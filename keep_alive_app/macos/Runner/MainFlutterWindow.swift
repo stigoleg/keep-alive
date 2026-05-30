@@ -12,11 +12,12 @@ class MainFlutterWindow: NSWindow {
 
         super.awakeFromNib()
 
-        configureAsMenuBarApp()
+        configureAsMenuBarPopover()
     }
 
-    private func configureAsMenuBarApp() {
+    private func configureAsMenuBarPopover() {
         self.isOpaque = false
+        self.backgroundColor = .clear
         self.hasShadow = true
         self.titleVisibility = .hidden
         self.titlebarAppearsTransparent = true
@@ -26,9 +27,10 @@ class MainFlutterWindow: NSWindow {
         self.isMovableByWindowBackground = false
         self.isReleasedWhenClosed = false
 
-        self.backgroundColor = .clear
+        self.orderOut(nil)
 
         guard let contentView = self.contentView else { return }
+        contentView.wantsLayer = true
 
         let visualEffect = NSVisualEffectView(frame: contentView.bounds)
         visualEffect.autoresizingMask = [.width, .height]
@@ -41,4 +43,7 @@ class MainFlutterWindow: NSWindow {
 
         contentView.addSubview(visualEffect, positioned: .below, relativeTo: contentView.subviews.first)
     }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }

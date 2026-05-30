@@ -12,7 +12,7 @@ dependencies:
 
   flutter_riverpod: ^2.6.1
   riverpod_annotation: ^2.6.1
-  window_manager: ^0.4.3
+  window_manager: ^0.5.1
   shared_preferences: ^2.3.5
   path_provider: ^2.1.5
   dio: ^5.8.0

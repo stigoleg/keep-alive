@@ -111,7 +111,7 @@ class TrayManager {
           _handleContextMenuSelection(selectedIndex);
         }
       case AppConstants.trayEventPopoverDismissed:
-        onTogglePopup?.call();
+        break;
     }
   }
 

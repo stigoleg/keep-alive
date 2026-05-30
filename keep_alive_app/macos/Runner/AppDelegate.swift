@@ -6,15 +6,14 @@ private let kPlatformChannelName = "com.stigoleg.keepAliveApp/platform"
 private let kLaunchAgentLabel = "com.stigoleg.keepalive"
 private let kTrayIconSize: CGFloat = 18.0
 private let kPopoverWidth: CGFloat = 300.0
-private let kPopoverHeight: CGFloat = 460.0
+private let kPopoverHeight: CGFloat = 480.0
 
 @main
-class AppDelegate: FlutterAppDelegate {
+class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
-    private var popover: NSPopover?
-    private var popoverObserver: NSObjectProtocol?
     private var contextMenuResult: FlutterResult?
     private weak var flutterChannel: FlutterMethodChannel?
+    private var popoverVisible = false
 
     override func applicationDidFinishLaunching(_ aNotification: Notification) {
         guard let controller = mainFlutterWindow?.contentViewController as? FlutterViewController else {
@@ -30,6 +29,8 @@ class AppDelegate: FlutterAppDelegate {
         channel.setMethodCallHandler { [weak self] call, result in
             self?.handleMethodCall(call, result: result)
         }
+
+        mainFlutterWindow?.delegate = self
     }
 
     override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -41,14 +42,21 @@ class AppDelegate: FlutterAppDelegate {
         if let channel = flutterChannel {
             channel.invokeMethod("systemShutdown", arguments: nil)
         }
-        if let observer = popoverObserver {
-            NotificationCenter.default.removeObserver(observer)
-            popoverObserver = nil
-        }
     }
 
     override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         return true
+    }
+
+    // MARK: - NSWindowDelegate
+
+    func windowDidResignKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window == mainFlutterWindow,
+              popoverVisible else { return }
+
+        hidePopover()
+        flutterChannel?.invokeMethod("onTrayEvent", arguments: "popoverDismissed")
     }
 
     // MARK: - Method Channel Handler
@@ -245,47 +253,45 @@ class AppDelegate: FlutterAppDelegate {
         contextMenuResult = nil
     }
 
-    // MARK: - Popover
+    // MARK: - Popover (Window-Based)
 
     private func handleShowPopover(result: @escaping FlutterResult) {
-        guard let statusButton = statusItem?.button else {
-            result(FlutterError(code: "NO_TRAY", message: "Tray icon not initialized", details: nil))
+        guard let window = mainFlutterWindow,
+              let statusButton = statusItem?.button else {
+            result(FlutterError(code: "NO_WINDOW", message: "Window or tray icon not ready", details: nil))
             return
         }
 
-        if popover == nil {
-            popover = NSPopover()
-            popover?.behavior = .transient
-            popover?.animates = true
+        let statusFrame = statusButton.window?.convertToScreen(statusButton.convert(statusButton.bounds, to: nil))
+        let screenFrame = NSScreen.main?.visibleFrame ?? .zero
+
+        let anchorX: CGFloat
+        let anchorY: CGFloat
+        if let frame = statusFrame {
+            anchorX = frame.midX - kPopoverWidth / 2
+            anchorY = frame.minY - kPopoverHeight - 4
+        } else {
+            anchorX = screenFrame.maxX - kPopoverWidth - 16
+            anchorY = screenFrame.maxY - kPopoverHeight - 4
         }
 
-        guard let flutterVC = mainFlutterWindow?.contentViewController as? FlutterViewController else {
-            result(FlutterError(code: "NO_VIEW", message: "Flutter view not found", details: nil))
-            return
+        var x = max(screenFrame.minX + 8, anchorX)
+        var y = max(screenFrame.minY, anchorY)
+        if x + kPopoverWidth > screenFrame.maxX {
+            x = screenFrame.maxX - kPopoverWidth - 8
+        }
+        if y + kPopoverHeight > screenFrame.maxY {
+            y = statusFrame?.maxY ?? screenFrame.maxY - kPopoverHeight
+            if let frame = statusFrame {
+                y = frame.maxY + 4
+            }
         }
 
-        let flutterView = flutterVC.view
+        window.setFrame(NSRect(x: x, y: y, width: kPopoverWidth, height: kPopoverHeight), display: true)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
 
-        let popupVC = NSViewController()
-        let containerView = NSView(frame: NSRect(x: 0, y: 0, width: kPopoverWidth, height: kPopoverHeight))
-        popupVC.view = containerView
-
-        flutterView.frame = containerView.bounds
-        flutterView.autoresizingMask = [.width, .height]
-        containerView.addSubview(flutterView)
-
-        popover?.contentViewController = popupVC
-        popover?.contentSize = NSSize(width: kPopoverWidth, height: kPopoverHeight)
-
-        popoverObserver = NotificationCenter.default.addObserver(
-            forName: NSPopover.willCloseNotification,
-            object: popover,
-            queue: .main
-        ) { [weak self] _ in
-            self?.popoverWillClose()
-        }
-
-        popover?.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
+        popoverVisible = true
         result(nil)
     }
 
@@ -295,43 +301,9 @@ class AppDelegate: FlutterAppDelegate {
     }
 
     private func hidePopover() {
-        guard let popover = popover, popover.isShown else { return }
-
-        if let observer = popoverObserver {
-            NotificationCenter.default.removeObserver(observer)
-            popoverObserver = nil
-        }
-
-        popover.performClose(nil)
-        popover.contentViewController = nil
-
-        restoreFlutterViewToWindow()
-    }
-
-    private func popoverWillClose() {
-        if let observer = popoverObserver {
-            NotificationCenter.default.removeObserver(observer)
-            popoverObserver = nil
-        }
-
-        popover?.contentViewController = nil
-        restoreFlutterViewToWindow()
-
-        flutterChannel?.invokeMethod("onTrayEvent", arguments: "popoverDismissed")
-    }
-
-    private func restoreFlutterViewToWindow() {
-        guard let flutterVC = mainFlutterWindow?.contentViewController as? FlutterViewController else {
-            return
-        }
-
-        let flutterView = flutterVC.view
-        if flutterView.superview == nil {
-            let windowView = mainFlutterWindow?.contentView
-            flutterView.frame = windowView?.bounds ?? .zero
-            flutterView.autoresizingMask = [.width, .height]
-            windowView?.addSubview(flutterView)
-        }
+        guard popoverVisible else { return }
+        mainFlutterWindow?.orderOut(nil)
+        popoverVisible = false
     }
 
     // MARK: - App Support Dir

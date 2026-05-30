@@ -47,6 +47,8 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
       if (event == 'systemShutdown') {
         AppLogger.info('System shutdown signal received from native platform');
         _handleQuit();
+      } else if (event == AppConstants.trayEventPopoverDismissed) {
+        _popupVisible = false;
       }
     });
 
@@ -115,7 +117,6 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     await windowManager.setResizable(false);
     await windowManager.setMinimizable(false);
     await windowManager.setMaximizable(false);
-    await windowManager.setAlwaysOnTop(true);
     await windowManager.setSkipTaskbar(true);
     await windowManager.hide();
   }
