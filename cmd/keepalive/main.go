@@ -78,7 +78,18 @@ func main() {
 	}()
 
 	var model ui.Model
-	if cfg.Duration > 0 {
+	if cfg.BatteryThreshold > 0 {
+		status, err := platform.GetBatteryStatus()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "battery status unavailable: %v\n", err)
+			os.Exit(1)
+		}
+		if status.Percentage <= cfg.BatteryThreshold {
+			fmt.Fprintf(os.Stderr, "battery threshold must be below current battery percentage (current: %d%%, threshold: %d%%)\n", status.Percentage, cfg.BatteryThreshold)
+			os.Exit(1)
+		}
+		model = ui.InitialModelWithBattery(cfg.BatteryThreshold, status, cfg.SimulateActivity)
+	} else if cfg.Duration > 0 {
 		model = ui.InitialModelWithDuration(cfg.Duration, cfg.SimulateActivity)
 	} else {
 		model = ui.InitialModel()

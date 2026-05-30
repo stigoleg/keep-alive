@@ -19,6 +19,7 @@ func TestParseFlags(t *testing.T) {
 		name        string
 		args        []string
 		wantMinutes int
+		wantBattery int
 		wantErr     bool
 		wantVersion bool
 	}{
@@ -60,6 +61,41 @@ func TestParseFlags(t *testing.T) {
 			wantVersion: true,
 		},
 		{
+			name:        "valid battery flag",
+			args:        []string{"keepalive", "-b", "20"},
+			wantBattery: 20,
+		},
+		{
+			name:        "valid battery long flag",
+			args:        []string{"keepalive", "--battery", "30"},
+			wantBattery: 30,
+		},
+		{
+			name:        "battery overrides duration and clock",
+			args:        []string{"keepalive", "-b", "25", "-d", "2h", "-c", "22:00"},
+			wantBattery: 25,
+		},
+		{
+			name:    "battery rejects zero",
+			args:    []string{"keepalive", "-b", "0"},
+			wantErr: true,
+		},
+		{
+			name:    "battery rejects negative",
+			args:    []string{"keepalive", "-b", "-1"},
+			wantErr: true,
+		},
+		{
+			name:    "battery rejects above one hundred",
+			args:    []string{"keepalive", "-b", "101"},
+			wantErr: true,
+		},
+		{
+			name:    "battery rejects non integer",
+			args:    []string{"keepalive", "-b", "twenty"},
+			wantErr: true,
+		},
+		{
 			name:        "no flags",
 			args:        []string{"keepalive"},
 			wantMinutes: 0,
@@ -88,9 +124,12 @@ func TestParseFlags(t *testing.T) {
 			if tt.wantVersion {
 				return
 			}
+			if cfg.BatteryThreshold != tt.wantBattery {
+				t.Errorf("ParseFlags() BatteryThreshold = %d, want %d", cfg.BatteryThreshold, tt.wantBattery)
+			}
 
 			// Skip duration check for clock flag tests
-			if len(tt.args) > 1 && tt.args[1] != "-c" && cfg.Duration != tt.wantMinutes {
+			if tt.wantBattery == 0 && len(tt.args) > 1 && tt.args[1] != "-c" && cfg.Duration != tt.wantMinutes {
 				t.Errorf("ParseFlags() got duration %d, want %d", cfg.Duration, tt.wantMinutes)
 			}
 

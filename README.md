@@ -11,6 +11,7 @@ A lightweight, cross-platform utility to prevent your system from going to sleep
 ## Features
 
 - 🔄 Configurable keep-alive duration
+- 🔋 Battery threshold mode
 - 💻 Cross-platform support (macOS, Windows, Linux)
 - 💬 **Active Status Simulation** (optional, for Slack/Teams)
 - ⚡ Lightweight and efficient
@@ -83,6 +84,7 @@ keepalive
 Flags:
     -d, --duration string   Duration to keep system alive (e.g., "2h30m" or "150")
     -c, --clock string     Time to keep system alive until (e.g., "22:00" or "10:00PM")
+    -b, --battery int      Keep system awake until battery reaches this percentage
     -a, --active           Keep chat apps (Slack/Teams) active by simulating activity
     -l, --log              Enable logging to debug.log file
     -v, --version          Show version information
@@ -95,9 +97,13 @@ keepalive                    # Start with interactive TUI
 keepalive --active           # Start with active status simulation
 keepalive -d 2h30m --active  # Keep system/Slack awake for 2.5 hours
 keepalive -c 17:00           # Keep system awake until 5 PM
+keepalive -b 20              # Keep system awake until battery is 20% or lower
+keepalive -b 30 --active     # Keep system/Slack awake until battery is 30% or lower
 keepalive --log              # Enable logging to debug.log file
 keepalive -d 1h --log        # Keep system awake for 1 hour with logging enabled
 ```
+
+Battery mode takes priority over duration and clock mode. If `-b` is set, Keep-Alive ignores `-d` and `-c`. The threshold must be lower than the current battery percentage when the app starts.
 
 ## How It Works
 

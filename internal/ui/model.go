@@ -9,9 +9,12 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/timer"
 	"github.com/stigoleg/keep-alive/internal/keepalive"
+	"github.com/stigoleg/keep-alive/internal/platform"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+const batteryPollInterval = 30 * time.Second
 
 // state represents the different states of the TUI.
 type state int
@@ -41,6 +44,9 @@ type Model struct {
 	timer              timer.Model
 	progress           progress.Model
 	SimulateActivity   bool
+	BatteryThreshold   int
+	BatteryPercentage  int
+	BatteryError       string
 }
 
 // InitialModel returns the initial model for the TUI.
@@ -85,9 +91,31 @@ func InitialModelWithDuration(minutes int, simulateActivity bool) Model {
 	return m
 }
 
+// InitialModelWithBattery returns a model initialized in battery threshold mode.
+func InitialModelWithBattery(threshold int, status platform.BatteryStatus, simulateActivity bool) Model {
+	m := InitialModel()
+	m.SimulateActivity = simulateActivity
+	m.State = stateRunning
+	m.StartTime = time.Now()
+	m.BatteryThreshold = threshold
+	m.BatteryPercentage = status.Percentage
+
+	m.KeepAlive.SetSimulateActivity(simulateActivity)
+	if err := m.KeepAlive.StartIndefinite(); err != nil {
+		m.ErrorMessage = err.Error()
+		m.State = stateMenu
+		return m
+	}
+
+	return m
+}
+
 // Init implements tea.Model
 func (m Model) Init() tea.Cmd {
 	if m.State == stateRunning {
+		if m.BatteryThreshold > 0 {
+			return batteryPollCmd()
+		}
 		if m.Duration > 0 {
 			return tea.Batch(
 				m.timer.Init(),

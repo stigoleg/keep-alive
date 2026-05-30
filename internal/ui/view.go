@@ -133,6 +133,17 @@ func runningView(m Model) string {
 		b.WriteString("\n")
 	}
 
+	if m.BatteryThreshold > 0 {
+		b.WriteString(Current.Unselected.Render(fmt.Sprintf("Battery: %d%%", m.BatteryPercentage)))
+		b.WriteString("\n")
+		b.WriteString(Current.Unselected.Render(fmt.Sprintf("Stopping at or below: %d%%", m.BatteryThreshold)))
+		b.WriteString("\n")
+		if m.BatteryError != "" {
+			b.WriteString(Current.Error.Render("Battery status unavailable: " + m.BatteryError))
+			b.WriteString("\n")
+		}
+	}
+
 	// Show countdown and progress bar if this is a timed session
 	if m.Duration > time.Duration(0) {
 		remaining := m.TimeRemaining()
@@ -168,6 +179,7 @@ Usage:
 Flags:
   -d, --duration string   Duration to keep system alive (e.g., "2h30m" or "150")
   -c, --clock string     Time to keep system alive until (e.g., "22:00" or "10:00PM")
+  -b, --battery int      Keep system awake until battery reaches this percentage
   -a, --active           Simulate activity when a real input backend is available
   -l, --log              Enable logging to debug.log
   -v, --version          Show version information
@@ -180,6 +192,7 @@ Examples:
   keepalive -d 150            # Keep system awake for 150 minutes
   keepalive -c 22:00          # Keep system awake until 10:00 PM
   keepalive -c 10:00PM        # Keep system awake until 10:00 PM
+  keepalive -b 20             # Keep system awake until battery is 20% or lower
   keepalive --version         # Show version information
 
 Navigation:

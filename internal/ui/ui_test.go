@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stigoleg/keep-alive/internal/keepalive"
+	"github.com/stigoleg/keep-alive/internal/platform"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -152,6 +153,58 @@ func TestRunningView(t *testing.T) {
 	}
 }
 
+func TestRunningViewBatteryMode(t *testing.T) {
+	m := Model{
+		State:             stateRunning,
+		KeepAlive:         keepalive.NewKeeper(),
+		BatteryThreshold:  20,
+		BatteryPercentage: 42,
+	}
+	view := View(m)
+
+	if !strings.Contains(view, "Battery: 42%") {
+		t.Error("expected view to show current battery percentage")
+	}
+	if !strings.Contains(view, "Stopping at or below: 20%") {
+		t.Error("expected view to show battery threshold")
+	}
+}
+
+func TestBatteryStatusAtThresholdQuits(t *testing.T) {
+	m := Model{
+		State:            stateRunning,
+		KeepAlive:        keepalive.NewKeeper(),
+		BatteryThreshold: 20,
+	}
+
+	got, cmd := Update(batteryStatusMsg{status: platformBatteryStatus(20)}, m)
+	if got.State != stateMenu {
+		t.Fatalf("Update() state = %v, want %v", got.State, stateMenu)
+	}
+	if cmd == nil {
+		t.Fatal("Update() command is nil, want quit command")
+	}
+}
+
+func TestBatteryStatusAboveThresholdKeepsRunning(t *testing.T) {
+	m := Model{
+		State:            stateRunning,
+		KeepAlive:        keepalive.NewKeeper(),
+		BatteryThreshold: 20,
+	}
+
+	got, cmd := Update(batteryStatusMsg{status: platformBatteryStatus(21)}, m)
+	if got.State != stateRunning {
+		t.Fatalf("Update() state = %v, want %v", got.State, stateRunning)
+	}
+	if got.BatteryPercentage != 21 {
+		t.Fatalf("Update() BatteryPercentage = %d, want 21", got.BatteryPercentage)
+	}
+	if cmd == nil {
+		t.Fatal("Update() command is nil, want next battery poll command")
+	}
+}
+
 func TestErrorDisplay(t *testing.T) {
 	m := Model{
 		State:        stateMenu,
@@ -163,6 +216,10 @@ func TestErrorDisplay(t *testing.T) {
 	if !strings.Contains(view, "test error") {
 		t.Error("expected view to show error message")
 	}
+}
+
+func platformBatteryStatus(percentage int) platform.BatteryStatus {
+	return platform.BatteryStatus{Percentage: percentage, Available: true}
 }
 
 func TestTimeRemaining(t *testing.T) {

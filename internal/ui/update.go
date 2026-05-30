@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -12,12 +13,26 @@ import (
 	"github.com/stigoleg/keep-alive/internal/util"
 )
 
+type batteryStatusMsg struct {
+	status platform.BatteryStatus
+	err    error
+}
+
+var readBatteryStatus = platform.GetBatteryStatus
+
+func batteryPollCmd() tea.Cmd {
+	return tea.Tick(batteryPollInterval, func(time.Time) tea.Msg {
+		status, err := readBatteryStatus()
+		return batteryStatusMsg{status: status, err: err}
+	})
+}
+
 // Update handles messages and updates the model accordingly.
 func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
 	if m.ShowDependencyInfo {
 		// Still process timer messages so progress and timeout continue under the overlay
 		switch msg.(type) {
-		case timer.TickMsg, timer.TimeoutMsg:
+		case timer.TickMsg, timer.TimeoutMsg, batteryStatusMsg:
 			return handleRunningState(msg, m)
 		}
 		return handleDependencyInfoState(msg, m)
@@ -25,7 +40,7 @@ func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
 	if m.ShowHelp {
 		// Still process timer messages so progress and timeout continue under the overlay
 		switch msg.(type) {
-		case timer.TickMsg, timer.TimeoutMsg:
+		case timer.TickMsg, timer.TimeoutMsg, batteryStatusMsg:
 			return handleRunningState(msg, m)
 		}
 		return handleHelpState(msg, m)
@@ -249,11 +264,33 @@ func handleRunningState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case timer.TimeoutMsg:
 		return handleQuit(m)
+	case batteryStatusMsg:
+		return handleBatteryStatusMsg(msg, m)
 	}
 	if len(cmds) > 0 {
 		return m, tea.Batch(cmds...)
 	}
 	return m, nil
+}
+
+func handleBatteryStatusMsg(msg batteryStatusMsg, m Model) (Model, tea.Cmd) {
+	if m.BatteryThreshold == 0 {
+		return m, nil
+	}
+
+	if msg.err != nil {
+		m.BatteryError = msg.err.Error()
+		return m, batteryPollCmd()
+	}
+
+	m.BatteryPercentage = msg.status.Percentage
+	m.BatteryError = ""
+	if m.BatteryPercentage <= m.BatteryThreshold {
+		m.ErrorMessage = fmt.Sprintf("Battery reached %d%% threshold", m.BatteryThreshold)
+		return handleQuit(m)
+	}
+
+	return m, batteryPollCmd()
 }
 
 // handleRunningKeyMsg handles keyboard input in the running state
@@ -295,6 +332,9 @@ func cleanup(m Model) (Model, error) {
 	m.Duration = 0
 	m.StartTime = time.Time{}
 	m.ErrorMessage = ""
+	m.BatteryThreshold = 0
+	m.BatteryPercentage = 0
+	m.BatteryError = ""
 	// Reset timer and progress models
 	m.timer = timer.Model{}
 	m.progress = progress.New(progress.WithDefaultGradient(), progress.WithWidth(34))

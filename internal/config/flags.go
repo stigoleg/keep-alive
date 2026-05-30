@@ -16,6 +16,7 @@ import (
 type Config struct {
 	Duration         int
 	Clock            time.Time
+	BatteryThreshold int
 	SimulateActivity bool
 	EnableLogging    bool
 	ShowVersion      bool
@@ -67,6 +68,9 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 	clock := flags.String("clock", "", "Time to keep system alive until (e.g., \"22:00\" or \"10:00PM\")")
 	flags.StringVar(clock, "c", "", "Time to keep system alive until (e.g., \"22:00\" or \"10:00PM\")")
 
+	battery := flags.Int("battery", 0, "Battery percentage threshold to keep system alive until")
+	flags.IntVar(battery, "b", 0, "Battery percentage threshold to keep system alive until")
+
 	showVersion := flags.Bool("version", false, "Show version information")
 	flags.BoolVar(showVersion, "v", false, "Show version information")
 
@@ -85,6 +89,23 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 
 	if *showVersion {
 		return &Config{ShowVersion: true}, nil
+	}
+
+	batterySet := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "battery" || f.Name == "b" {
+			batterySet = true
+		}
+	})
+	if batterySet {
+		if *battery < 1 || *battery > 100 {
+			return nil, fmt.Errorf("battery threshold must be between 1 and 100")
+		}
+		return &Config{
+			BatteryThreshold: *battery,
+			SimulateActivity: *simulateActivity,
+			EnableLogging:    *enableLogging,
+		}, nil
 	}
 
 	var minutes int
