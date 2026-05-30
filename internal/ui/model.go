@@ -16,6 +16,8 @@ import (
 
 const batteryPollInterval = 30 * time.Second
 
+const defaultTerminalWidth = 80
+
 // state represents the different states of the TUI.
 type state int
 
@@ -47,6 +49,8 @@ type Model struct {
 	BatteryThreshold   int
 	BatteryPercentage  int
 	BatteryError       string
+	Width              int
+	Height             int
 }
 
 // InitialModel returns the initial model for the TUI.
@@ -64,44 +68,45 @@ func InitialModel() Model {
 		Help:               NewHelpModel(),
 		progress:           progress.New(progress.WithDefaultGradient(), progress.WithWidth(34)),
 		SimulateActivity:   false,
+		Width:              defaultTerminalWidth,
 	}
 }
 
 // InitialModelWithDuration returns a model initialized with a specific duration and starts running.
 func InitialModelWithDuration(minutes int, simulateActivity bool) Model {
-	m := InitialModel()
-	m.SimulateActivity = simulateActivity
-	m.textInput.SetValue(strconv.Itoa(minutes))
-	m.State = stateRunning
-	m.StartTime = time.Now()
-	m.Duration = time.Duration(minutes) * time.Minute
-	m.timer = timer.NewWithInterval(m.Duration, time.Second/10)
-
-	// Set simulate activity before starting
-	m.KeepAlive.SetSimulateActivity(simulateActivity)
-
-	// Start the keep-alive process
-	err := m.KeepAlive.StartTimed(time.Duration(minutes) * time.Minute)
-	if err != nil {
-		m.ErrorMessage = err.Error()
-		m.State = stateMenu
-		return m
-	}
-
-	return m
+	return InitialModelWithLimits(minutes, 0, platform.BatteryStatus{}, simulateActivity)
 }
 
 // InitialModelWithBattery returns a model initialized in battery threshold mode.
 func InitialModelWithBattery(threshold int, status platform.BatteryStatus, simulateActivity bool) Model {
+	return InitialModelWithLimits(0, threshold, status, simulateActivity)
+}
+
+// InitialModelWithLimits returns a model initialized with any active runtime limits.
+func InitialModelWithLimits(minutes int, threshold int, status platform.BatteryStatus, simulateActivity bool) Model {
 	m := InitialModel()
 	m.SimulateActivity = simulateActivity
+	if minutes > 0 {
+		m.textInput.SetValue(strconv.Itoa(minutes))
+		m.Duration = time.Duration(minutes) * time.Minute
+		m.timer = timer.NewWithInterval(m.Duration, time.Second/10)
+	}
+	if threshold > 0 {
+		m.BatteryThreshold = threshold
+		m.BatteryPercentage = status.Percentage
+	}
+
 	m.State = stateRunning
 	m.StartTime = time.Now()
-	m.BatteryThreshold = threshold
-	m.BatteryPercentage = status.Percentage
 
 	m.KeepAlive.SetSimulateActivity(simulateActivity)
-	if err := m.KeepAlive.StartIndefinite(); err != nil {
+	var err error
+	if m.Duration > 0 {
+		err = m.KeepAlive.StartTimed(m.Duration)
+	} else {
+		err = m.KeepAlive.StartIndefinite()
+	}
+	if err != nil {
 		m.ErrorMessage = err.Error()
 		m.State = stateMenu
 		return m
@@ -113,14 +118,15 @@ func InitialModelWithBattery(threshold int, status platform.BatteryStatus, simul
 // Init implements tea.Model
 func (m Model) Init() tea.Cmd {
 	if m.State == stateRunning {
-		if m.BatteryThreshold > 0 {
-			return batteryPollCmd()
-		}
+		var cmds []tea.Cmd
 		if m.Duration > 0 {
-			return tea.Batch(
-				m.timer.Init(),
-				m.progress.SetPercent(0),
-			)
+			cmds = append(cmds, m.timer.Init(), m.progress.SetPercent(0))
+		}
+		if m.BatteryThreshold > 0 {
+			cmds = append(cmds, batteryPollCmd())
+		}
+		if len(cmds) > 0 {
+			return tea.Batch(cmds...)
 		}
 	}
 	return nil

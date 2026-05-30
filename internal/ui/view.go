@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 )
 
 // View renders the current state of the model to a string.
@@ -25,6 +28,10 @@ func View(m Model) string {
 	}
 
 	return ""
+}
+
+func ErrorBanner(message string) string {
+	return "\n" + Current.Error.Render(strings.TrimSpace(message)) + "\n"
 }
 
 func menuView(m Model) string {
@@ -170,39 +177,141 @@ func runningView(m Model) string {
 
 // Help overlay with version and CLI usage
 func helpView(m Model) string {
-	help := `Keep-Alive — Help
-Version: %s
+	return renderHelpBox(m, helpContent(m))
+}
 
-Usage:
-  keepalive [flags]
+func helpContent(m Model) string {
+	width := helpContentWidth(m.Width)
 
-Flags:
-  -d, --duration string   Duration to keep system alive (e.g., "2h30m" or "150")
-  -c, --clock string     Time to keep system alive until (e.g., "22:00" or "10:00PM")
-  -b, --battery int      Keep system awake until battery reaches this percentage
-  -a, --active           Simulate activity when a real input backend is available
-  -l, --log              Enable logging to debug.log
-  -v, --version          Show version information
-  -h, --help            Show help message
+	var b strings.Builder
+	b.WriteString("Keep-Alive - Help\n")
+	b.WriteString(fmt.Sprintf("Version: %s\n\n", m.Version()))
+	b.WriteString("Usage:\n")
+	b.WriteString(wrapHelpLine("keepalive [flags]", width))
+	b.WriteString("\n\n")
 
-Examples:
-  keepalive                    # Start with interactive TUI
-  keepalive -d 2h30m          # Keep system awake for 2 hours and 30 minutes
-  keepalive --active          # Keep system awake and simulate activity when supported
-  keepalive -d 150            # Keep system awake for 150 minutes
-  keepalive -c 22:00          # Keep system awake until 10:00 PM
-  keepalive -c 10:00PM        # Keep system awake until 10:00 PM
-  keepalive -b 20             # Keep system awake until battery is 20% or lower
-  keepalive --version         # Show version information
+	if width < 52 {
+		b.WriteString("Flags:\n")
+		b.WriteString(renderDefinitionList(flagHelpRows(), width))
+		b.WriteString("\n\nExamples:\n")
+		b.WriteString(renderDefinitionList(exampleHelpRows(), width))
+	} else {
+		b.WriteString("Flags:\n")
+		b.WriteString(renderHelpTable(width, "FLAG", "DESCRIPTION", flagHelpRows()))
+		b.WriteString("\n\nExamples:\n")
+		b.WriteString(renderHelpTable(width, "COMMAND", "DESCRIPTION", exampleHelpRows()))
+	}
 
-Navigation:
-  ↑/k, ↓/j  : Navigate menu
-  Enter      : Select option
-  h/?        : Toggle help overlay
-  i          : Show dependency information (if available)
-  q/Esc      : Quit/Back
-`
-	return Current.Help.Render(fmt.Sprintf(help, m.Version()))
+	b.WriteString("\n\nNavigation:\n")
+	b.WriteString(renderDefinitionList(navigationHelpRows(), width))
+	return b.String()
+}
+
+func renderHelpBox(m Model, content string) string {
+	if m.Width > 0 && m.Width < 32 {
+		return lipgloss.NewStyle().Width(maxInt(10, m.Width-2)).Render(content)
+	}
+	if helpContentWidth(m.Width) >= 52 {
+		return Current.Help.Render(content)
+	}
+	return Current.Help.Copy().Width(helpContentWidth(m.Width)).Render(content)
+}
+
+func helpContentWidth(width int) int {
+	if width <= 0 {
+		width = defaultTerminalWidth
+	}
+	return maxInt(20, width-8)
+}
+
+func renderHelpTable(width int, leftHeader string, rightHeader string, rows [][]string) string {
+	headerStyle := lipgloss.NewStyle().
+		Foreground(defaultColors.Highlight).
+		Bold(true).
+		Align(lipgloss.Center)
+	cellStyle := lipgloss.NewStyle().Padding(0, 1)
+	oddRowStyle := cellStyle.Foreground(defaultColors.Subtle)
+	evenRowStyle := cellStyle.Foreground(lipgloss.Color("#FAFAFA"))
+
+	return table.New().
+		Border(lipgloss.NormalBorder()).
+		BorderStyle(lipgloss.NewStyle().Foreground(defaultColors.Highlight)).
+		Width(width).
+		Wrap(true).
+		Headers(leftHeader, rightHeader).
+		Rows(rows...).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			switch {
+			case row == table.HeaderRow:
+				return headerStyle
+			case row%2 == 0:
+				return evenRowStyle
+			default:
+				return oddRowStyle
+			}
+		}).
+		Render()
+}
+
+func renderDefinitionList(rows [][]string, width int) string {
+	var b strings.Builder
+	for i, row := range rows {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(wrapHelpLine(row[0], width))
+		if len(row) > 1 && row[1] != "" {
+			b.WriteString("\n")
+			b.WriteString(wrapHelpLine("  "+row[1], width))
+		}
+	}
+	return b.String()
+}
+
+func wrapHelpLine(value string, width int) string {
+	return lipgloss.NewStyle().Width(width).Render(value)
+}
+
+func flagHelpRows() [][]string {
+	return [][]string{
+		{"-d, --duration string", `Duration to keep system alive (e.g., "2h30m" or "150")`},
+		{"-c, --clock string", `Time to keep system alive until (e.g., "22:00" or "10:00PM")`},
+		{"-b, --battery int", "Keep system awake until battery reaches this percentage"},
+		{"-a, --active", "Simulate activity when a real input backend is available"},
+		{"-l, --log", "Enable logging to debug.log"},
+		{"-v, --version", "Show version information"},
+		{"-h, --help", "Show help message"},
+	}
+}
+
+func exampleHelpRows() [][]string {
+	return [][]string{
+		{"keepalive", "Start with interactive TUI"},
+		{"keepalive -d 2h30m", "Keep system awake for 2 hours and 30 minutes"},
+		{"keepalive --active", "Keep system awake and simulate activity when supported"},
+		{"keepalive -d 150", "Keep system awake for 150 minutes"},
+		{"keepalive -c 22:00", "Keep system awake until 10:00 PM"},
+		{"keepalive -b 20", "Keep system awake until battery is 20% or lower"},
+		{"keepalive -d 20 -b 65", "Exit when duration ends or battery reaches 65%"},
+		{"keepalive --version", "Show version information"},
+	}
+}
+
+func navigationHelpRows() [][]string {
+	return [][]string{
+		{"up/k, down/j", "Navigate menu"},
+		{"Enter", "Select option"},
+		{"h/?", "Toggle help overlay"},
+		{"i", "Show dependency information if available"},
+		{"q/Esc", "Quit or go back"},
+	}
+}
+
+func maxInt(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // dependencyInfoView displays detailed dependency information

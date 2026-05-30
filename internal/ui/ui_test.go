@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stigoleg/keep-alive/internal/keepalive"
 	"github.com/stigoleg/keep-alive/internal/platform"
 
@@ -170,6 +171,25 @@ func TestRunningViewBatteryMode(t *testing.T) {
 	}
 }
 
+func TestRunningViewCombinedLimits(t *testing.T) {
+	m := Model{
+		State:             stateRunning,
+		StartTime:         time.Now(),
+		Duration:          5 * time.Minute,
+		KeepAlive:         keepalive.NewKeeper(),
+		BatteryThreshold:  20,
+		BatteryPercentage: 42,
+	}
+	view := View(m)
+
+	if !strings.Contains(view, "remaining") {
+		t.Error("expected view to show remaining time")
+	}
+	if !strings.Contains(view, "Battery: 42%") {
+		t.Error("expected view to show battery percentage")
+	}
+}
+
 func TestBatteryStatusAtThresholdQuits(t *testing.T) {
 	m := Model{
 		State:            stateRunning,
@@ -202,6 +222,44 @@ func TestBatteryStatusAboveThresholdKeepsRunning(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("Update() command is nil, want next battery poll command")
+	}
+}
+
+func TestWindowSizeUpdatesModel(t *testing.T) {
+	m := InitialModel()
+	got, _ := Update(tea.WindowSizeMsg{Width: 44, Height: 12}, m)
+
+	if got.Width != 44 {
+		t.Fatalf("Update() Width = %d, want 44", got.Width)
+	}
+	if got.Height != 12 {
+		t.Fatalf("Update() Height = %d, want 12", got.Height)
+	}
+}
+
+func TestHelpViewFitsNarrowWidth(t *testing.T) {
+	m := InitialModel()
+	m.ShowHelp = true
+	m.Width = 40
+	view := View(m)
+
+	for _, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > m.Width {
+			t.Fatalf("help line width = %d, want <= %d: %q", got, m.Width, line)
+		}
+	}
+}
+
+func TestErrorBannerHasOwnLines(t *testing.T) {
+	banner := ErrorBanner("invalid flag")
+	if !strings.HasPrefix(banner, "\n") {
+		t.Fatalf("ErrorBanner() = %q, want leading newline", banner)
+	}
+	if !strings.HasSuffix(banner, "\n") {
+		t.Fatalf("ErrorBanner() = %q, want trailing newline", banner)
+	}
+	if !strings.Contains(banner, "invalid flag") {
+		t.Fatalf("ErrorBanner() = %q, want message", banner)
 	}
 }
 

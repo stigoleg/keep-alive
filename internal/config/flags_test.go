@@ -71,9 +71,21 @@ func TestParseFlags(t *testing.T) {
 			wantBattery: 30,
 		},
 		{
-			name:        "battery overrides duration and clock",
-			args:        []string{"keepalive", "-b", "25", "-d", "2h", "-c", "22:00"},
-			wantBattery: 25,
+			name:        "battery combines with duration",
+			args:        []string{"keepalive", "-d", "20", "-b", "65"},
+			wantMinutes: 20,
+			wantBattery: 65,
+		},
+		{
+			name:        "battery combines with clock",
+			args:        []string{"keepalive", "-c", "12:00", "-b", "65"},
+			wantMinutes: 120,
+			wantBattery: 65,
+		},
+		{
+			name:    "duration and clock still conflict with battery",
+			args:    []string{"keepalive", "-b", "25", "-d", "2h", "-c", "22:00"},
+			wantErr: true,
 		},
 		{
 			name:    "battery rejects zero",
@@ -128,8 +140,7 @@ func TestParseFlags(t *testing.T) {
 				t.Errorf("ParseFlags() BatteryThreshold = %d, want %d", cfg.BatteryThreshold, tt.wantBattery)
 			}
 
-			// Skip duration check for clock flag tests
-			if tt.wantBattery == 0 && len(tt.args) > 1 && tt.args[1] != "-c" && cfg.Duration != tt.wantMinutes {
+			if tt.wantMinutes != 0 && cfg.Duration != tt.wantMinutes {
 				t.Errorf("ParseFlags() got duration %d, want %d", cfg.Duration, tt.wantMinutes)
 			}
 

@@ -38,7 +38,7 @@ func main() {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprint(os.Stderr, err)
 		os.Exit(1)
 	}
 	if cfg.ShowVersion {
@@ -78,19 +78,22 @@ func main() {
 	}()
 
 	var model ui.Model
+	var batteryStatus platform.BatteryStatus
 	if cfg.BatteryThreshold > 0 {
 		status, err := platform.GetBatteryStatus()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "battery status unavailable: %v\n", err)
+			fmt.Fprint(os.Stderr, ui.ErrorBanner(fmt.Sprintf("battery status unavailable: %v", err)))
 			os.Exit(1)
 		}
 		if status.Percentage <= cfg.BatteryThreshold {
-			fmt.Fprintf(os.Stderr, "battery threshold must be below current battery percentage (current: %d%%, threshold: %d%%)\n", status.Percentage, cfg.BatteryThreshold)
+			fmt.Fprint(os.Stderr, ui.ErrorBanner(fmt.Sprintf("battery threshold must be below current battery percentage (current: %d%%, threshold: %d%%)", status.Percentage, cfg.BatteryThreshold)))
 			os.Exit(1)
 		}
-		model = ui.InitialModelWithBattery(cfg.BatteryThreshold, status, cfg.SimulateActivity)
-	} else if cfg.Duration > 0 {
-		model = ui.InitialModelWithDuration(cfg.Duration, cfg.SimulateActivity)
+		batteryStatus = status
+	}
+
+	if cfg.Duration > 0 || cfg.BatteryThreshold > 0 {
+		model = ui.InitialModelWithLimits(cfg.Duration, cfg.BatteryThreshold, batteryStatus, cfg.SimulateActivity)
 	} else {
 		model = ui.InitialModel()
 		model.SimulateActivity = cfg.SimulateActivity

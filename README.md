@@ -99,11 +99,13 @@ keepalive -d 2h30m --active  # Keep system/Slack awake for 2.5 hours
 keepalive -c 17:00           # Keep system awake until 5 PM
 keepalive -b 20              # Keep system awake until battery is 20% or lower
 keepalive -b 30 --active     # Keep system/Slack awake until battery is 30% or lower
+keepalive -d 20 -b 65        # Exit when 20 minutes pass or battery reaches 65%
+keepalive -c 17:00 -b 65     # Exit at 5 PM or when battery reaches 65%
 keepalive --log              # Enable logging to debug.log file
 keepalive -d 1h --log        # Keep system awake for 1 hour with logging enabled
 ```
 
-Battery mode takes priority over duration and clock mode. If `-b` is set, Keep-Alive ignores `-d` and `-c`. The threshold must be lower than the current battery percentage when the app starts.
+Battery mode can be combined with duration or clock mode. Keep-Alive exits when the first configured limit is reached. The battery threshold must be lower than the current battery percentage when the app starts.
 
 ## How It Works
 

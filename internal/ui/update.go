@@ -29,6 +29,13 @@ func batteryPollCmd() tea.Cmd {
 
 // Update handles messages and updates the model accordingly.
 func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
+	if sizeMsg, ok := msg.(tea.WindowSizeMsg); ok {
+		m.Width = sizeMsg.Width
+		m.Height = sizeMsg.Height
+		m.Help.Width = sizeMsg.Width
+		return m, nil
+	}
+
 	if m.ShowDependencyInfo {
 		// Still process timer messages so progress and timeout continue under the overlay
 		switch msg.(type) {
