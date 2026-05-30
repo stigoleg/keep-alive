@@ -5,12 +5,16 @@ import ServiceManagement
 private let kPlatformChannelName = "com.stigoleg.keepAliveApp/platform"
 private let kLaunchAgentLabel = "com.stigoleg.keepalive"
 private let kTrayIconSize: CGFloat = 18.0
+private let kPopoverWidth: CGFloat = 300.0
+private let kPopoverHeight: CGFloat = 460.0
 
 @main
 class AppDelegate: FlutterAppDelegate {
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
+    private var popoverObserver: NSObjectProtocol?
     private var contextMenuResult: FlutterResult?
+    private weak var flutterChannel: FlutterMethodChannel?
 
     override func applicationDidFinishLaunching(_ aNotification: Notification) {
         guard let controller = mainFlutterWindow?.contentViewController as? FlutterViewController else {
@@ -21,6 +25,7 @@ class AppDelegate: FlutterAppDelegate {
             name: kPlatformChannelName,
             binaryMessenger: controller.engine.binaryMessenger
         )
+        flutterChannel = channel
 
         channel.setMethodCallHandler { [weak self] call, result in
             self?.handleMethodCall(call, result: result)
@@ -32,18 +37,21 @@ class AppDelegate: FlutterAppDelegate {
     }
 
     override func applicationWillTerminate(_ notification: Notification) {
-        if let controller = mainFlutterWindow?.contentViewController as? FlutterViewController {
-            let channel = FlutterMethodChannel(
-                name: kPlatformChannelName,
-                binaryMessenger: controller.engine.binaryMessenger
-            )
+        hidePopover()
+        if let channel = flutterChannel {
             channel.invokeMethod("systemShutdown", arguments: nil)
+        }
+        if let observer = popoverObserver {
+            NotificationCenter.default.removeObserver(observer)
+            popoverObserver = nil
         }
     }
 
     override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         return true
     }
+
+    // MARK: - Method Channel Handler
 
     private func handleMethodCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
@@ -60,7 +68,7 @@ class AppDelegate: FlutterAppDelegate {
         case "showContextMenu":
             handleShowContextMenu(call, result: result)
         case "showPopover":
-            handleShowPopover(call, result: result)
+            handleShowPopover(result: result)
         case "hidePopover":
             handleHidePopover(result: result)
         case "getAppSupportDir":
@@ -73,7 +81,8 @@ class AppDelegate: FlutterAppDelegate {
     // MARK: - Auto Start
 
     private func handleSetAutoStart(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let enabled = (call.arguments as? [String: Any])?["enabled"] as? Bool else {
+        guard let args = call.arguments as? [String: Any],
+              let enabled = args["enabled"] as? Bool else {
             result(FlutterError(code: "INVALID_ARG", message: "Missing 'enabled' argument", details: nil))
             return
         }
@@ -87,7 +96,7 @@ class AppDelegate: FlutterAppDelegate {
                 }
                 result(nil)
             } catch {
-                self.setLaunchAgent(enabled: enabled)
+                setLaunchAgent(enabled: enabled)
                 result(nil)
             }
         } else {
@@ -141,19 +150,35 @@ class AppDelegate: FlutterAppDelegate {
         }
     }
 
+    // MARK: - Asset Path Resolution
+
+    private func resolveAssetPath(_ assetKey: String) -> String? {
+        let lookupKey = FlutterDartProject.lookupKey(forAsset: assetKey)
+        return Bundle.main.path(forResource: lookupKey, ofType: nil)
+    }
+
     // MARK: - Tray Icon
 
     private func handleSetTrayIcon(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let iconPath = (call.arguments as? [String: Any])?["iconPath"] as? String else {
+        guard let args = call.arguments as? [String: Any],
+              let iconPath = args["iconPath"] as? String else {
             result(FlutterError(code: "INVALID_ARG", message: "Missing 'iconPath' argument", details: nil))
+            return
+        }
+
+        guard let resolvedPath = resolveAssetPath(iconPath) else {
+            result(FlutterError(code: "ASSET_NOT_FOUND", message: "Could not resolve asset: \(iconPath)", details: nil))
             return
         }
 
         if statusItem == nil {
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+            statusItem?.button?.target = self
+            statusItem?.button?.action = #selector(statusBarButtonClicked(_:))
+            statusItem?.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
-        if let image = NSImage(contentsOfFile: iconPath) {
+        if let image = NSImage(contentsOfFile: resolvedPath) {
             image.isTemplate = true
             image.size = NSSize(width: kTrayIconSize, height: kTrayIconSize)
             statusItem?.button?.image = image
@@ -164,7 +189,8 @@ class AppDelegate: FlutterAppDelegate {
     }
 
     private func handleSetTrayTooltip(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let tooltip = (call.arguments as? [String: Any])?["tooltip"] as? String else {
+        guard let args = call.arguments as? [String: Any],
+              let tooltip = args["tooltip"] as? String else {
             result(FlutterError(code: "INVALID_ARG", message: "Missing 'tooltip' argument", details: nil))
             return
         }
@@ -172,10 +198,22 @@ class AppDelegate: FlutterAppDelegate {
         result(nil)
     }
 
+    @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
+        guard let event = NSApp.currentEvent else { return }
+
+        if event.type == .rightMouseUp {
+            hidePopover()
+            flutterChannel?.invokeMethod("onTrayEvent", arguments: "rightClick")
+        } else {
+            flutterChannel?.invokeMethod("onTrayEvent", arguments: "leftClick")
+        }
+    }
+
     // MARK: - Context Menu
 
     private func handleShowContextMenu(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let items = (call.arguments as? [String: Any])?["items"] as? [String] else {
+        guard let args = call.arguments as? [String: Any],
+              let items = args["items"] as? [String] else {
             result(FlutterError(code: "INVALID_ARG", message: "Missing 'items' argument", details: nil))
             return
         }
@@ -209,14 +247,7 @@ class AppDelegate: FlutterAppDelegate {
 
     // MARK: - Popover
 
-    private func handleShowPopover(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let x = args["x"] as? Double,
-              let y = args["y"] as? Double else {
-            result(FlutterError(code: "INVALID_ARG", message: "Missing position arguments", details: nil))
-            return
-        }
-
+    private func handleShowPopover(result: @escaping FlutterResult) {
         guard let statusButton = statusItem?.button else {
             result(FlutterError(code: "NO_TRAY", message: "Tray icon not initialized", details: nil))
             return
@@ -228,13 +259,30 @@ class AppDelegate: FlutterAppDelegate {
             popover?.animates = true
         }
 
-        if let flutterView = mainFlutterWindow?.contentViewController?.view {
-            let popupVC = NSViewController()
-            popupVC.view = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 400))
-            flutterView.frame = popupVC.view.bounds
-            flutterView.autoresizingMask = [.width, .height]
-            popupVC.view.addSubview(flutterView)
-            popover?.contentViewController = popupVC
+        guard let flutterVC = mainFlutterWindow?.contentViewController as? FlutterViewController else {
+            result(FlutterError(code: "NO_VIEW", message: "Flutter view not found", details: nil))
+            return
+        }
+
+        let flutterView = flutterVC.view
+
+        let popupVC = NSViewController()
+        let containerView = NSView(frame: NSRect(x: 0, y: 0, width: kPopoverWidth, height: kPopoverHeight))
+        popupVC.view = containerView
+
+        flutterView.frame = containerView.bounds
+        flutterView.autoresizingMask = [.width, .height]
+        containerView.addSubview(flutterView)
+
+        popover?.contentViewController = popupVC
+        popover?.contentSize = NSSize(width: kPopoverWidth, height: kPopoverHeight)
+
+        popoverObserver = NotificationCenter.default.addObserver(
+            forName: NSPopover.willCloseNotification,
+            object: popover,
+            queue: .main
+        ) { [weak self] _ in
+            self?.popoverWillClose()
         }
 
         popover?.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
@@ -242,8 +290,48 @@ class AppDelegate: FlutterAppDelegate {
     }
 
     private func handleHidePopover(result: @escaping FlutterResult) {
-        popover?.performClose(nil)
+        hidePopover()
         result(nil)
+    }
+
+    private func hidePopover() {
+        guard let popover = popover, popover.isShown else { return }
+
+        if let observer = popoverObserver {
+            NotificationCenter.default.removeObserver(observer)
+            popoverObserver = nil
+        }
+
+        popover.performClose(nil)
+        popover.contentViewController = nil
+
+        restoreFlutterViewToWindow()
+    }
+
+    private func popoverWillClose() {
+        if let observer = popoverObserver {
+            NotificationCenter.default.removeObserver(observer)
+            popoverObserver = nil
+        }
+
+        popover?.contentViewController = nil
+        restoreFlutterViewToWindow()
+
+        flutterChannel?.invokeMethod("onTrayEvent", arguments: "popoverDismissed")
+    }
+
+    private func restoreFlutterViewToWindow() {
+        guard let flutterVC = mainFlutterWindow?.contentViewController as? FlutterViewController else {
+            return
+        }
+
+        let flutterView = flutterVC.view
+        if flutterView.superview == nil {
+            let windowView = mainFlutterWindow?.contentView
+            flutterView.frame = windowView?.bounds ?? .zero
+            flutterView.autoresizingMask = [.width, .height]
+            windowView?.addSubview(flutterView)
+        }
     }
 
     // MARK: - App Support Dir

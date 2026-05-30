@@ -12,15 +12,7 @@ void main(List<String> args) async {
 
   AppLogger.info('KeepAlive app starting (${AppConstants.appVersion})');
 
-  final startHidden = args.contains('--hidden');
-
   await windowManager.ensureInitialized();
-
-  if (startHidden) {
-    await windowManager.hide();
-  }
-
-  await windowManager.setTitle(AppConstants.appName);
 
   AppLogger.info('Window manager initialized, launching app');
 

@@ -16,7 +16,6 @@ class FlutterWindow : public Win32Window {
   explicit FlutterWindow(const flutter::DartProject& project);
   virtual ~FlutterWindow();
 
- protected:
   bool OnCreate() override;
   void OnDestroy() override;
   LRESULT MessageHandler(HWND window, UINT const message, WPARAM const wparam,
@@ -38,12 +37,24 @@ class FlutterWindow : public Win32Window {
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
   void HandleShowContextMenu(const flutter::EncodableMap& args,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
+  void HandleShowPopover(
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
+  void HandleHidePopover(
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
   void HandleGetAppSupportDir(
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
 
   void CreateTrayIcon();
   void RemoveTrayIcon();
   void UpdateTrayIcon();
+
+  std::wstring ResolveAssetPath(const std::string& assetKey);
+
+  bool GetTrayIconRect(RECT* outRect);
+  void PositionPopupNearTray();
+  void StyleAsPopup();
+  void StyleAsHidden();
+  void NotifyDartTrayEvent(const std::string& event);
 
   flutter::DartProject project_;
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
@@ -53,6 +64,12 @@ class FlutterWindow : public Win32Window {
   static constexpr UINT TRAY_ICON_ID = 1;
   NOTIFYICONDATAW nid_{};
   bool tray_created_ = false;
+  bool popover_visible_ = false;
+  LONG_PTR original_style_ = 0;
+  LONG_PTR original_ex_style_ = 0;
+
+  static constexpr int kPopupWidth = 320;
+  static constexpr int kPopupHeight = 500;
 
   static constexpr const wchar_t kAutoStartKeyPath[] =
       L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";

@@ -1,12 +1,14 @@
-import 'package:flutter/services.dart';
-import 'package:system_tray/system_tray.dart';
+import 'dart:async';
+import 'dart:ui' show VoidCallback;
 
 import '../../core/constants.dart';
 import '../../core/logger.dart';
+import '../../platform/platform_interface.dart';
 import 'tray_menu.dart';
 
 class TrayManager {
-  final SystemTray _systemTray = SystemTray();
+  final KeepAlivePlatform _platform = KeepAlivePlatform.instance;
+  StreamSubscription<String>? _eventSubscription;
   bool _initialized = false;
   bool _isActive = false;
   bool _isError = false;
@@ -25,17 +27,13 @@ class TrayManager {
     this.onQuit = onQuit;
 
     try {
-      await _systemTray.initSystemTray(
-        title: AppConstants.appName,
-        iconPath: _idleIcon,
-        toolTip: _idleTooltip,
-      );
+      await _platform.setTrayIcon(_idleIcon);
+      await _platform.setTrayTooltip(_idleTooltip);
 
-      _systemTray.registerSystemTrayEventHandler(_handleSystemTrayEvent);
+      _eventSubscription = _platform.trayEventStream.listen(_handleTrayEvent);
 
-      await _buildContextMenu();
       _initialized = true;
-      AppLogger.info('System tray initialized');
+      AppLogger.info('System tray initialized via platform channel');
     } catch (e) {
       AppLogger.error('Failed to initialize system tray', e);
       rethrow;
@@ -49,8 +47,8 @@ class TrayManager {
     final icon = _resolveIcon();
     final tooltip = _resolveTooltip();
 
-    _systemTray.setImage(icon);
-    _systemTray.setToolTip(tooltip);
+    _platform.setTrayIcon(icon);
+    _platform.setTrayTooltip(tooltip);
   }
 
   void setErrorState(bool isError) {
@@ -61,25 +59,28 @@ class TrayManager {
     final tooltip = _resolveTooltip();
 
     try {
-      _systemTray.setImage(icon);
-      _systemTray.setToolTip(tooltip);
-    } on PlatformException catch (e) {
+      _platform.setTrayIcon(icon);
+      _platform.setTrayTooltip(tooltip);
+    } catch (e) {
       AppLogger.warning('Failed to set error tray icon, falling back: $e');
-      _systemTray.setImage(_idleIcon);
-      _systemTray.setToolTip(tooltip);
+      _platform.setTrayIcon(_idleIcon);
+      _platform.setTrayTooltip(tooltip);
     }
   }
 
   void updateTooltip(String text) {
     if (!_initialized) return;
-    _systemTray.setToolTip(text);
+    _platform.setTrayTooltip(text);
   }
 
-  void dispose() {}
+  void dispose() {
+    _eventSubscription?.cancel();
+    _eventSubscription = null;
+  }
 
-  static const String _idleIcon = 'assets/icons/tray_icon.png';
-  static const String _activeIcon = 'assets/icons/tray_icon_active.png';
-  static const String _errorIcon = 'assets/icons/tray_icon_error.png';
+  static const String _idleIcon = AppConstants.trayIconIdle;
+  static const String _activeIcon = AppConstants.trayIconActive;
+  static const String _errorIcon = AppConstants.trayIconError;
   static const String _idleTooltip = 'KeepAlive \u2014 Idle';
   static const String _activeTooltip = 'KeepAlive \u2014 System Active';
   static const String _errorTooltip = 'KeepAlive \u2014 Error';
@@ -96,24 +97,32 @@ class TrayManager {
     return _idleTooltip;
   }
 
-  Future<void> _buildContextMenu() async {
-    try {
-      await _systemTray.setContextMenu(
-        TrayMenu.buildContextMenu(
-          onShow: () => onTogglePopup?.call(),
-          onSettings: () => onOpenSettings?.call(),
-          onQuit: () => onQuit?.call(),
-        ),
-      );
-    } on PlatformException catch (e) {
-      AppLogger.error('Failed to set context menu', e);
+  Future<void> _handleTrayEvent(String eventName) async {
+    AppLogger.debug('System tray event: $eventName');
+
+    switch (eventName) {
+      case AppConstants.trayEventLeftClick:
+        onTogglePopup?.call();
+      case AppConstants.trayEventRightClick:
+        final selectedIndex = await _platform.showContextMenu(
+          TrayMenu.menuLabels(),
+        );
+        if (selectedIndex != null) {
+          _handleContextMenuSelection(selectedIndex);
+        }
+      case AppConstants.trayEventPopoverDismissed:
+        onTogglePopup?.call();
     }
   }
 
-  void _handleSystemTrayEvent(String eventName) {
-    AppLogger.debug('System tray event: $eventName');
-    if (eventName == 'leftMouseUp' || eventName == 'LeftMouseUp') {
-      onTogglePopup?.call();
+  void _handleContextMenuSelection(int index) {
+    switch (index) {
+      case 0:
+        onTogglePopup?.call();
+      case 1:
+        onOpenSettings?.call();
+      case 2:
+        onQuit?.call();
     }
   }
 }

@@ -1,18 +1,17 @@
-import 'dart:async' show unawaited;
+import 'dart:async';
 import 'dart:io' show exit;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'core/constants.dart';
 import 'core/logger.dart';
 import 'models/cli_process_state.dart';
+import 'platform/platform_interface.dart';
 import 'providers/cli_binary_provider.dart';
 import 'providers/process_provider.dart';
 import 'providers/settings_provider.dart';
-import 'ui/theme/app_theme.dart';
 import 'ui/theme/linux_theme.dart';
 import 'ui/theme/macos_theme.dart';
 import 'ui/theme/windows_theme.dart';
@@ -33,7 +32,8 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     with WidgetsBindingObserver, WindowListener {
   final TrayManager _trayManager = TrayManager();
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
-  late final MethodChannel _platformChannel;
+  final KeepAlivePlatform _platform = KeepAlivePlatform.instance;
+  StreamSubscription<String>? _shutdownSubscription;
   bool _popupVisible = false;
   bool _quitting = false;
 
@@ -43,23 +43,29 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     WidgetsBinding.instance.addObserver(this);
     windowManager.addListener(this);
 
-    _platformChannel = const MethodChannel(AppConstants.platformChannelName);
-    _platformChannel.setMethodCallHandler(_handlePlatformMethodCall);
+    _shutdownSubscription = _platform.trayEventStream.listen((event) {
+      if (event == 'systemShutdown') {
+        AppLogger.info('System shutdown signal received from native platform');
+        _handleQuit();
+      }
+    });
 
     _initApp();
   }
 
   @override
   void dispose() {
+    _shutdownSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     windowManager.removeListener(this);
-    _platformChannel.setMethodCallHandler(null);
     _trayManager.dispose();
     super.dispose();
   }
 
   Future<void> _initApp() async {
     AppLogger.info('Initializing app lifecycle');
+
+    await _configureMainWindow();
 
     try {
       await ref.read(appSettingsProvider.notifier).restoreFromDisk();
@@ -103,22 +109,39 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     AppLogger.info('App initialization complete');
   }
 
-  void _togglePopup() {
+  Future<void> _configureMainWindow() async {
+    await windowManager.setTitle(AppConstants.appName);
+    await windowManager.setMinimumSize(const Size(1, 1));
+    await windowManager.setResizable(false);
+    await windowManager.setMinimizable(false);
+    await windowManager.setMaximizable(false);
+    await windowManager.setAlwaysOnTop(true);
+    await windowManager.setSkipTaskbar(true);
+    await windowManager.hide();
+  }
+
+  Future<void> _togglePopup() async {
     if (_quitting) return;
-    _popupVisible = !_popupVisible;
-    _updateWindowVisibility();
+
+    if (_popupVisible) {
+      _popupVisible = false;
+      await _platform.hidePopover();
+    } else {
+      _popupVisible = true;
+      await _platform.showPopover();
+    }
   }
 
   Future<void> _openSettings() async {
     if (_quitting) return;
-    final needsShow = !_popupVisible;
-    if (needsShow) {
+
+    if (!_popupVisible) {
       _popupVisible = true;
-      await _updateWindowVisibility();
+      await _platform.showPopover();
     }
+
     final navigator = _navigatorKey.currentState;
     if (navigator != null && mounted) {
-      // ignore: use_build_context_synchronously
       showDialog(
         context: navigator.context,
         barrierDismissible: true,
@@ -129,38 +152,12 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     }
   }
 
-  Future<void> _updateWindowVisibility() async {
-    if (_popupVisible) {
-      await _configurePopupWindow();
-    } else {
-      await windowManager.hide();
-    }
-  }
-
-  Future<void> _configurePopupWindow() async {
-    final width = _popupWidth;
-    await windowManager.setTitle(AppConstants.appName);
-    await windowManager.setSize(Size(width, 480));
-    await windowManager.setResizable(false);
-    await windowManager.setMinimizable(false);
-    await windowManager.setMaximizable(false);
-    await windowManager.setAlwaysOnTop(true);
-    await windowManager.setSkipTaskbar(true);
-    await windowManager.center();
-    await windowManager.show();
-    await windowManager.focus();
-  }
-
-  double get _popupWidth {
-    if (PlatformUtils.isMacOS) return AppTheme.popupWidthMacOS;
-    if (PlatformUtils.isWindows) return AppTheme.popupWidthWindows;
-    return AppTheme.popupWidthLinux;
-  }
-
   Future<void> _handleQuit() async {
     if (_quitting) return;
     _quitting = true;
     AppLogger.info('Quitting KeepAlive — saving state and cleaning up');
+
+    await _platform.hidePopover();
 
     try {
       await ref.read(appSettingsProvider.notifier).saveToDisk();
@@ -187,27 +184,12 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     exit(0);
   }
 
-  Future<dynamic> _handlePlatformMethodCall(MethodCall call) async {
-    if (call.method == 'systemShutdown') {
-      AppLogger.info('System shutdown signal received from native platform');
-      await _handleQuit();
-    }
-  }
-
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     AppLogger.debug('App lifecycle state changed: $state');
     if (state == AppLifecycleState.detached) {
       AppLogger.info('App detaching, triggering cleanup');
       _handleQuit();
-    }
-  }
-
-  @override
-  void onWindowBlur() {
-    if (_popupVisible && !_quitting) {
-      _popupVisible = false;
-      unawaited(windowManager.hide());
     }
   }
 

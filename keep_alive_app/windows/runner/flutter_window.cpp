@@ -3,6 +3,8 @@
 #include <optional>
 #include <shlobj.h>
 #include <shellapi.h>
+#include <dwmapi.h>
+#include <uxtheme.h>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -51,7 +53,7 @@ bool FlutterWindow::OnCreate() {
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
+    this->StyleAsHidden();
   });
 
   flutter_controller_->ForceRedraw();
@@ -100,8 +102,30 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       break;
 
     case WM_TRAY_ICON:
-      if (LOWORD(lparam) == WM_RBUTTONUP || LOWORD(lparam) == WM_CONTEXTMENU) {
-        // Defer to MethodChannel; the Dart side will call showContextMenu.
+      if (LOWORD(lparam) == WM_LBUTTONUP || LOWORD(lparam) == NIN_SELECT) {
+        NotifyDartTrayEvent("leftClick");
+      } else if (LOWORD(lparam) == WM_RBUTTONUP || LOWORD(lparam) == WM_CONTEXTMENU) {
+        NotifyDartTrayEvent("rightClick");
+      }
+      break;
+
+    case WM_ACTIVATE:
+      if (LOWORD(wparam) == WA_INACTIVE && popover_visible_) {
+        HandleHidePopover(nullptr);
+        NotifyDartTrayEvent("popoverDismissed");
+      }
+      return 0;
+
+    case WM_NCCALCSIZE:
+      if (popover_visible_) {
+        return 0;
+      }
+      break;
+
+    case WM_KEYDOWN:
+      if (wparam == VK_ESCAPE && popover_visible_) {
+        HandleHidePopover(nullptr);
+        NotifyDartTrayEvent("popoverDismissed");
       }
       break;
   }
@@ -140,8 +164,10 @@ void FlutterWindow::HandleMethodCall(
     HandleSetTrayTooltip(args ? *args : flutter::EncodableMap{}, result);
   } else if (method == "showContextMenu") {
     HandleShowContextMenu(args ? *args : flutter::EncodableMap{}, result);
-  } else if (method == "showPopover" || method == "hidePopover") {
-    result->Success();
+  } else if (method == "showPopover") {
+    HandleShowPopover(result);
+  } else if (method == "hidePopover") {
+    HandleHidePopover(result);
   } else if (method == "getAppSupportDir") {
     HandleGetAppSupportDir(result);
   } else {
@@ -196,6 +222,21 @@ void FlutterWindow::HandleIsAutoStartEnabled(
   result->Success(flutter::EncodableValue(enabled));
 }
 
+std::wstring FlutterWindow::ResolveAssetPath(const std::string& assetKey) {
+  wchar_t exePath[MAX_PATH];
+  GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+  std::wstring exeDir(exePath);
+  size_t lastSep = exeDir.find_last_of(L"\\/");
+  if (lastSep != std::wstring::npos) {
+    exeDir = exeDir.substr(0, lastSep);
+  }
+  std::wstring assetPath = exeDir + L"\\data\\flutter_assets\\" + Utf8ToWide(assetKey);
+  for (auto& c : assetPath) {
+    if (c == L'/') c = L'\\';
+  }
+  return assetPath;
+}
+
 void FlutterWindow::HandleSetTrayIcon(
     const flutter::EncodableMap& args,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result) {
@@ -205,12 +246,12 @@ void FlutterWindow::HandleSetTrayIcon(
     return;
   }
   auto iconPathUtf8 = std::get<std::string>(it->second);
-  std::wstring iconPath = Utf8ToWide(iconPathUtf8);
+  std::wstring resolvedPath = ResolveAssetPath(iconPathUtf8);
 
   HICON hIcon = nullptr;
-  if (!iconPath.empty()) {
+  if (!resolvedPath.empty()) {
     hIcon = reinterpret_cast<HICON>(LoadImageW(
-        nullptr, iconPath.c_str(), IMAGE_ICON,
+        nullptr, resolvedPath.c_str(), IMAGE_ICON,
         GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
         LR_LOADFROMFILE));
   }
@@ -220,6 +261,9 @@ void FlutterWindow::HandleSetTrayIcon(
   }
 
   if (hIcon) {
+    if (nid_.hIcon) {
+      DestroyIcon(nid_.hIcon);
+    }
     nid_.hIcon = hIcon;
     nid_.uFlags |= NIF_ICON;
     Shell_NotifyIconW(NIM_MODIFY, &nid_);
@@ -284,6 +328,38 @@ void FlutterWindow::HandleShowContextMenu(
   }
 }
 
+void FlutterWindow::HandleShowPopover(
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result) {
+  if (popover_visible_) {
+    result->Success();
+    return;
+  }
+
+  StyleAsPopup();
+  PositionPopupNearTray();
+
+  ShowWindow(window_handle_, SW_SHOWNOACTIVATE);
+  SetWindowPos(window_handle_, HWND_TOPMOST, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+  popover_visible_ = true;
+  result->Success();
+}
+
+void FlutterWindow::HandleHidePopover(
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result) {
+  if (!popover_visible_) {
+    if (result) result->Success();
+    return;
+  }
+
+  ShowWindow(window_handle_, SW_HIDE);
+  StyleAsHidden();
+  popover_visible_ = false;
+
+  if (result) result->Success();
+}
+
 void FlutterWindow::HandleGetAppSupportDir(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result) {
   PWSTR path = nullptr;
@@ -324,5 +400,100 @@ void FlutterWindow::RemoveTrayIcon() {
 void FlutterWindow::UpdateTrayIcon() {
   if (tray_created_) {
     Shell_NotifyIconW(NIM_MODIFY, &nid_);
+  }
+}
+
+bool FlutterWindow::GetTrayIconRect(RECT* outRect) {
+  NOTIFYICONIDENTIFIER identifier = {};
+  identifier.cbSize = sizeof(NOTIFYICONIDENTIFIER);
+  identifier.hWnd = window_handle_;
+  identifier.uID = TRAY_ICON_ID;
+
+  RECT iconRect = {};
+  HRESULT hr = Shell_NotifyIconGetRect(&identifier, &iconRect);
+  if (SUCCEEDED(hr)) {
+    *outRect = iconRect;
+    return true;
+  }
+  return false;
+}
+
+void FlutterWindow::PositionPopupNearTray() {
+  RECT trayRect;
+  bool gotTray = GetTrayIconRect(&trayRect);
+
+  int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+  int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+
+  RECT workArea;
+  SystemParametersInfo(SPI_GETWORKAREA, 0, &workArea, 0);
+
+  int x, y;
+
+  if (gotTray) {
+    x = trayRect.left - (kPopupWidth / 2) + (trayRect.right - trayRect.left) / 2;
+
+    if (trayRect.top < screenHeight / 2) {
+      y = trayRect.bottom + 4;
+    } else {
+      y = trayRect.top - kPopupHeight - 4;
+    }
+  } else {
+    x = screenWidth - kPopupWidth - 16;
+    y = 4;
+  }
+
+  if (x < workArea.left) x = workArea.left + 4;
+  if (x + kPopupWidth > workArea.right) x = workArea.right - kPopupWidth - 4;
+  if (y < workArea.top) y = workArea.top + 4;
+  if (y + kPopupHeight > workArea.bottom) y = workArea.bottom - kPopupHeight - 4;
+
+  SetWindowPos(window_handle_, nullptr, x, y, kPopupWidth, kPopupHeight,
+               SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void FlutterWindow::StyleAsPopup() {
+  original_style_ = GetWindowLongPtr(window_handle_, GWL_STYLE);
+  original_ex_style_ = GetWindowLongPtr(window_handle_, GWL_EXSTYLE);
+
+  LONG_PTR newStyle = WS_POPUP | WS_VISIBLE;
+  LONG_PTR newExStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST;
+
+  SetWindowLongPtr(window_handle_, GWL_STYLE, newStyle);
+  SetWindowLongPtr(window_handle_, GWL_EXSTYLE, newExStyle);
+
+  SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+
+  MARGINS margins = {0, 0, 0, 1};
+  DwmExtendFrameIntoClientArea(window_handle_, &margins);
+
+  BOOL enableDark = TRUE;
+  DwmSetWindowAttribute(window_handle_, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                        &enableDark, sizeof(enableDark));
+
+  BOOL roundedCorners = TRUE;
+  DwmSetWindowAttribute(window_handle_, DWMWA_WINDOW_CORNER_PREFERENCE,
+                        &roundedCorners, sizeof(roundedCorners));
+}
+
+void FlutterWindow::StyleAsHidden() {
+  if (original_style_ != 0) {
+    SetWindowLongPtr(window_handle_, GWL_STYLE, original_style_);
+  }
+  if (original_ex_style_ != 0) {
+    SetWindowLongPtr(window_handle_, GWL_EXSTYLE, original_ex_style_);
+  }
+
+  SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+
+  ShowWindow(window_handle_, SW_HIDE);
+}
+
+void FlutterWindow::NotifyDartTrayEvent(const std::string& event) {
+  if (platform_channel_) {
+    platform_channel_->InvokeMethod("onTrayEvent",
+        std::make_unique<flutter::EncodableValue>(event));
   }
 }

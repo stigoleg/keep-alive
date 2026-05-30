@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keep_alive_app/models/battery_info.dart';
 import 'package:keep_alive_app/platform/platform_interface.dart';
@@ -6,6 +8,12 @@ import 'package:keep_alive_app/services/battery_monitor.dart';
 class _FakePlatform extends KeepAlivePlatform {
   final Future<BatteryInfo> Function() handler;
   _FakePlatform(this.handler);
+
+  final StreamController<String> _controller =
+      StreamController<String>.broadcast();
+
+  @override
+  Stream<String> get trayEventStream => _controller.stream;
 
   @override
   Future<String> getPlatformName() async => 'Fake';
@@ -26,7 +34,7 @@ class _FakePlatform extends KeepAlivePlatform {
   Future<int?> showContextMenu(List<String> items) async => null;
 
   @override
-  Future<void> showPopover(double x, double y) async {}
+  Future<void> showPopover() async {}
 
   @override
   Future<void> hidePopover() async {}

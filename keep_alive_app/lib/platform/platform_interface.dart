@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import '../models/battery_info.dart';
@@ -28,11 +29,13 @@ abstract class KeepAlivePlatform {
 
   Future<int?> showContextMenu(List<String> items);
 
-  Future<void> showPopover(double x, double y);
+  Future<void> showPopover();
 
   Future<void> hidePopover();
 
   Future<String> getAppSupportDir();
 
   Future<BatteryInfo> getBatteryInfo();
+
+  Stream<String> get trayEventStream;
 }

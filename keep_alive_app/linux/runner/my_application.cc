@@ -12,6 +12,9 @@
 
 #define PLATFORM_CHANNEL "com.stigoleg.keepAliveApp/platform"
 
+static const gint kPopupWidth = 320;
+static const gint kPopupHeight = 460;
+
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
@@ -19,9 +22,13 @@ struct _MyApplication {
   gchar* icon_path;
   gchar* tooltip_text;
   FlMethodChannel* method_channel;
+  GtkWindow* popup_window;
+  gboolean popover_visible;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
+
+// ── Auto-start helpers ──────────────────────────────────
 
 static gchar* get_autostart_desktop_path(void) {
   const gchar* config_dir = g_get_user_config_dir();
@@ -40,7 +47,8 @@ static void set_auto_start(gboolean enabled) {
     GKeyFile* keyfile = g_key_file_new();
     g_key_file_set_string(keyfile, "Desktop Entry", "Type", "Application");
     g_key_file_set_string(keyfile, "Desktop Entry", "Name", "KeepAlive");
-    g_key_file_set_string(keyfile, "Desktop Entry", "Exec", exe_path ? exe_path : "keep_alive_app");
+    g_key_file_set_string(keyfile, "Desktop Entry", "Exec",
+                          exe_path ? exe_path : "keep_alive_app");
     g_key_file_set_string(keyfile, "Desktop Entry", "Hidden", "false");
     g_key_file_set_string(keyfile, "Desktop Entry", "X-GNOME-Autostart-enabled", "true");
     g_key_file_set_boolean(keyfile, "Desktop Entry", "Terminal", FALSE);
@@ -67,19 +75,128 @@ static gboolean is_auto_start_enabled(void) {
   return exists;
 }
 
+// ── Popup window helpers ────────────────────────────────
+
+static void popup_window_get_position(MyApplication* self, gint* out_x, gint* out_y) {
+  gint screen_x = 0, screen_y = 0;
+  GdkScreen* screen = gdk_screen_get_default();
+  gint screen_w = gdk_screen_get_width(screen);
+  gint screen_h = gdk_screen_get_height(screen);
+
+  if (self->tray_icon) {
+    GdkRectangle rect;
+    GtkOrientation orientation;
+    if (gtk_status_icon_get_geometry(self->tray_icon, &screen, &rect, &orientation)) {
+      if (orientation == GTK_ORIENTATION_HORIZONTAL) {
+        *out_x = rect.x - (kPopupWidth / 2) + (rect.width / 2);
+        if (rect.y < screen_h / 2) {
+          *out_y = rect.y + rect.height + 4;
+        } else {
+          *out_y = rect.y - kPopupHeight - 4;
+        }
+      } else {
+        if (rect.x < screen_w / 2) {
+          *out_x = rect.x + rect.width + 4;
+        } else {
+          *out_x = rect.x - kPopupWidth - 4;
+        }
+        *out_y = rect.y - (kPopupHeight / 2) + (rect.height / 2);
+      }
+      return;
+    }
+  }
+
+  *out_x = screen_w - kPopupWidth - 16;
+  *out_y = 4;
+}
+
+static void show_popup_window(MyApplication* self) {
+  if (self->popover_visible) return;
+
+  gint x, y;
+  popup_window_get_position(self, &x, &y);
+
+  GdkScreen* screen = gdk_screen_get_default();
+  gint screen_w = gdk_screen_get_width(screen);
+  gint screen_h = gdk_screen_get_height(screen);
+
+  if (x < 0) x = 4;
+  if (x + kPopupWidth > screen_w) x = screen_w - kPopupWidth - 4;
+  if (y < 0) y = 4;
+  if (y + kPopupHeight > screen_h) y = screen_h - kPopupHeight - 4;
+
+  if (self->popup_window == NULL) {
+    GtkWidget* window = gtk_window_new(GTK_WINDOW_POPUP);
+    gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
+    gtk_window_set_skip_taskbar_hint(GTK_WINDOW(window), TRUE);
+    gtk_window_set_skip_pager_hint(GTK_WINDOW(window), TRUE);
+    gtk_window_set_keep_above(GTK_WINDOW(window), TRUE);
+    gtk_widget_set_size_request(window, kPopupWidth, kPopupHeight);
+
+    GdkRGBA bg;
+    gdk_rgba_parse(&bg, "#000000");
+    gtk_widget_override_background_color(window, GTK_STATE_FLAG_NORMAL, &bg);
+
+    g_signal_connect(window, "focus-out-event", G_CALLBACK(popup_focus_out_cb), self);
+    g_signal_connect(window, "key-press-event", G_CALLBACK(popup_key_press_cb), self);
+
+    self->popup_window = GTK_WINDOW(window);
+  }
+
+  gtk_window_move(self->popup_window, x, y);
+  gtk_widget_show_all(GTK_WIDGET(self->popup_window));
+  gtk_window_present(self->popup_window);
+
+  self->popover_visible = TRUE;
+}
+
+static void hide_popup_window(MyApplication* self) {
+  if (!self->popover_visible) return;
+
+  if (self->popup_window != NULL) {
+    gtk_widget_hide(GTK_WIDGET(self->popup_window));
+  }
+
+  self->popover_visible = FALSE;
+
+  g_autoptr(FlValue) args = fl_value_new_string("popoverDismissed");
+  fl_method_channel_invoke_method(self->method_channel, "onTrayEvent",
+                                  args, NULL, NULL, NULL);
+}
+
+static gboolean popup_focus_out_cb(GtkWidget* widget, GdkEventFocus* event,
+                                   gpointer user_data) {
+  hide_popup_window(MY_APPLICATION(user_data));
+  return FALSE;
+}
+
+static gboolean popup_key_press_cb(GtkWidget* widget, GdkEventKey* event,
+                                   gpointer user_data) {
+  if (event->keyval == GDK_KEY_Escape) {
+    hide_popup_window(MY_APPLICATION(user_data));
+    return TRUE;
+  }
+  return FALSE;
+}
+
+// ── Tray icon callbacks ─────────────────────────────────
+
 static void tray_icon_activate_cb(GtkStatusIcon* icon, gpointer user_data) {
   MyApplication* self = MY_APPLICATION(user_data);
-  // Left-click — send event to Dart side as a method call on the response channel.
-  // The Dart side listens for tray clicks via the system_tray package or this channel.
+  g_autoptr(FlValue) args = fl_value_new_string("leftClick");
+  fl_method_channel_invoke_method(self->method_channel, "onTrayEvent",
+                                  args, NULL, NULL, NULL);
 }
 
 static void tray_icon_popup_menu_cb(GtkStatusIcon* icon, guint button,
-                                     guint32 activate_time, gpointer user_data) {
+                                    guint32 activate_time, gpointer user_data) {
   MyApplication* self = MY_APPLICATION(user_data);
-  g_autoptr(FlValue) args = fl_value_new_map();
-  fl_value_set_string_take(args, "event", fl_value_new_string("rightClick"));
-  fl_method_channel_invoke_method(self->method_channel, "onTrayEvent", args, NULL, NULL, NULL);
+  g_autoptr(FlValue) args = fl_value_new_string("rightClick");
+  fl_method_channel_invoke_method(self->method_channel, "onTrayEvent",
+                                  args, NULL, NULL, NULL);
 }
+
+// ── Tray icon management ────────────────────────────────
 
 static void create_tray_icon(MyApplication* self) {
   if (self->tray_icon) return;
@@ -99,8 +216,10 @@ static void create_tray_icon(MyApplication* self) {
     gtk_status_icon_set_tooltip_text(self->tray_icon, "KeepAlive");
   }
 
-  g_signal_connect(self->tray_icon, "activate", G_CALLBACK(tray_icon_activate_cb), self);
-  g_signal_connect(self->tray_icon, "popup-menu", G_CALLBACK(tray_icon_popup_menu_cb), self);
+  g_signal_connect(self->tray_icon, "activate",
+                   G_CALLBACK(tray_icon_activate_cb), self);
+  g_signal_connect(self->tray_icon, "popup-menu",
+                   G_CALLBACK(tray_icon_popup_menu_cb), self);
 }
 
 static void destroy_tray_icon(MyApplication* self) {
@@ -110,15 +229,7 @@ static void destroy_tray_icon(MyApplication* self) {
   }
 }
 
-static gchar* get_app_support_dir(void) {
-  return g_strdup(g_get_user_data_dir());
-}
-
-static void context_menu_item_activated_cb(GtkMenuItem* item, gpointer user_data) {
-  gint* selected_index = (gint*)user_data;
-  *selected_index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "menu-index"));
-  gtk_main_quit();
-}
+// ── Context menu ────────────────────────────────────────
 
 static gint show_context_menu(MyApplication* self, FlValue* items_value) {
   gint selected_index = -1;
@@ -135,7 +246,8 @@ static gint show_context_menu(MyApplication* self, FlValue* items_value) {
     } else {
       GtkWidget* item = gtk_menu_item_new_with_label(title);
       g_object_set_data(G_OBJECT(item), "menu-index", GINT_TO_POINTER((gint)i));
-      g_signal_connect(item, "activate", G_CALLBACK(context_menu_item_activated_cb), &selected_index);
+      g_signal_connect(item, "activate", G_CALLBACK(context_menu_item_activated_cb),
+                       &selected_index);
       gtk_widget_show(item);
       gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     }
@@ -150,8 +262,38 @@ static gint show_context_menu(MyApplication* self, FlValue* items_value) {
   return selected_index;
 }
 
+static void context_menu_item_activated_cb(GtkMenuItem* item, gpointer user_data) {
+  gint* selected_index = (gint*)user_data;
+  *selected_index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "menu-index"));
+  gtk_main_quit();
+}
+
+// ── Asset path resolution ────────────────────────────
+
+static gchar* resolve_asset_path(const gchar* asset_key) {
+  gchar* exe_path = g_file_read_link("/proc/self/exe", NULL);
+  if (!exe_path) {
+    return g_strdup(asset_key);
+  }
+  gchar* exe_dir = g_path_get_dirname(exe_path);
+  g_free(exe_path);
+
+  gchar* asset_path = g_build_filename(exe_dir, "data", "flutter_assets",
+                                       asset_key, NULL);
+  g_free(exe_dir);
+  return asset_path;
+}
+
+// ── App support dir ─────────────────────────────────────
+
+static gchar* get_app_support_dir(void) {
+  return g_strdup(g_get_user_data_dir());
+}
+
+// ── Method channel handler ──────────────────────────────
+
 static void method_channel_cb(FlMethodChannel* channel, FlMethodCall* method_call,
-                               gpointer user_data) {
+                              gpointer user_data) {
   MyApplication* self = MY_APPLICATION(user_data);
   const gchar* method = fl_method_call_get_name(method_call);
   FlValue* args = fl_method_call_get_args(method_call);
@@ -180,7 +322,7 @@ static void method_channel_cb(FlMethodChannel* channel, FlMethodCall* method_cal
     FlValue* icon_path_val = fl_value_lookup_string(args, "iconPath");
     if (icon_path_val && fl_value_get_type(icon_path_val) == FL_VALUE_TYPE_STRING) {
       g_free(self->icon_path);
-      self->icon_path = g_strdup(fl_value_get_string(icon_path_val));
+      self->icon_path = resolve_asset_path(fl_value_get_string(icon_path_val));
       if (self->tray_icon) {
         gtk_status_icon_set_from_file(self->tray_icon, self->icon_path);
       } else {
@@ -221,8 +363,12 @@ static void method_channel_cb(FlMethodChannel* channel, FlMethodCall* method_cal
           "INVALID_ARG", "Missing 'items' argument", NULL));
     }
 
-  } else if (g_strcmp0(method, "showPopover") == 0 ||
-             g_strcmp0(method, "hidePopover") == 0) {
+  } else if (g_strcmp0(method, "showPopover") == 0) {
+    show_popup_window(self);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(NULL));
+
+  } else if (g_strcmp0(method, "hidePopover") == 0) {
+    hide_popup_window(self);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(NULL));
 
   } else if (g_strcmp0(method, "getAppSupportDir") == 0) {
@@ -241,8 +387,12 @@ static void method_channel_cb(FlMethodChannel* channel, FlMethodCall* method_cal
   }
 }
 
+// ── Application lifecycle ───────────────────────────────
+
 static void first_frame_cb(MyApplication* self, FlView* view) {
-  gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
+  GtkWidget* toplevel = gtk_widget_get_toplevel(GTK_WIDGET(view));
+  gtk_widget_hide(toplevel);
+  gtk_window_set_decorated(GTK_WINDOW(toplevel), FALSE);
 }
 
 static void my_application_activate(GApplication* application) {
@@ -250,27 +400,9 @@ static void my_application_activate(GApplication* application) {
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
 
-  gboolean use_header_bar = TRUE;
-#ifdef GDK_WINDOWING_X11
-  GdkScreen* screen = gtk_window_get_screen(window);
-  if (GDK_IS_X11_SCREEN(screen)) {
-    const gchar* wm_name = gdk_x11_screen_get_window_manager_name(screen);
-    if (g_strcmp0(wm_name, "GNOME Shell") != 0) {
-      use_header_bar = FALSE;
-    }
-  }
-#endif
-  if (use_header_bar) {
-    GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
-    gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "keep_alive_app");
-    gtk_header_bar_set_show_close_button(header_bar, TRUE);
-    gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
-  } else {
-    gtk_window_set_title(window, "keep_alive_app");
-  }
-
-  gtk_window_set_default_size(window, 1280, 720);
+  gtk_window_set_title(window, "keep_alive_app");
+  gtk_window_set_default_size(window, 320, 500);
+  gtk_window_set_decorated(window, FALSE);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
@@ -288,11 +420,11 @@ static void my_application_activate(GApplication* application) {
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
-  // Set up the platform MethodChannel.
   FlEngine* engine = fl_view_get_engine(view);
   FlBinaryMessenger* messenger = fl_engine_get_binary_messenger(engine);
   self->method_channel = fl_method_channel_new(
-      messenger, PLATFORM_CHANNEL, FL_METHOD_CODEC(fl_standard_method_codec_new()));
+      messenger, PLATFORM_CHANNEL,
+      FL_METHOD_CODEC(fl_standard_method_codec_new()));
   fl_method_channel_set_method_call_handler(self->method_channel,
       method_channel_cb, self, NULL);
 
@@ -329,6 +461,7 @@ static void my_application_shutdown(GApplication* application) {
     fl_method_channel_invoke_method(self->method_channel,
         "systemShutdown", null_args, NULL, NULL, NULL);
   }
+  hide_popup_window(self);
   destroy_tray_icon(self);
   G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
 }
@@ -356,12 +489,14 @@ static void my_application_init(MyApplication* self) {
   self->icon_path = NULL;
   self->tooltip_text = NULL;
   self->method_channel = NULL;
+  self->popup_window = NULL;
+  self->popover_visible = FALSE;
 }
 
 MyApplication* my_application_new() {
   g_set_prgname(APPLICATION_ID);
 
   return MY_APPLICATION(g_object_new(my_application_get_type(),
-                                     "application-id", APPLICATION_ID, "flags",
-                                     G_APPLICATION_NON_UNIQUE, nullptr));
+                                     "application-id", APPLICATION_ID,
+                                     "flags", G_APPLICATION_NON_UNIQUE, nullptr));
 }
