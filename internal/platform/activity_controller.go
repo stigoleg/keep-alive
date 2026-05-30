@@ -34,8 +34,8 @@ type ActivityController struct {
 // NewActivityController creates a new ActivityController.
 func NewActivityController(platformName string, patternGen *MousePatternGenerator) *ActivityController {
 	return &ActivityController{
-		platformName: platformName,
-		patternGen:   patternGen,
+		platformName:     platformName,
+		patternGen:       patternGen,
 		lastUserActiveNS: time.Now().UnixNano(),
 	}
 }

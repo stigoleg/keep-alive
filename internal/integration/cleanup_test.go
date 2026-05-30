@@ -408,4 +408,3 @@ func TestConcurrentCleanup(t *testing.T) {
 
 	assert.False(t, keeper.IsRunning(), "keeper should be stopped")
 }
-
