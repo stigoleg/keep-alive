@@ -1,1 +1,88 @@
-// TODO: Task 2/5 - Session config provider
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../core/logger.dart';
+import '../models/cli_flags.dart';
+import 'process_provider.dart';
+import 'settings_provider.dart';
+
+final sessionProvider = Provider<SessionOrchestrator>((ref) {
+  return SessionOrchestrator(ref);
+});
+
+class SessionOrchestrator {
+  final Ref _ref;
+
+  SessionOrchestrator(this._ref);
+
+  Future<void> toggleKeepAwake(bool active) async {
+    await _ref.read(appSettingsProvider.notifier).setKeepAwake(active);
+
+    if (active) {
+      final flags = _ref.read(appSettingsProvider).toCliFlags();
+      AppLogger.info('Starting keep-alive session with flags: $flags');
+      try {
+        await _ref
+            .read(cliProcessProvider.notifier)
+            .startSession(flags);
+      } catch (e) {
+        await _ref.read(appSettingsProvider.notifier).setKeepAwake(false);
+        rethrow;
+      }
+    } else {
+      AppLogger.info('Stopping keep-alive session');
+      try {
+        await _ref.read(cliProcessProvider.notifier).stopSession();
+      } catch (e) {
+        AppLogger.error('Error stopping session', e);
+      }
+    }
+  }
+
+  Future<void> updateFlags(CliFlags flags) async {
+    final keepAwake = _ref.read(appSettingsProvider).keepAwake;
+    if (!keepAwake) return;
+
+    final processState = _ref.read(cliProcessProvider);
+    if (processState.isRunning) {
+      AppLogger.info('Flags changed while running, restarting CLI');
+      try {
+        await _ref
+            .read(cliProcessProvider.notifier)
+            .restartSession(flags);
+      } catch (e) {
+        AppLogger.error('Failed to restart CLI with new flags', e);
+        await _ref.read(appSettingsProvider.notifier).setKeepAwake(false);
+        rethrow;
+      }
+    }
+  }
+
+  Future<void> applySettingsAndRestart() async {
+    final settings = _ref.read(appSettingsProvider);
+    if (!settings.keepAwake) return;
+
+    final flags = settings.toCliFlags();
+    final processState = _ref.read(cliProcessProvider);
+
+    if (processState.isRunning) {
+      AppLogger.info('Settings changed, restarting CLI');
+      try {
+        await _ref
+            .read(cliProcessProvider.notifier)
+            .restartSession(flags);
+      } catch (e) {
+        AppLogger.error('Failed to restart CLI after settings change', e);
+      }
+    } else {
+      try {
+        await _ref
+            .read(cliProcessProvider.notifier)
+            .startSession(flags);
+      } catch (e) {
+        AppLogger.error('Failed to start CLI after settings change', e);
+        await _ref.read(appSettingsProvider.notifier).setKeepAwake(false);
+        rethrow;
+      }
+    }
+  }
+}
