@@ -1,0 +1,50 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    missing_return: error
+    dead_code: error
+    unused_import: error
+    unused_local_variable: warning
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+
+linter:
+  rules:
+    - always_declare_return_types
+    - annotate_overrides
+    - avoid_empty_else
+    - avoid_init_to_null
+
+    - avoid_print
+    - avoid_relative_lib_imports
+    - avoid_shadowing_type_parameters
+    - avoid_types_as_parameter_names
+    - avoid_unused_constructor_parameters
+    - cancel_subscriptions
+    - curly_braces_in_flow_control_structures
+    - empty_statements
+    - hash_and_equals
+    - implementation_imports
+    - literal_only_boolean_expressions
+    - no_duplicate_case_values
+    - prefer_const_constructors
+    - prefer_const_declarations
+    - prefer_contains
+    - prefer_final_fields
+    - prefer_final_locals
+    - prefer_is_empty
+    - prefer_is_not_empty
+    - prefer_single_quotes
+    - require_trailing_commas
+    - sized_box_for_whitespace
+    - sort_child_properties_last
+    - unnecessary_brace_in_string_interps
+    - unnecessary_const
+    - unnecessary_new
+    - unnecessary_null_in_if_null_operators
+    - unnecessary_string_escapes
+    - unnecessary_string_interpolations
+    - use_key_in_widget_constructors
+    - use_super_parameters

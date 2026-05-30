@@ -37,3 +37,32 @@
 vendor/
 bin/
 dist/
+
+# ── Flutter / Dart ───────────────────────────────────
+.dart_tool/
+.packages
+.pub/
+**/build/
+*.iml
+.gradle/
+local.properties
+android/.project
+android/.settings/
+android/app/debug/
+android/app/release/
+*.jks
+*.keystore
+
+# Generated Riverpod files
+**/*.g.dart
+**/*.freezed.dart
+
+# Platform specific
+keep_alive_app/macos/Pods/
+keep_alive_app/macos/.symlinks/
+keep_alive_app/ios/Pods/
+keep_alive_app/ios/.symlinks/
+
+# IDE
+.vscode/
+.idea/
