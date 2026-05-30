@@ -74,9 +74,11 @@ keepalive
 ```
 
 2. Use arrow keys (↑/↓) or j/k to navigate the menu.
-3. **Toggle Active Status**: Press `a` to toggle activity simulation (Slack/Teams).
-4. Press Enter to select an option.
-5. Press q or Esc to quit.
+3. Choose indefinite, duration, or clock-time mode.
+4. **Toggle Active Status**: Press `a` to toggle activity simulation (Slack/Teams).
+5. **Set Battery Threshold**: Press `b` to set or change a battery threshold, and `B` to clear it.
+6. Press Enter to select an option.
+7. Press q or Esc to quit.
 
 ### Command-Line Options
 

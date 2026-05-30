@@ -25,6 +25,8 @@ type state int
 const (
 	stateMenu state = iota
 	stateTimedInput
+	stateClockInput
+	stateBatteryInput
 	stateRunning
 )
 
@@ -37,6 +39,7 @@ type Model struct {
 	ErrorMessage       string
 	StartTime          time.Time
 	Duration           time.Duration
+	Clock              time.Time
 	ShowHelp           bool
 	ShowDependencyInfo bool
 	DependencyWarning  string
@@ -184,6 +187,27 @@ func newMinutesTextInput() textinput.Model {
 	ti.Placeholder = "e.g. 30 or 2h30m"
 	ti.CharLimit = 16
 	ti.Width = 20
+	ti.Focus()
+	return ti
+}
+
+func newClockTextInput() textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = "e.g. 22:00 or 10:00PM"
+	ti.CharLimit = 16
+	ti.Width = 24
+	ti.Focus()
+	return ti
+}
+
+func newBatteryTextInput(threshold int) textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = "e.g. 20"
+	ti.CharLimit = 3
+	ti.Width = 12
+	if threshold > 0 {
+		ti.SetValue(strconv.Itoa(threshold))
+	}
 	ti.Focus()
 	return ti
 }

@@ -36,7 +36,9 @@ func TestMenuView(t *testing.T) {
 	expectedOptions := []string{
 		"Keep system awake indefinitely",
 		"Keep system awake for X minutes",
+		"Keep system awake until clock time",
 		"Quit keep-alive",
+		"Battery threshold",
 	}
 
 	for _, opt := range expectedOptions {
@@ -84,6 +86,18 @@ func TestUpdate(t *testing.T) {
 			model:    Model{State: stateMenu, Selected: 1},
 			wantType: stateTimedInput,
 		},
+		{
+			name:     "enter on clock option moves to clock input state",
+			msg:      tea.KeyMsg{Type: tea.KeyEnter},
+			model:    Model{State: stateMenu, Selected: 2},
+			wantType: stateClockInput,
+		},
+		{
+			name:     "b key moves to battery input state",
+			msg:      tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}},
+			model:    Model{State: stateMenu, Selected: 0},
+			wantType: stateBatteryInput,
+		},
 	}
 
 	for _, tt := range tests {
@@ -111,6 +125,60 @@ func TestTimedInputView(t *testing.T) {
 	}
 	if !strings.Contains(view, "5") {
 		t.Error("expected view to show input value")
+	}
+}
+
+func TestClockInputView(t *testing.T) {
+	m := Model{
+		State:     stateClockInput,
+		KeepAlive: keepalive.NewKeeper(),
+	}
+	m.textInput = newClockTextInput()
+	m.textInput.SetValue("22:00")
+	view := View(m)
+
+	if !strings.Contains(view, "clock time") {
+		t.Error("expected view to contain clock prompt")
+	}
+	if !strings.Contains(view, "22:00") {
+		t.Error("expected view to show input value")
+	}
+}
+
+func TestBatteryInputSetsThreshold(t *testing.T) {
+	restore := stubBatteryStatus(platformBatteryStatus(80), nil)
+	defer restore()
+
+	m := Model{State: stateBatteryInput, KeepAlive: keepalive.NewKeeper()}
+	m.textInput = newBatteryTextInput(0)
+	m.textInput.SetValue("65")
+
+	got, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
+	if got.State != stateMenu {
+		t.Fatalf("Update() state = %v, want %v", got.State, stateMenu)
+	}
+	if got.BatteryThreshold != 65 {
+		t.Fatalf("Update() BatteryThreshold = %d, want 65", got.BatteryThreshold)
+	}
+	if got.BatteryPercentage != 80 {
+		t.Fatalf("Update() BatteryPercentage = %d, want 80", got.BatteryPercentage)
+	}
+}
+
+func TestBatteryInputRejectsThresholdAtCurrentBattery(t *testing.T) {
+	restore := stubBatteryStatus(platformBatteryStatus(65), nil)
+	defer restore()
+
+	m := Model{State: stateBatteryInput, KeepAlive: keepalive.NewKeeper()}
+	m.textInput = newBatteryTextInput(0)
+	m.textInput.SetValue("65")
+
+	got, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
+	if got.State != stateBatteryInput {
+		t.Fatalf("Update() state = %v, want %v", got.State, stateBatteryInput)
+	}
+	if got.ErrorMessage == "" {
+		t.Fatal("expected battery validation error")
 	}
 }
 
@@ -381,6 +449,16 @@ func TestErrorDisplay(t *testing.T) {
 
 func platformBatteryStatus(percentage int) platform.BatteryStatus {
 	return platform.BatteryStatus{Percentage: percentage, Available: true}
+}
+
+func stubBatteryStatus(status platform.BatteryStatus, err error) func() {
+	original := readBatteryStatus
+	readBatteryStatus = func() (platform.BatteryStatus, error) {
+		return status, err
+	}
+	return func() {
+		readBatteryStatus = original
+	}
 }
 
 func TestTimeRemaining(t *testing.T) {

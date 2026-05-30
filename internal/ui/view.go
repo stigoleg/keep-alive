@@ -33,6 +33,10 @@ func View(m Model) string {
 		return menuView(m)
 	case stateTimedInput:
 		return timedInputView(m)
+	case stateClockInput:
+		return clockInputView(m)
+	case stateBatteryInput:
+		return batteryInputView(m)
 	case stateRunning:
 		return runningView(m)
 	}
@@ -46,6 +50,10 @@ func baseView(m Model) string {
 		return menuView(m)
 	case stateTimedInput:
 		return timedInputView(m)
+	case stateClockInput:
+		return clockInputView(m)
+	case stateBatteryInput:
+		return batteryInputView(m)
 	case stateRunning:
 		return runningView(m)
 	}
@@ -68,6 +76,7 @@ func menuView(m Model) string {
 	menuItems := []string{
 		"Keep system awake indefinitely",
 		"Keep system awake for X minutes",
+		"Keep system awake until clock time",
 		"Quit keep-alive",
 	}
 
@@ -97,6 +106,18 @@ func menuView(m Model) string {
 	}
 	activeText := fmt.Sprintf("%s Simulate activity (Slack/Teams)", activeStatus)
 	b.WriteString(Current.Unselected.Render(activeText) + " " + Current.Unselected.Render("(press 'a' to toggle)"))
+	b.WriteString("\n")
+
+	batteryStatus := "[ ]"
+	batteryText := "Battery threshold"
+	if m.BatteryThreshold > 0 {
+		batteryStatus = "[x]"
+		batteryText = fmt.Sprintf("Battery threshold: stop at or below %d%%", m.BatteryThreshold)
+		if m.BatteryPercentage > 0 {
+			batteryText += fmt.Sprintf(" (current %d%%)", m.BatteryPercentage)
+		}
+	}
+	b.WriteString(Current.Unselected.Render(fmt.Sprintf("%s %s", batteryStatus, batteryText)) + " " + Current.Unselected.Render("(press 'b' to set/change, 'B' to clear)"))
 	b.WriteString("\n")
 
 	// Dependency warning notification
@@ -145,6 +166,62 @@ func timedInputView(m Model) string {
 	return b.String()
 }
 
+func clockInputView(m Model) string {
+	var b strings.Builder
+
+	b.WriteString(Current.Title.Render("Enter Clock Time"))
+	b.WriteString("\n\n")
+
+	b.WriteString(Current.Unselected.Render("Enter a clock time (e.g., 22:00 or 10:00PM):"))
+	b.WriteString("\n")
+
+	inputView := m.textInput.View()
+	if strings.TrimSpace(inputView) == "" {
+		inputView = " "
+	}
+	b.WriteString(Current.InputBox.Render(inputView))
+	b.WriteString("\n\n")
+
+	if m.ErrorMessage != "" {
+		b.WriteString("\n\n" + Current.Error.Render(m.ErrorMessage))
+	}
+
+	footer := m.Help.View(m.Keys.ForState(stateClockInput))
+	b.WriteString("\n" + footer)
+
+	return b.String()
+}
+
+func batteryInputView(m Model) string {
+	var b strings.Builder
+
+	b.WriteString(Current.Title.Render("Set Battery Threshold"))
+	b.WriteString("\n\n")
+
+	b.WriteString(Current.Unselected.Render("Enter the battery percentage to stop at or below (1-100):"))
+	b.WriteString("\n")
+
+	inputView := m.textInput.View()
+	if strings.TrimSpace(inputView) == "" {
+		inputView = " "
+	}
+	b.WriteString(Current.InputBox.Render(inputView))
+	b.WriteString("\n\n")
+
+	if m.BatteryThreshold > 0 {
+		b.WriteString(Current.Unselected.Render(fmt.Sprintf("Current threshold: %d%%", m.BatteryThreshold)))
+		b.WriteString("\n")
+	}
+	if m.ErrorMessage != "" {
+		b.WriteString("\n\n" + Current.Error.Render(m.ErrorMessage))
+	}
+
+	footer := m.Help.View(m.Keys.ForState(stateBatteryInput))
+	b.WriteString("\n" + footer)
+
+	return b.String()
+}
+
 func runningView(m Model) string {
 	var b strings.Builder
 
@@ -179,6 +256,9 @@ func runningView(m Model) string {
 		minutes := int(remaining.Minutes())
 		seconds := int(remaining.Seconds()) % 60
 		countdown := fmt.Sprintf("%d:%02d remaining", minutes, seconds)
+		if !m.Clock.IsZero() {
+			countdown = fmt.Sprintf("%s remaining (until %s)", countdown, m.Clock.Format("15:04"))
+		}
 		b.WriteString(Current.Unselected.Render(countdown))
 		b.WriteString("\n\n")
 
@@ -481,6 +561,9 @@ func navigationHelpRows() [][]string {
 	return [][]string{
 		{"up/k, down/j", "Navigate menu"},
 		{"Enter", "Select option"},
+		{"a", "Toggle activity simulation"},
+		{"b", "Set battery threshold"},
+		{"B", "Clear battery threshold"},
 		{"h/?", "Toggle help overlay"},
 		{"i", "Show dependency information if available"},
 		{"q/Esc", "Quit or go back"},
@@ -515,6 +598,9 @@ func overlayBlock(base string, overlay string, width int, height int) string {
 	if len(baseLines) > height {
 		baseLines = baseLines[:height]
 	}
+	for i := range baseLines {
+		baseLines[i] = padLine(baseLines[i], width)
+	}
 
 	overlayWidth := blockWidth(overlayLines)
 	overlayHeight := len(overlayLines)
@@ -526,7 +612,7 @@ func overlayBlock(base string, overlay string, width int, height int) string {
 		if target < 0 || target >= len(baseLines) {
 			continue
 		}
-		line := padLine(baseLines[target], width)
+		line := baseLines[target]
 		end := minInt(width, x+lipgloss.Width(overlayLine))
 		prefix := ansi.Cut(line, 0, x)
 		suffix := ansi.Cut(line, end, width)
