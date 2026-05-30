@@ -11,13 +11,16 @@ class TrayManager {
   bool _isActive = false;
 
   VoidCallback? onTogglePopup;
+  VoidCallback? onOpenSettings;
   VoidCallback? onQuit;
 
   Future<void> initialize({
     required VoidCallback onTogglePopup,
+    required VoidCallback onOpenSettings,
     required VoidCallback onQuit,
   }) async {
     this.onTogglePopup = onTogglePopup;
+    this.onOpenSettings = onOpenSettings;
     this.onQuit = onQuit;
 
     try {
@@ -66,6 +69,7 @@ class TrayManager {
       await _systemTray.setContextMenu(
         TrayMenu.buildContextMenu(
           onShow: () => onTogglePopup?.call(),
+          onSettings: () => onOpenSettings?.call(),
           onQuit: () => onQuit?.call(),
         ),
       );

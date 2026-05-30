@@ -3,6 +3,7 @@ class AppConstants {
   AppConstants._();
 
   static const String appName = 'KeepAlive';
+  static const String appVersion = '1.0.0';
   static const String githubRepo = 'stigoleg/keep-alive';
   static const String cliBinaryName = 'keepalive';
   static const String githubApiBaseUrl = 'https://api.github.com';

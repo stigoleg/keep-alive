@@ -14,6 +14,7 @@ import 'ui/theme/linux_theme.dart';
 import 'ui/theme/macos_theme.dart';
 import 'ui/theme/windows_theme.dart';
 import 'ui/popup/popup_panel.dart';
+import 'ui/settings/settings_window.dart';
 import 'ui/tray/tray_manager.dart';
 import 'utils/platform_utils.dart';
 
@@ -27,6 +28,7 @@ class KeepAliveApp extends ConsumerStatefulWidget {
 class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     with WindowListener {
   final TrayManager _trayManager = TrayManager();
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   bool _popupVisible = false;
   bool _quitting = false;
 
@@ -54,6 +56,7 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     try {
       await _trayManager.initialize(
         onTogglePopup: _togglePopup,
+        onOpenSettings: _openSettings,
         onQuit: _handleQuit,
       );
     } catch (e) {
@@ -82,6 +85,26 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     if (_quitting) return;
     _popupVisible = !_popupVisible;
     _updateWindowVisibility();
+  }
+
+  Future<void> _openSettings() async {
+    if (_quitting) return;
+    final needsShow = !_popupVisible;
+    if (needsShow) {
+      _popupVisible = true;
+      await _updateWindowVisibility();
+    }
+    final navigator = _navigatorKey.currentState;
+    if (navigator != null && mounted) {
+      // ignore: use_build_context_synchronously
+      showDialog(
+        context: navigator.context,
+        barrierDismissible: true,
+        builder: (_) => SettingsDialog(
+          onClose: () => navigator.pop(),
+        ),
+      );
+    }
   }
 
   Future<void> _updateWindowVisibility() async {
@@ -145,6 +168,7 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     return MaterialApp(
       title: 'KeepAlive',
       debugShowCheckedModeBanner: false,
+      navigatorKey: _navigatorKey,
       themeMode: ThemeMode.system,
       theme: _lightTheme,
       darkTheme: _darkTheme,
