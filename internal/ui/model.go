@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/timer"
+	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/stigoleg/keep-alive/internal/keepalive"
 	"github.com/stigoleg/keep-alive/internal/platform"
 
@@ -43,6 +44,7 @@ type Model struct {
 	version            string
 	Keys               KeyMap
 	Help               help.Model
+	HelpViewport       viewport.Model
 	timer              timer.Model
 	progress           progress.Model
 	SimulateActivity   bool
@@ -66,6 +68,7 @@ func InitialModel() Model {
 		ActivityWarning:    "",
 		Keys:               DefaultKeys(),
 		Help:               NewHelpModel(),
+		HelpViewport:       newHelpViewport(defaultTerminalWidth, 20),
 		progress:           progress.New(progress.WithDefaultGradient(), progress.WithWidth(34)),
 		SimulateActivity:   false,
 		Width:              defaultTerminalWidth,

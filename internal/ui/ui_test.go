@@ -241,12 +241,89 @@ func TestHelpViewFitsNarrowWidth(t *testing.T) {
 	m := InitialModel()
 	m.ShowHelp = true
 	m.Width = 40
+	m.Height = 14
 	view := View(m)
 
 	for _, line := range strings.Split(view, "\n") {
 		if got := lipgloss.Width(line); got > m.Width {
 			t.Fatalf("help line width = %d, want <= %d: %q", got, m.Width, line)
 		}
+	}
+}
+
+func TestHelpPopupHasCompleteBorderAtSmallHeight(t *testing.T) {
+	m := InitialModel()
+	m.ShowHelp = true
+	m.Width = 48
+	m.Height = 10
+	view := View(m)
+
+	if !strings.Contains(view, "╭") {
+		t.Fatalf("expected help popup top border, got:\n%s", view)
+	}
+	if !strings.Contains(view, "╰") {
+		t.Fatalf("expected help popup bottom border, got:\n%s", view)
+	}
+}
+
+func TestHelpTableBordersFitNormalWidth(t *testing.T) {
+	m := InitialModel()
+	m.Width = 80
+	m.Height = 24
+	content := helpContent(m)
+
+	for _, line := range strings.Split(content, "\n") {
+		if got := lipgloss.Width(line); got > helpBodyWidth(m) {
+			t.Fatalf("help content line width = %d, want <= %d: %q", got, helpBodyWidth(m), line)
+		}
+	}
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "─┐" || trimmed == "─┤" || trimmed == "─┘" {
+			t.Fatalf("table border fragment appears on its own line:\n%s", content)
+		}
+	}
+}
+
+func TestNavigationRowsRenderOnOneLine(t *testing.T) {
+	content := renderKeyValueRows(navigationHelpRows(), 64)
+
+	if !strings.Contains(content, "up/k, down/j  Navigate menu") {
+		t.Fatalf("expected navigation key and description on one line, got:\n%s", content)
+	}
+	if strings.Contains(content, "up/k, down/j\n") {
+		t.Fatalf("navigation key rendered without description on same line:\n%s", content)
+	}
+}
+
+func TestHelpViewportScrolls(t *testing.T) {
+	m := InitialModel()
+	m.ShowHelp = true
+	m.Width = 56
+	m.Height = 10
+	m = syncHelpViewport(m)
+
+	if m.HelpViewport.TotalLineCount() <= m.HelpViewport.VisibleLineCount() {
+		t.Fatalf("expected help content to overflow viewport")
+	}
+
+	got, _ := Update(tea.KeyMsg{Type: tea.KeyDown}, m)
+	if got.HelpViewport.YOffset <= m.HelpViewport.YOffset {
+		t.Fatalf("expected help viewport to scroll down, before=%d after=%d", m.HelpViewport.YOffset, got.HelpViewport.YOffset)
+	}
+}
+
+func TestHelpCloseDoesNotQuit(t *testing.T) {
+	m := InitialModel()
+	m.ShowHelp = true
+	m = syncHelpViewport(m)
+
+	got, cmd := Update(tea.KeyMsg{Type: tea.KeyEsc}, m)
+	if got.ShowHelp {
+		t.Fatalf("expected help to close")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no quit command when closing help")
 	}
 }
 

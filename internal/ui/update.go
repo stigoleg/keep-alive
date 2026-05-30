@@ -33,6 +33,7 @@ func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
 		m.Width = sizeMsg.Width
 		m.Height = sizeMsg.Height
 		m.Help.Width = sizeMsg.Width
+		m = syncHelpViewport(m)
 		return m, nil
 	}
 
@@ -71,13 +72,19 @@ func handleHelpState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 		switch {
 		case key.Matches(keyMsg, m.Keys.ToggleHelp):
 			m.ShowHelp = false
+			return m, nil
 		case key.Matches(keyMsg, m.Keys.Quit):
 			m.ShowHelp = false
+			return m, nil
 		case key.Matches(keyMsg, m.Keys.Back):
 			m.ShowHelp = false
+			return m, nil
 		}
 	}
-	return m, nil
+
+	var cmd tea.Cmd
+	m.HelpViewport, cmd = m.HelpViewport.Update(msg)
+	return m, cmd
 }
 
 // handleDependencyInfoState handles messages when dependency info is being displayed
@@ -109,6 +116,7 @@ func handleMenuKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.Keys.ToggleHelp):
 		m.ShowHelp = true
+		m = syncHelpViewport(m)
 	case key.Matches(msg, m.Keys.ToggleDependencyInfo):
 		if m.DependencyWarning != "" || m.ActivityWarning != "" {
 			m.ShowDependencyInfo = true
@@ -170,6 +178,10 @@ func handleTimedInputState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 // handleTimedInputKeyMsg handles keyboard input in the timed input state
 func handleTimedInputKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 	switch {
+	case key.Matches(msg, m.Keys.ToggleHelp):
+		m.ShowHelp = true
+		m = syncHelpViewport(m)
+		return m, nil
 	case key.Matches(msg, m.Keys.Back):
 		m.State = stateMenu
 		m.ErrorMessage = ""
@@ -307,6 +319,7 @@ func handleRunningKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 		return handleQuit(m)
 	case key.Matches(msg, m.Keys.ToggleHelp):
 		m.ShowHelp = true
+		m = syncHelpViewport(m)
 	case key.Matches(msg, m.Keys.ToggleDependencyInfo):
 		if m.DependencyWarning != "" || m.ActivityWarning != "" {
 			m.ShowDependencyInfo = true
