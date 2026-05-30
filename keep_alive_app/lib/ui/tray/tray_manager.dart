@@ -9,6 +9,7 @@ class TrayManager {
   final SystemTray _systemTray = SystemTray();
   bool _initialized = false;
   bool _isActive = false;
+  bool _isError = false;
 
   VoidCallback? onTogglePopup;
   VoidCallback? onOpenSettings;
@@ -45,11 +46,28 @@ class TrayManager {
     if (!_initialized || _isActive == isActive) return;
     _isActive = isActive;
 
-    final icon = isActive ? _activeIcon : _idleIcon;
-    final tooltip = isActive ? _activeTooltip : _idleTooltip;
+    final icon = _resolveIcon();
+    final tooltip = _resolveTooltip();
 
     _systemTray.setImage(icon);
     _systemTray.setToolTip(tooltip);
+  }
+
+  void setErrorState(bool isError) {
+    if (!_initialized || _isError == isError) return;
+    _isError = isError;
+
+    final icon = _resolveIcon();
+    final tooltip = _resolveTooltip();
+
+    try {
+      _systemTray.setImage(icon);
+      _systemTray.setToolTip(tooltip);
+    } on PlatformException catch (e) {
+      AppLogger.warning('Failed to set error tray icon, falling back: $e');
+      _systemTray.setImage(_idleIcon);
+      _systemTray.setToolTip(tooltip);
+    }
   }
 
   void updateTooltip(String text) {
@@ -61,8 +79,22 @@ class TrayManager {
 
   static const String _idleIcon = 'assets/icons/tray_icon.png';
   static const String _activeIcon = 'assets/icons/tray_icon_active.png';
+  static const String _errorIcon = 'assets/icons/tray_icon_error.png';
   static const String _idleTooltip = 'KeepAlive \u2014 Idle';
   static const String _activeTooltip = 'KeepAlive \u2014 System Active';
+  static const String _errorTooltip = 'KeepAlive \u2014 Error';
+
+  String _resolveIcon() {
+    if (_isError) return _errorIcon;
+    if (_isActive) return _activeIcon;
+    return _idleIcon;
+  }
+
+  String _resolveTooltip() {
+    if (_isError) return _errorTooltip;
+    if (_isActive) return _activeTooltip;
+    return _idleTooltip;
+  }
 
   Future<void> _buildContextMenu() async {
     try {

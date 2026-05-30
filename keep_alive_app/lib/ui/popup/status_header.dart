@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../models/cli_process_state.dart';
 import '../../providers/battery_provider.dart';
 import '../../providers/process_provider.dart';
+import '../../providers/session_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../utils/format_utils.dart';
 import '../theme/app_theme.dart';
@@ -18,6 +20,7 @@ class StatusHeader extends ConsumerWidget {
 
     final theme = Theme.of(context);
     final isActive = processState.isRunning;
+    final isError = processState.status == CliProcessStatus.error;
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -26,20 +29,46 @@ class StatusHeader extends ConsumerWidget {
       ),
       child: Row(
         children: [
-          _StatusDot(isActive: isActive),
+          _StatusDot(isActive: isActive, isError: isError),
           const SizedBox(width: AppTheme.spacing8),
           Expanded(
-            child: Text(
-              _statusText(isActive, settings.durationMinutes,
-                  processState.startTime),
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurface,
-                fontWeight: FontWeight.w600,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _statusText(isActive, isError, settings.durationMinutes,
+                      processState.startTime),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: isError
+                        ? AppTheme.errorColor
+                        : theme.colorScheme.onSurface,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (isError && processState.errorMessage != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    processState.errorMessage!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: AppTheme.errorColor.withValues(alpha: 0.8),
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
             ),
           ),
+          if (isError)
+            _RestartButton(
+              onPressed: () {
+                ref.read(cliProcessProvider.notifier).clearError();
+                ref.read(sessionProvider).toggleKeepAwake(true);
+              },
+            ),
           const SizedBox(width: AppTheme.spacing8),
           batteryAsync.when(
             data: (battery) => _BatteryBadge(percentage: battery.percentage),
@@ -51,8 +80,9 @@ class StatusHeader extends ConsumerWidget {
     );
   }
 
-  String _statusText(
-      bool isActive, int? durationMinutes, DateTime? startTime) {
+  String _statusText(bool isActive, bool isError, int? durationMinutes,
+      DateTime? startTime) {
+    if (isError) return 'Crashed';
     if (!isActive) return 'Idle';
 
     if (startTime != null && durationMinutes != null) {
@@ -62,10 +92,35 @@ class StatusHeader extends ConsumerWidget {
   }
 }
 
+class _RestartButton extends StatelessWidget {
+  final VoidCallback onPressed;
+
+  const _RestartButton({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      onPressed: onPressed,
+      icon: const Icon(Icons.refresh, size: AppTheme.iconSmall),
+      label: const Text('Restart'),
+      style: TextButton.styleFrom(
+        foregroundColor: AppTheme.errorColor,
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.spacing6,
+          vertical: AppTheme.spacing4,
+        ),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    );
+  }
+}
+
 class _StatusDot extends StatefulWidget {
   final bool isActive;
+  final bool isError;
 
-  const _StatusDot({required this.isActive});
+  const _StatusDot({required this.isActive, this.isError = false});
 
   @override
   State<_StatusDot> createState() => _StatusDotState();
@@ -86,14 +141,16 @@ class _StatusDotState extends State<_StatusDot>
     _pulse = Tween<double>(begin: 1.0, end: 0.4).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
     );
-    if (widget.isActive) _startPulse();
+    if (widget.isActive || widget.isError) _startPulse();
   }
 
   @override
   void didUpdateWidget(_StatusDot oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.isActive != oldWidget.isActive) {
-      if (widget.isActive) {
+    final wasAnimating = oldWidget.isActive || oldWidget.isError;
+    final isAnimating = widget.isActive || widget.isError;
+    if (isAnimating != wasAnimating) {
+      if (isAnimating) {
         _startPulse();
       } else {
         _stopPulse();
@@ -117,14 +174,20 @@ class _StatusDotState extends State<_StatusDot>
 
   @override
   Widget build(BuildContext context) {
-    final color = widget.isActive
-        ? AppTheme.activeColor
-        : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4);
+    Color color;
+    if (widget.isError) {
+      color = AppTheme.errorColor;
+    } else if (widget.isActive) {
+      color = AppTheme.activeColor;
+    } else {
+      color = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4);
+    }
 
     return AnimatedBuilder(
       animation: _pulse,
       builder: (context, child) {
-        final opacity = widget.isActive ? _pulse.value : 1.0;
+        final animate = widget.isActive || widget.isError;
+        final opacity = animate ? _pulse.value : 1.0;
         return Container(
           width: 8,
           height: 8,

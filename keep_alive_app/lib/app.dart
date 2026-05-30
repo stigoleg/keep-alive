@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'core/constants.dart';
 import 'core/logger.dart';
+import 'models/cli_process_state.dart';
 import 'providers/cli_binary_provider.dart';
 import 'providers/process_provider.dart';
 import 'providers/settings_provider.dart';
@@ -18,6 +19,7 @@ import 'ui/theme/windows_theme.dart';
 import 'ui/popup/popup_panel.dart';
 import 'ui/settings/settings_window.dart';
 import 'ui/tray/tray_manager.dart';
+import 'ui/widgets/error_boundary.dart';
 import 'utils/platform_utils.dart';
 
 class KeepAliveApp extends ConsumerStatefulWidget {
@@ -81,6 +83,10 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
 
     ref.listenManual(cliProcessProvider, (_, next) {
       _trayManager.setActiveState(next.isRunning);
+      _trayManager.setErrorState(next.status == CliProcessStatus.error);
+      if (next.status == CliProcessStatus.error) {
+        AppLogger.warning('CLI process in error state: ${next.errorMessage}');
+      }
     });
 
     final settings = ref.read(appSettingsProvider);
@@ -220,7 +226,9 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
       themeMode: ThemeMode.system,
       theme: _lightTheme,
       darkTheme: _darkTheme,
-      home: const PopupPanel(),
+      home: const ErrorBoundary(
+        child: PopupPanel(),
+      ),
     );
   }
 }

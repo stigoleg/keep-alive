@@ -21,4 +21,10 @@ class AppConstants {
 
   static const int maxLogLines = 1000;
   static const int processGracefulTimeoutSeconds = 5;
+
+  static const int downloadMaxRetries = 3;
+  static const int downloadRetryBaseDelayMs = 1000;
+
+  static const String downloadUrlCacheFile = '.download_url_cache';
+  static const String offlineMode = 'KeepAlive running in offline mode';
 }

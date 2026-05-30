@@ -15,11 +15,14 @@ class ProcessManager {
   final CliDownloadService _downloadService;
   Process? _currentProcess;
   bool _hasProcess = false;
+  bool _stopRequested = false;
 
   final StreamController<String> _stdoutController =
       StreamController<String>.broadcast();
   final StreamController<String> _stderrController =
       StreamController<String>.broadcast();
+  final StreamController<CliProcessException> _crashController =
+      StreamController<CliProcessException>.broadcast();
 
   final List<String> _stdoutBuffer = [];
   final List<String> _stderrBuffer = [];
@@ -38,6 +41,9 @@ class ProcessManager {
   Stream<String> get stdoutStream => _stdoutController.stream;
 
   Stream<String> get stderrStream => _stderrController.stream;
+
+  Stream<CliProcessException> get unexpectedExitStream =>
+      _crashController.stream;
 
   List<String> get stdoutLines => List.unmodifiable(_stdoutBuffer);
 
@@ -60,6 +66,7 @@ class ProcessManager {
     AppLogger.info('Starting CLI: $binaryPath ${args.join(' ')}');
 
     try {
+      _stopRequested = false;
       _currentProcess = await Process.start(
         binaryPath,
         args,
@@ -105,6 +112,7 @@ class ProcessManager {
       return;
     }
 
+    _stopRequested = true;
     AppLogger.info('Stopping CLI process (pid: ${process.pid})');
 
     try {
@@ -178,6 +186,7 @@ class ProcessManager {
 
   void dispose() {
     AppLogger.info('Disposing ProcessManager');
+    _stopRequested = true;
     if (_currentProcess != null) {
       try {
         _currentProcess!.kill(ProcessSignal.sigkill);
@@ -187,6 +196,7 @@ class ProcessManager {
     }
     _stdoutController.close();
     _stderrController.close();
+    _crashController.close();
     _stdoutBuffer.clear();
     _stderrBuffer.clear();
   }
@@ -223,12 +233,23 @@ class ProcessManager {
 
   void _onProcessExit(int exitCode) {
     AppLogger.info('CLI process exited with code $exitCode');
+    final wasRunning = _hasProcess;
+    final wasRequested = _stopRequested;
     _hasProcess = false;
     _currentProcess = null;
     _safeAddToController(
       _stdoutController,
       '[Process exited with code $exitCode]',
     );
+    if (wasRunning && !wasRequested && exitCode != 0) {
+      final exception = CliProcessException(
+        'CLI process exited unexpectedly with code $exitCode',
+      );
+      AppLogger.error(exception.message);
+      if (!_crashController.isClosed) {
+        _crashController.add(exception);
+      }
+    }
   }
 
   void _safeAddToController(StreamController<String> controller, String line) {

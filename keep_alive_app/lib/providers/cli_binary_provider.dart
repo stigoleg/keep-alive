@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/exceptions.dart';
 import '../core/logger.dart';
 import '../models/download_state.dart';
 import '../services/cli_download_service.dart';
@@ -47,6 +48,12 @@ class CliBinaryNotifier extends Notifier<DownloadState> {
       );
 
       AppLogger.info('CLI binary ready: $version');
+    } on DownloadException catch (e) {
+      AppLogger.error('Failed to install CLI binary (DownloadException)', e);
+      state = state.copyWith(
+        status: DownloadStatus.error,
+        errorMessage: e.message,
+      );
     } catch (e) {
       AppLogger.error('Failed to install CLI binary', e);
       state = state.copyWith(
@@ -78,6 +85,12 @@ class CliBinaryNotifier extends Notifier<DownloadState> {
       );
 
       AppLogger.info('CLI updated to $version');
+    } on DownloadException catch (e) {
+      AppLogger.error('Failed to download latest CLI (DownloadException)', e);
+      state = state.copyWith(
+        status: DownloadStatus.error,
+        errorMessage: e.message,
+      );
     } catch (e) {
       AppLogger.error('Failed to download latest CLI', e);
       state = state.copyWith(

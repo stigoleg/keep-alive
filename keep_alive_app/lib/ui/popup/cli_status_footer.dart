@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/download_state.dart';
 import '../../providers/cli_binary_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/error_banner.dart';
 
 class CliStatusFooter extends ConsumerWidget {
   const CliStatusFooter({super.key});
@@ -21,6 +22,14 @@ class CliStatusFooter extends ConsumerWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (binaryState.status == DownloadStatus.error &&
+              binaryState.errorMessage != null)
+            ErrorBanner(
+              message: binaryState.errorMessage!,
+              onRetry: () =>
+                  ref.read(cliBinaryProvider.notifier).downloadLatest(),
+              onDismiss: () {},
+            ),
           Row(
             children: [
               _versionWidget(binaryState, theme),
@@ -32,18 +41,6 @@ class CliStatusFooter extends ConsumerWidget {
             const SizedBox(height: AppTheme.spacing6),
             LinearProgressIndicator(
               value: binaryState.progress > 0 ? binaryState.progress : null,
-            ),
-          ],
-          if (binaryState.status == DownloadStatus.error &&
-              binaryState.errorMessage != null) ...[
-            const SizedBox(height: AppTheme.spacing4),
-            Text(
-              binaryState.errorMessage!,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: AppTheme.errorColor,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
             ),
           ],
         ],

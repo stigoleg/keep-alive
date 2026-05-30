@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:archive/archive_io.dart' as archive_io;
@@ -16,6 +17,7 @@ class CliDownloadService {
 
   String? _binaryPath;
   String? _versionFilePath;
+  String? _urlCachePath;
 
   CliDownloadService({
     required this._apiService,
@@ -46,6 +48,13 @@ class CliDownloadService {
     final dir = await _appSupportDir;
     _versionFilePath = '${dir.path}/.version';
     return _versionFilePath!;
+  }
+
+  Future<String> get _cachedUrlFilePath async {
+    if (_urlCachePath != null) return _urlCachePath!;
+    final dir = await _appSupportDir;
+    _urlCachePath = '${dir.path}/${AppConstants.downloadUrlCacheFile}';
+    return _urlCachePath!;
   }
 
   Future<bool> isBinaryInstalled() async {
@@ -119,31 +128,104 @@ class CliDownloadService {
     await _downloadAndInstall(onProgress: onProgress);
   }
 
+  Future<String?> _getCachedDownloadUrl() async {
+    final path = await _cachedUrlFilePath;
+    final file = File(path);
+    if (!file.existsSync()) return null;
+    try {
+      final url = file.readAsStringSync().trim();
+      if (url.isNotEmpty) return url;
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _cacheDownloadUrl(String url) async {
+    try {
+      final path = await _cachedUrlFilePath;
+      await File(path).writeAsString(url);
+    } catch (e) {
+      AppLogger.warning('Failed to cache download URL: $e');
+    }
+  }
+
+  Future<String> _resolveAssetUrl() async {
+    try {
+      final release = await _apiService.getLatestRelease();
+      final assetUrl = _apiService.findPlatformAssetUrl(release);
+      if (assetUrl == null) {
+        final assetName = _apiService.getAssetNameForCurrentPlatform();
+        throw DownloadException(
+            'No binary available for current platform ($assetName)');
+      }
+      await _cacheDownloadUrl(assetUrl);
+      return assetUrl;
+    } on DownloadException {
+      rethrow;
+    } catch (e) {
+      final cached = await _getCachedDownloadUrl();
+      if (cached != null) {
+        AppLogger.warning(
+          'Failed to fetch latest release ($e), using cached download URL',
+        );
+        return cached;
+      }
+      throw DownloadException(
+        'Failed to resolve download URL and no cached URL available: $e',
+        underlying: e,
+      );
+    }
+  }
+
+  Future<void> _downloadWithRetry(
+    String url,
+    String archivePath,
+    void Function(double progress)? onProgress,
+  ) async {
+    int attempt = 0;
+
+    while (true) {
+      attempt++;
+      try {
+        AppLogger.info(
+            'Download attempt $attempt/${AppConstants.downloadMaxRetries}: $url');
+        await _dio.download(
+          url,
+          archivePath,
+          onReceiveProgress: (received, total) {
+            if (total > 0 && onProgress != null) {
+              onProgress(received / total);
+            }
+          },
+        );
+        return;
+      } on DioException catch (e) {
+        if (attempt >= AppConstants.downloadMaxRetries) {
+          throw DownloadException(
+            'Download failed after $attempt attempts: $e',
+            underlying: e,
+          );
+        }
+        final delayMs =
+            AppConstants.downloadRetryBaseDelayMs * (1 << (attempt - 1));
+        AppLogger.warning(
+          'Download attempt $attempt failed, retrying in ${delayMs}ms: $e',
+        );
+        await Future<void>.delayed(Duration(milliseconds: delayMs));
+      }
+    }
+  }
+
   Future<void> _downloadAndInstall({
     void Function(double progress)? onProgress,
   }) async {
-    final release = await _apiService.getLatestRelease();
-    final assetUrl = _apiService.findPlatformAssetUrl(release);
-    if (assetUrl == null) {
-      final assetName = _apiService.getAssetNameForCurrentPlatform();
-      throw DownloadException('No binary available for current platform ($assetName)');
-    }
+    final assetUrl = await _resolveAssetUrl();
+    final assetName = _apiService.getAssetNameForCurrentPlatform();
 
     final tempDir = await Directory.systemTemp.createTemp('keepalive_dl_');
-    final assetName = _apiService.getAssetNameForCurrentPlatform();
     final archivePath = '${tempDir.path}/$assetName';
 
     try {
-      AppLogger.info('Downloading ${release.tagName} from $assetUrl');
-      await _dio.download(
-        assetUrl,
-        archivePath,
-        onReceiveProgress: (received, total) {
-          if (total > 0 && onProgress != null) {
-            onProgress(received / total);
-          }
-        },
-      );
+      await _downloadWithRetry(assetUrl, archivePath, onProgress);
 
       AppLogger.info('Extracting $assetName');
       final extractDir = '${tempDir.path}/extract';
@@ -167,9 +249,10 @@ class CliDownloadService {
         await _setExecutable(targetPath);
       }
 
-      await _writeVersionFile(release.tagName);
+      final release = await _resolveReleaseTagForVersion();
+      await _writeVersionFile(release);
 
-      AppLogger.info('CLI ${release.tagName} installed to $targetPath');
+      AppLogger.info('CLI $release installed to $targetPath');
     } on DownloadException {
       rethrow;
     } catch (e) {
@@ -180,6 +263,15 @@ class CliDownloadService {
       } catch (e) {
         AppLogger.warning('Failed to clean up temp dir: $e');
       }
+    }
+  }
+
+  Future<String> _resolveReleaseTagForVersion() async {
+    try {
+      final release = await _apiService.getLatestRelease();
+      return release.tagName;
+    } catch (_) {
+      return 'unknown';
     }
   }
 

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/exceptions.dart';
 import '../core/logger.dart';
 import '../models/cli_flags.dart';
 import '../models/cli_process_state.dart';
@@ -20,6 +21,7 @@ class CliProcessNotifier extends Notifier<CliProcessState> {
   late final ProcessManager _processManager;
   StreamSubscription<String>? _stdoutSub;
   StreamSubscription<String>? _stderrSub;
+  StreamSubscription<CliProcessException>? _crashSub;
 
   @override
   CliProcessState build() {
@@ -33,9 +35,22 @@ class CliProcessNotifier extends Notifier<CliProcessState> {
       AppLogger.warning('[stderr] $line');
     });
 
+    _crashSub = _processManager.unexpectedExitStream.listen((exception) {
+      AppLogger.error('CLI process crashed: ${exception.message}');
+      if (state.isRunning) {
+        state = CliProcessState(
+          status: CliProcessStatus.error,
+          pid: _processManager.pid,
+          startTime: state.startTime,
+          errorMessage: exception.message,
+        );
+      }
+    });
+
     ref.onDispose(() {
       _stdoutSub?.cancel();
       _stderrSub?.cancel();
+      _crashSub?.cancel();
       _processManager.dispose();
     });
 
@@ -101,5 +116,11 @@ class CliProcessNotifier extends Notifier<CliProcessState> {
       await stopSession();
     }
     await startSession(flags);
+  }
+
+  void clearError() {
+    if (state.status == CliProcessStatus.error) {
+      state = const CliProcessState(status: CliProcessStatus.idle);
+    }
   }
 }
