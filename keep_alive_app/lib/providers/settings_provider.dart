@@ -118,6 +118,18 @@ class AppSettingsNotifier extends Notifier<AppSettingsState> {
     );
   }
 
+  Future<void> saveToDisk() async {
+    final s = state;
+    await _repository.setKeepAwake(s.keepAwake);
+    await _repository.setSimulateActivity(s.simulateActivity);
+    await _repository.setEnableLogging(s.enableLogging);
+    await _repository.setBatteryThreshold(s.batteryThreshold);
+    await _repository.setDurationMinutes(s.durationMinutes);
+    await _repository.setClockTime(s.clockTime);
+    await _repository.setAutoStart(s.autoStart);
+    await _repository.setStartMinimized(s.startMinimized);
+  }
+
   Future<void> setKeepAwake(bool value) async {
     await _repository.setKeepAwake(value);
     state = state.copyWith(keepAwake: value);

@@ -324,6 +324,11 @@ static void my_application_startup(GApplication* application) {
 
 static void my_application_shutdown(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
+  if (self->method_channel) {
+    g_autoptr(FlValue) null_args = fl_value_new_null();
+    fl_method_channel_invoke_method(self->method_channel,
+        "systemShutdown", null_args, NULL, NULL, NULL);
+  }
   destroy_tray_icon(self);
   G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
 }

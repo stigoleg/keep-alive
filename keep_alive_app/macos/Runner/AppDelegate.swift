@@ -31,6 +31,16 @@ class AppDelegate: FlutterAppDelegate {
         return false
     }
 
+    override func applicationWillTerminate(_ notification: Notification) {
+        if let controller = mainFlutterWindow?.contentViewController as? FlutterViewController {
+            let channel = FlutterMethodChannel(
+                name: kPlatformChannelName,
+                binaryMessenger: controller.engine.binaryMessenger
+            )
+            channel.invokeMethod("systemShutdown", arguments: nil)
+        }
+    }
+
     override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         return true
     }

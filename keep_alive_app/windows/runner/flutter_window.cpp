@@ -85,6 +85,16 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_QUERYENDSESSION:
+      return TRUE;
+
+    case WM_ENDSESSION:
+      if (wparam == TRUE && platform_channel_) {
+        platform_channel_->InvokeMethod("systemShutdown",
+            std::make_unique<flutter::EncodableValue>(flutter::EncodableMap()));
+      }
+      return 0;
+
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
