@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 
 import '../core/constants.dart';
+import '../models/battery_info.dart';
 import 'platform_interface.dart';
 
 class KeepAlivePlatformLinux extends KeepAlivePlatform {
@@ -49,6 +50,15 @@ class KeepAlivePlatformLinux extends KeepAlivePlatform {
   @override
   Future<void> hidePopover() async {
     // Not applicable on Linux.
+  }
+
+  @override
+  Future<BatteryInfo> getBatteryInfo() async {
+    final result = await _channel.invokeMapMethod<String, dynamic>('getBatteryInfo');
+    if (result == null) {
+      return const BatteryInfo(percentage: 100.0, isPresent: false);
+    }
+    return BatteryInfo.fromJson(result);
   }
 
   @override

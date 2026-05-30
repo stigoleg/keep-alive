@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 
+import '../models/battery_info.dart';
 import 'platform_linux.dart';
 import 'platform_macos.dart';
 import 'platform_windows.dart';
@@ -32,4 +33,6 @@ abstract class KeepAlivePlatform {
   Future<void> hidePopover();
 
   Future<String> getAppSupportDir();
+
+  Future<BatteryInfo> getBatteryInfo();
 }
