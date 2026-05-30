@@ -67,7 +67,11 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
   Future<void> _initApp() async {
     AppLogger.info('Initializing app lifecycle');
 
-    await _configureMainWindow();
+    try {
+      await _configureMainWindow();
+    } catch (e) {
+      AppLogger.error('Failed to configure main window', e);
+    }
 
     try {
       await ref.read(appSettingsProvider.notifier).restoreFromDisk();

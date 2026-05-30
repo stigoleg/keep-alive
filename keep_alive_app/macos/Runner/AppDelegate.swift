@@ -162,7 +162,16 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
 
     private func resolveAssetPath(_ assetKey: String) -> String? {
         let lookupKey = FlutterDartProject.lookupKey(forAsset: assetKey)
-        return Bundle.main.path(forResource: lookupKey, ofType: nil)
+        let nsKey = lookupKey as NSString
+        let directory = nsKey.deletingLastPathComponent
+        let filename = nsKey.lastPathComponent
+        let name = (filename as NSString).deletingPathExtension
+        let ext = (filename as NSString).pathExtension
+        return Bundle.main.path(
+            forResource: name,
+            ofType: ext.isEmpty ? nil : ext,
+            inDirectory: directory.isEmpty ? nil : directory
+        )
     }
 
     // MARK: - Tray Icon

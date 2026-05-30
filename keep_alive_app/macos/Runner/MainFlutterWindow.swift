@@ -27,8 +27,6 @@ class MainFlutterWindow: NSWindow {
         self.isMovableByWindowBackground = false
         self.isReleasedWhenClosed = false
 
-        self.orderOut(nil)
-
         guard let contentView = self.contentView else { return }
         contentView.wantsLayer = true
 
@@ -41,9 +39,9 @@ class MainFlutterWindow: NSWindow {
         visualEffect.layer?.cornerRadius = 12
         visualEffect.layer?.masksToBounds = true
 
-        contentView.addSubview(visualEffect, positioned: .below, relativeTo: contentView.subviews.first)
+        contentView.addSubview(visualEffect, positioned: .below, relativeTo: nil)
     }
 
     override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
+    override var canBecomeMain: Bool { true }
 }
