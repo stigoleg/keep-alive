@@ -42,12 +42,9 @@ class _PopupPanelState extends ConsumerState<PopupPanel> {
     _lastHeight = targetHeight;
 
     windowManager.getBounds().then((bounds) {
-      final dyChange = bounds.size.height - targetHeight;
+      // Anchor the top edge to the menu bar — only resize, never reposition.
+      // setSize on macOS/Win/Linux preserves the top-left origin.
       windowManager.setSize(Size(bounds.size.width, targetHeight));
-      windowManager.setPosition(Offset(
-        bounds.left,
-        bounds.top + dyChange,
-      ));
     }).catchError((_) {});
   }
 

@@ -39,21 +39,23 @@ class ToggleSection extends ConsumerWidget {
             },
           ),
           if (settings.keepAwake) ...[
-            const SizedBox(height: AppTheme.spacing8),
+            _Separator(),
             const TimerSection(),
-            const SizedBox(height: AppTheme.spacing4),
+            _Separator(),
             const BatterySection(),
             _Separator(),
+            ToggleSwitch(
+              label: 'Simulate Activity',
+              description: 'Mimic user input to appear active',
+              value: settings.simulateActivity,
+              onChanged: (value) {
+                ref
+                    .read(appSettingsProvider.notifier)
+                    .setSimulateActivity(value);
+                ref.read(sessionProvider).applySettingsAndRestart();
+              },
+            ),
           ],
-          ToggleSwitch(
-            label: 'Simulate Activity',
-            description: 'Mimic user input to appear active',
-            value: settings.simulateActivity,
-            onChanged: (value) {
-              ref.read(appSettingsProvider.notifier).setSimulateActivity(value);
-              ref.read(sessionProvider).applySettingsAndRestart();
-            },
-          ),
           _Separator(),
           ToggleSwitch(
             label: 'Enable Logging',
