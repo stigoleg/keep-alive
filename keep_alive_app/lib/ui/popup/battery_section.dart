@@ -6,6 +6,7 @@ import '../../providers/session_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/battery_slider.dart';
+import '../widgets/toggle_switch.dart';
 
 class BatterySection extends ConsumerWidget {
   const BatterySection({super.key});
@@ -21,17 +22,42 @@ class BatterySection extends ConsumerWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(
-        horizontal: AppTheme.spacing12,
+        horizontal: AppTheme.spacing4,
         vertical: AppTheme.spacing4,
       ),
-      child: BatterySlider(
-        value: threshold ?? 50,
-        label: 'Stop when battery drops to',
-        disabled: belowThreshold,
-        onChanged: (value) {
-          ref.read(appSettingsProvider.notifier).setBatteryThreshold(value);
-          ref.read(sessionProvider).applySettingsAndRestart();
-        },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ToggleSwitch(
+            label: 'Stop when battery drops to',
+            value: settings.batteryThresholdEnabled,
+            onChanged: (value) {
+              ref
+                  .read(appSettingsProvider.notifier)
+                  .setBatteryThresholdEnabled(value);
+              ref.read(sessionProvider).applySettingsAndRestart();
+            },
+          ),
+          if (settings.batteryThresholdEnabled)
+            Padding(
+              padding: const EdgeInsets.only(
+                left: AppTheme.spacing8,
+                right: AppTheme.spacing8,
+              ),
+              child: BatterySlider(
+                value: threshold ?? 50,
+                label: null,
+                disabled: belowThreshold,
+                onChanged: (value) {
+                  ref
+                      .read(appSettingsProvider.notifier)
+                      .setBatteryThreshold(value);
+                  ref.read(sessionProvider).applySettingsAndRestart();
+                },
+              ),
+            ),
+        ],
       ),
     );
   }

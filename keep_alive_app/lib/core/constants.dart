@@ -50,4 +50,12 @@ class AppConstants {
 
   static const String downloadUrlCacheFile = '.download_url_cache';
   static const String offlineMode = 'KeepAlive running in offline mode';
+
+  static const String homebrewTapRepo = 'stigoleg/homebrew-tap';
+  static const String homebrewFormula = 'keepalive';
+
+  static const String scoopBucketName = 'stigoleg';
+  static const String scoopBucketUrl =
+      'https://github.com/stigoleg/scoop-bucket.git';
+  static const String scoopPackage = 'keepalive';
 }

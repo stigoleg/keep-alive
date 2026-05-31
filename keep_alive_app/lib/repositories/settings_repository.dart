@@ -6,6 +6,7 @@ class SettingsRepository {
   static const _keySimulateActivity = 'simulateActivity';
   static const _keyEnableLogging = 'enableLogging';
   static const _keyBatteryThreshold = 'batteryThreshold';
+  static const _keyBatteryThresholdEnabled = 'batteryThresholdEnabled';
   static const _keyDurationMinutes = 'durationMinutes';
   static const _keyClockTime = 'clockTime';
   static const _keyAutoStart = 'autoStart';
@@ -60,6 +61,16 @@ class SettingsRepository {
   Future<int?> getBatteryThreshold() async {
     final prefs = await _instance;
     return prefs.getInt(_keyBatteryThreshold);
+  }
+
+  Future<void> setBatteryThresholdEnabled(bool value) async {
+    final prefs = await _instance;
+    await prefs.setBool(_keyBatteryThresholdEnabled, value);
+  }
+
+  Future<bool> getBatteryThresholdEnabled() async {
+    final prefs = await _instance;
+    return prefs.getBool(_keyBatteryThresholdEnabled) ?? false;
   }
 
   Future<void> setDurationMinutes(int? value) async {

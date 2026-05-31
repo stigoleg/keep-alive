@@ -1,5 +1,6 @@
 import Cocoa
 import FlutterMacOS
+import IOKit.ps
 import ServiceManagement
 
 private let kPlatformChannelName = "com.stigoleg.keepAliveApp/platform"
@@ -455,10 +456,62 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     // MARK: - Battery Info
 
     private func handleGetBatteryInfo(result: @escaping FlutterResult) {
+        let blob = IOPSCopyPowerSourcesInfo()
+        guard let blob = blob?.takeRetainedValue() else {
+            let batteryInfo: [String: Any] = [
+                "percentage": 100.0,
+                "isCharging": false,
+                "isPresent": false,
+            ]
+            result(batteryInfo)
+            return
+        }
+
+        guard let sources = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [[String: Any]],
+              !sources.isEmpty else {
+            let batteryInfo: [String: Any] = [
+                "percentage": 100.0,
+                "isCharging": false,
+                "isPresent": false,
+            ]
+            result(batteryInfo)
+            return
+        }
+
+        var currentCapacity = 0
+        var maxCapacity = 0
+        var isCharging = false
+        var isPresent = false
+
+        for source in sources {
+            if let type = source[kIOPSPowerSourceStateKey] as? String,
+               type == kIOPSBatteryPowerValue || type == kIOPSACPowerValue {
+                isPresent = true
+                if let current = source[kIOPSCurrentCapacityKey] as? Int {
+                    currentCapacity += current
+                }
+                if let max = source[kIOPSMaxCapacityKey] as? Int {
+                    maxCapacity += max
+                }
+                if let charging = source[kIOPSIsChargingKey] as? Bool {
+                    isCharging = isCharging || charging
+                }
+            }
+        }
+
+        var percentage = 100.0
+        if maxCapacity > 0 {
+            percentage = (Double(currentCapacity) / Double(maxCapacity) * 100.0)
+                .rounded()
+        }
+
+        if percentage < 0 { percentage = 0 }
+        if percentage > 100 { percentage = 100 }
+
         let batteryInfo: [String: Any] = [
-            "percentage": 100.0,
-            "isCharging": true,
-            "isPresent": true,
+            "percentage": percentage,
+            "isCharging": isCharging,
+            "isPresent": isPresent,
         ]
         result(batteryInfo)
     }

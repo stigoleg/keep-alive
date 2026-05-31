@@ -81,15 +81,21 @@ class ToggleSwitch extends StatelessWidget {
 
   Widget _buildSwitch(BuildContext context, bool effectiveEnabled) {
     if (PlatformUtils.isMacOS) {
-      return CupertinoSwitch(
-        value: value,
-        onChanged: effectiveEnabled ? onChanged : null,
-        activeTrackColor: CupertinoTheme.of(context).primaryColor,
+      return Transform.scale(
+        scale: 0.7,
+        child: CupertinoSwitch(
+          value: value,
+          onChanged: effectiveEnabled ? onChanged : null,
+          activeTrackColor: CupertinoTheme.of(context).primaryColor,
+        ),
       );
     }
-    return Switch(
-      value: value,
-      onChanged: effectiveEnabled ? onChanged : null,
+    return Transform.scale(
+      scale: 0.75,
+      child: Switch(
+        value: value,
+        onChanged: effectiveEnabled ? onChanged : null,
+      ),
     );
   }
 }
