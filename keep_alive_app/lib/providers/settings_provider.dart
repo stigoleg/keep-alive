@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/constants.dart';
 import '../models/cli_flags.dart';
 import '../repositories/settings_repository.dart';
 
@@ -114,11 +117,40 @@ class AppSettingsState {
 
 class AppSettingsNotifier extends Notifier<AppSettingsState> {
   late final SettingsRepository _repository;
+  Timer? _flushDebounce;
 
   @override
   AppSettingsState build() {
     _repository = SettingsRepository();
+    ref.onDispose(() {
+      _flushDebounce?.cancel();
+      _flushDebounce = null;
+    });
     return const AppSettingsState();
+  }
+
+  void _scheduleFlush() {
+    _flushDebounce?.cancel();
+    _flushDebounce = Timer(
+      const Duration(milliseconds: AppConstants.settingsFlushDebounceMs),
+      () {
+        _flushDebounce = null;
+        unawaited(_writeAll(state));
+      },
+    );
+  }
+
+  Future<void> _writeAll(AppSettingsState s) async {
+    await _repository.setKeepAwake(s.keepAwake);
+    await _repository.setSimulateActivity(s.simulateActivity);
+    await _repository.setEnableLogging(s.enableLogging);
+    await _repository.setBatteryThreshold(s.batteryThreshold);
+    await _repository.setBatteryThresholdEnabled(s.batteryThresholdEnabled);
+    await _repository.setDurationMinutes(s.durationMinutes);
+    await _repository.setClockTime(s.clockTime);
+    await _repository.setAutoStart(s.autoStart);
+    await _repository.setStartMinimized(s.startMinimized);
+    await _repository.setShowCountdownInMenuBar(s.showCountdownInMenuBar);
   }
 
   Future<void> restoreFromDisk() async {
@@ -137,67 +169,59 @@ class AppSettingsNotifier extends Notifier<AppSettingsState> {
   }
 
   Future<void> saveToDisk() async {
-    final s = state;
-    await _repository.setKeepAwake(s.keepAwake);
-    await _repository.setSimulateActivity(s.simulateActivity);
-    await _repository.setEnableLogging(s.enableLogging);
-    await _repository.setBatteryThreshold(s.batteryThreshold);
-    await _repository.setBatteryThresholdEnabled(s.batteryThresholdEnabled);
-    await _repository.setDurationMinutes(s.durationMinutes);
-    await _repository.setClockTime(s.clockTime);
-    await _repository.setAutoStart(s.autoStart);
-    await _repository.setStartMinimized(s.startMinimized);
-    await _repository.setShowCountdownInMenuBar(s.showCountdownInMenuBar);
+    _flushDebounce?.cancel();
+    _flushDebounce = null;
+    await _writeAll(state);
   }
 
   Future<void> setKeepAwake(bool value) async {
-    await _repository.setKeepAwake(value);
     state = state.copyWith(keepAwake: value);
+    _scheduleFlush();
   }
 
   Future<void> setSimulateActivity(bool value) async {
-    await _repository.setSimulateActivity(value);
     state = state.copyWith(simulateActivity: value);
+    _scheduleFlush();
   }
 
   Future<void> setEnableLogging(bool value) async {
-    await _repository.setEnableLogging(value);
     state = state.copyWith(enableLogging: value);
+    _scheduleFlush();
   }
 
   Future<void> setBatteryThreshold(int? value) async {
-    await _repository.setBatteryThreshold(value);
     state = state.copyWith(batteryThreshold: value);
+    _scheduleFlush();
   }
 
   Future<void> setBatteryThresholdEnabled(bool value) async {
-    await _repository.setBatteryThresholdEnabled(value);
     state = state.copyWith(batteryThresholdEnabled: value);
+    _scheduleFlush();
   }
 
   Future<void> setDurationMinutes(int? value) async {
-    await _repository.setDurationMinutes(value);
     state = state.copyWith(durationMinutes: value);
+    _scheduleFlush();
   }
 
   Future<void> setClockTime(DateTime? value) async {
-    await _repository.setClockTime(value);
     state = state.copyWith(clockTime: value);
+    _scheduleFlush();
   }
 
   Future<void> setAutoStart(bool value) async {
-    await _repository.setAutoStart(value);
     state = state.copyWith(autoStart: value);
+    _scheduleFlush();
   }
 
   Future<void> setStartMinimized(bool value) async {
-    await _repository.setStartMinimized(value);
     state = state.copyWith(startMinimized: value);
+    _scheduleFlush();
   }
 
   Future<void> setShowCountdownInMenuBar(bool value) async {
-    await _repository.setShowCountdownInMenuBar(value);
     state = state.copyWith(showCountdownInMenuBar: value);
+    _scheduleFlush();
   }
 }
 

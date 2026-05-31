@@ -179,6 +179,7 @@ void main() {
       await notifier.setBatteryThreshold(25);
       await notifier.setDurationMinutes(90);
       await notifier.setSimulateActivity(true);
+      await notifier.saveToDisk();
 
       final before = container.read(appSettingsProvider);
 
@@ -200,6 +201,7 @@ void main() {
       await notifier.setEnableLogging(true);
       await notifier.setBatteryThreshold(40);
       await notifier.setDurationMinutes(30);
+      await notifier.saveToDisk();
 
       final container2 = ProviderContainer();
       await container2.read(appSettingsProvider.notifier).restoreFromDisk();

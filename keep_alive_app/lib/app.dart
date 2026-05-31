@@ -74,11 +74,31 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     _platform.setStatusBarTitle('');
   }
 
-  void _startMenuBarCountdown() {
-    _stopMenuBarCountdown();
+  void _ensureMenuBarCountdownRunning() {
+    if (_menuBarCountdownTimer != null) return;
     _menuBarCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _updateMenuBarCountdown();
     });
+    _updateMenuBarCountdown();
+  }
+
+  void _syncMenuBarCountdown() {
+    if (_quitting) {
+      _stopMenuBarCountdown();
+      return;
+    }
+    final settings = ref.read(appSettingsProvider);
+    final processState = ref.read(cliProcessProvider);
+    final shouldRun = settings.showCountdownInMenuBar &&
+        processState.isRunning &&
+        settings.durationMinutes != null &&
+        processState.startTime != null;
+
+    if (shouldRun) {
+      _ensureMenuBarCountdownRunning();
+    } else {
+      _stopMenuBarCountdown();
+    }
   }
 
   void _updateMenuBarCountdown() {
@@ -156,6 +176,11 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
       if (isError) {
         AppLogger.warning('CLI process in error state: ${next.errorMessage}');
       }
+      _syncMenuBarCountdown();
+    });
+
+    ref.listenManual(appSettingsProvider, (_, __) {
+      _syncMenuBarCountdown();
     });
 
     final settings = ref.read(appSettingsProvider);
@@ -174,7 +199,7 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
       }
     }
 
-    _startMenuBarCountdown();
+    _syncMenuBarCountdown();
 
     AppLogger.info('App initialization complete');
   }

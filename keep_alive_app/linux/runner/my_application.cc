@@ -290,6 +290,84 @@ static gchar* get_app_support_dir(void) {
   return g_strdup(g_get_user_data_dir());
 }
 
+// ── Battery info ────────────────────────────────────────
+
+static gboolean read_battery_int(const gchar* battery_dir,
+                                 const gchar* file,
+                                 gint* out_value) {
+  gchar* path = g_build_filename(battery_dir, file, NULL);
+  gchar* contents = NULL;
+  gsize length = 0;
+  gboolean ok = g_file_get_contents(path, &contents, &length, NULL);
+  g_free(path);
+  if (!ok || !contents) {
+    g_free(contents);
+    return FALSE;
+  }
+  *out_value = atoi(g_strstrip(contents));
+  g_free(contents);
+  return TRUE;
+}
+
+static gboolean read_battery_string(const gchar* battery_dir,
+                                    const gchar* file,
+                                    gchar** out_value) {
+  gchar* path = g_build_filename(battery_dir, file, NULL);
+  gchar* contents = NULL;
+  gboolean ok = g_file_get_contents(path, &contents, NULL, NULL);
+  g_free(path);
+  if (!ok || !contents) {
+    g_free(contents);
+    return FALSE;
+  }
+  g_strstrip(contents);
+  *out_value = contents;
+  return TRUE;
+}
+
+static FlValue* get_battery_info(void) {
+  FlValue* map = fl_value_new_map();
+  const gchar* base = "/sys/class/power_supply";
+  GError* error = NULL;
+  GDir* dir = g_dir_open(base, 0, &error);
+  if (dir == NULL) {
+    if (error) g_error_free(error);
+    fl_value_set_string(map, "percentage", fl_value_new_float(100.0));
+    fl_value_set_string(map, "isCharging", fl_value_new_bool(FALSE));
+    fl_value_set_string(map, "isPresent", fl_value_new_bool(FALSE));
+    return map;
+  }
+
+  gboolean found = FALSE;
+  gint capacity = 100;
+  gboolean charging = FALSE;
+  const gchar* entry;
+  while ((entry = g_dir_read_name(dir)) != NULL) {
+    if (!g_str_has_prefix(entry, "BAT")) continue;
+    gchar* battery_dir = g_build_filename(base, entry, NULL);
+    gint cap = 0;
+    if (read_battery_int(battery_dir, "capacity", &cap)) {
+      capacity = cap;
+      found = TRUE;
+    }
+    gchar* status = NULL;
+    if (read_battery_string(battery_dir, "status", &status)) {
+      charging = (g_strcmp0(status, "Charging") == 0 ||
+                  g_strcmp0(status, "Full") == 0);
+      g_free(status);
+    }
+    g_free(battery_dir);
+    if (found) break;
+  }
+  g_dir_close(dir);
+
+  fl_value_set_string(map, "percentage",
+                      fl_value_new_float(found ? (double)capacity : 100.0));
+  fl_value_set_string(map, "isCharging", fl_value_new_bool(charging));
+  fl_value_set_string(map, "isPresent", fl_value_new_bool(found));
+  return map;
+}
+
 // ── Method channel handler ──────────────────────────────
 
 static void method_channel_cb(FlMethodChannel* channel, FlMethodCall* method_call,
@@ -376,6 +454,15 @@ static void method_channel_cb(FlMethodChannel* channel, FlMethodCall* method_cal
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(
         fl_value_new_string(dir)));
     g_free(dir);
+
+  } else if (g_strcmp0(method, "setStatusBarTitle") == 0) {
+    // GtkStatusIcon has no inline title slot; accept and ignore so the
+    // shared cross-platform Dart caller does not get MissingPluginException.
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(NULL));
+
+  } else if (g_strcmp0(method, "getBatteryInfo") == 0) {
+    FlValue* battery = get_battery_info();
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(battery));
 
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());

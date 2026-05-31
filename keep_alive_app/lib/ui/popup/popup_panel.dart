@@ -36,7 +36,9 @@ class _PopupPanelState extends ConsumerState<PopupPanel> {
     if (contentHeight <= 0) return;
 
     final targetHeight = contentHeight + 16;
-    if (targetHeight == _lastHeight) return;
+    if (_lastHeight != null && (targetHeight - _lastHeight!).abs() < 0.5) {
+      return;
+    }
     _lastHeight = targetHeight;
 
     windowManager.getBounds().then((bounds) {
@@ -49,10 +51,13 @@ class _PopupPanelState extends ConsumerState<PopupPanel> {
     }).catchError((_) {});
   }
 
+  bool _onSizeChanged(SizeChangedLayoutNotification _) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncWindowSize());
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
-    WidgetsBinding.instance.addPostFrameCallback((_) => _syncWindowSize());
-
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -64,19 +69,24 @@ class _PopupPanelState extends ConsumerState<PopupPanel> {
         ),
         clipBehavior: Clip.antiAlias,
         child: SingleChildScrollView(
-          child: Column(
-            key: _contentKey,
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              StatusHeader(onOpenSettings: widget.onOpenSettings),
-              _buildDivider(theme),
-              const ToggleSection(),
-              _buildDivider(theme),
-              const BatterySection(),
-              _buildDivider(theme),
-              const CliStatusFooter(),
-            ],
+          child: NotificationListener<SizeChangedLayoutNotification>(
+            onNotification: _onSizeChanged,
+            child: SizeChangedLayoutNotifier(
+              child: Column(
+                key: _contentKey,
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  StatusHeader(onOpenSettings: widget.onOpenSettings),
+                  _buildDivider(theme),
+                  const ToggleSection(),
+                  _buildDivider(theme),
+                  const BatterySection(),
+                  _buildDivider(theme),
+                  const CliStatusFooter(),
+                ],
+              ),
+            ),
           ),
         ),
       ),

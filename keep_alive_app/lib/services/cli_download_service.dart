@@ -157,7 +157,8 @@ class CliDownloadService {
           final lines = stdout.split('\n');
           final firstPath = lines.first.trim();
           if (firstPath.isNotEmpty) {
-            AppLogger.info('Found keepalive in PATH: $firstPath');
+            AppLogger.info(
+                'Found keepalive in PATH: ${AppLogger.scrubPath(firstPath)}');
             return firstPath;
           }
         }
@@ -168,7 +169,7 @@ class CliDownloadService {
     return null;
   }
 
-  String? _findLocalBinary() {
+  Future<String?> _findLocalBinary() async {
     final binaryName = Platform.isWindows
         ? '${AppConstants.cliBinaryName}.exe'
         : AppConstants.cliBinaryName;
@@ -193,8 +194,9 @@ class CliDownloadService {
       final path = '$dir/$binaryName';
       final file = File(path);
       if (file.existsSync()) {
-        if (Platform.isWindows || _canExecute(file)) {
-          AppLogger.info('Found local keepalive binary: $path');
+        if (Platform.isWindows || await _canExecute(file)) {
+          AppLogger.info(
+              'Found local keepalive binary: ${AppLogger.scrubPath(path)}');
           return path;
         }
       }
@@ -203,12 +205,11 @@ class CliDownloadService {
     return null;
   }
 
-  bool _canExecute(File file) {
+  Future<bool> _canExecute(File file) async {
     try {
       if (_hasExecutableBitSet(file)) return true;
-      _setExecutableSync(file.path);
-      _hasExecutableBitSet(file);
-      return true;
+      await _setExecutable(file.path);
+      return _hasExecutableBitSet(file);
     } catch (_) {
       return false;
     }
@@ -221,17 +222,6 @@ class CliDownloadService {
       return mode.contains('x');
     } catch (_) {
       return false;
-    }
-  }
-
-  void _setExecutableSync(String path) {
-    try {
-      final result = Process.runSync('chmod', ['+x', path]);
-      if (result.exitCode != 0) {
-        AppLogger.warning('chmod +x failed: ${result.stderr}');
-      }
-    } catch (e) {
-      AppLogger.warning('Failed to set executable bit: $e');
     }
   }
 
@@ -260,34 +250,41 @@ class CliDownloadService {
           if (verified) {
             _systemBinaryPath = pathBinary;
             _usingSystemBinary = true;
-            AppLogger.info('keepalive already installed via Homebrew: $pathBinary');
+            AppLogger.info(
+                'keepalive already installed via Homebrew: ${AppLogger.scrubPath(pathBinary)}');
             return true;
           }
         }
       }
 
       AppLogger.info('Installing keepalive via Homebrew...');
-      final tapResult = await Process.run(
+      final tapResult = await _runWithTimeout(
         'brew',
         ['tap', AppConstants.homebrewTapRepo],
-        runInShell: true,
       );
-      if (tapResult.exitCode != 0) {
+      if (tapResult == null) {
+        AppLogger.warning('brew tap timed out (non-fatal)');
+      } else if (tapResult.exitCode != 0) {
         AppLogger.warning(
             'brew tap failed (non-fatal): ${tapResult.stderr}');
       }
 
-      final installResult = await Process.run(
+      final installResult = await _runWithTimeout(
         'brew',
         ['install', AppConstants.homebrewFormula],
-        runInShell: true,
       );
+      if (installResult == null) {
+        AppLogger.warning(
+            'brew install timed out after ${AppConstants.packageManagerInstallTimeoutSeconds}s, falling back to direct download');
+        return false;
+      }
       if (installResult.exitCode == 0) {
         final binaryPath = await _findBinaryInPath();
         if (binaryPath != null) {
           _systemBinaryPath = binaryPath;
           _usingSystemBinary = true;
-          AppLogger.info('keepalive installed via Homebrew: $binaryPath');
+          AppLogger.info(
+              'keepalive installed via Homebrew: ${AppLogger.scrubPath(binaryPath)}');
           return true;
         }
       } else {
@@ -298,6 +295,21 @@ class CliDownloadService {
       AppLogger.warning('Homebrew install failed: $e');
     }
     return false;
+  }
+
+  Future<ProcessResult?> _runWithTimeout(
+    String executable,
+    List<String> args,
+  ) async {
+    try {
+      return await Process.run(executable, args, runInShell: true).timeout(
+        const Duration(
+          seconds: AppConstants.packageManagerInstallTimeoutSeconds,
+        ),
+      );
+    } on TimeoutException {
+      return null;
+    }
   }
 
   Future<bool> _tryInstallViaScoop() async {
@@ -314,32 +326,38 @@ class CliDownloadService {
       }
 
       AppLogger.info('Installing keepalive via Scoop...');
-      final bucketResult = await Process.run(
+      final bucketResult = await _runWithTimeout(
         'scoop',
         [
           'bucket',
           'add',
           AppConstants.scoopBucketName,
-          AppConstants.scoopBucketUrl
+          AppConstants.scoopBucketUrl,
         ],
-        runInShell: true,
       );
-      if (bucketResult.exitCode != 0) {
+      if (bucketResult == null) {
+        AppLogger.warning('scoop bucket add timed out (non-fatal)');
+      } else if (bucketResult.exitCode != 0) {
         AppLogger.warning(
             'scoop bucket add failed (non-fatal): ${bucketResult.stderr}');
       }
 
-      final installResult = await Process.run(
+      final installResult = await _runWithTimeout(
         'scoop',
         ['install', AppConstants.scoopPackage],
-        runInShell: true,
       );
+      if (installResult == null) {
+        AppLogger.warning(
+            'scoop install timed out after ${AppConstants.packageManagerInstallTimeoutSeconds}s, falling back to direct download');
+        return false;
+      }
       if (installResult.exitCode == 0) {
         final binaryPath = await _findBinaryInPath();
         if (binaryPath != null) {
           _systemBinaryPath = binaryPath;
           _usingSystemBinary = true;
-          AppLogger.info('keepalive installed via Scoop: $binaryPath');
+          AppLogger.info(
+              'keepalive installed via Scoop: ${AppLogger.scrubPath(binaryPath)}');
           return true;
         }
       } else {
@@ -361,25 +379,27 @@ class CliDownloadService {
       if (verified) {
         _systemBinaryPath = pathBinary;
         _usingSystemBinary = true;
-        AppLogger.info('Using keepalive from PATH: $pathBinary');
+        AppLogger.info(
+            'Using keepalive from PATH: ${AppLogger.scrubPath(pathBinary)}');
         return;
       }
       AppLogger.warning(
-        'keepalive found in PATH at $pathBinary but verification failed',
+        'keepalive found in PATH at ${AppLogger.scrubPath(pathBinary)} but verification failed',
       );
     }
 
-    final localBinary = _findLocalBinary();
+    final localBinary = await _findLocalBinary();
     if (localBinary != null) {
       final verified = await _verifyBinaryAt(localBinary);
       if (verified) {
         _systemBinaryPath = localBinary;
         _usingSystemBinary = true;
-        AppLogger.info('Using keepalive from local filesystem: $localBinary');
+        AppLogger.info(
+            'Using keepalive from local filesystem: ${AppLogger.scrubPath(localBinary)}');
         return;
       }
       AppLogger.warning(
-        'keepalive found locally at $localBinary but verification failed',
+        'keepalive found locally at ${AppLogger.scrubPath(localBinary)} but verification failed',
       );
     }
 
@@ -559,7 +579,8 @@ class CliDownloadService {
       final release = await _resolveReleaseTagForVersion();
       await _writeVersionFile(release);
 
-      AppLogger.info('CLI $release installed to $targetPath');
+      AppLogger.info(
+          'CLI $release installed to ${AppLogger.scrubPath(targetPath)}');
     } on DownloadException {
       rethrow;
     } catch (e) {

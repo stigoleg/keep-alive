@@ -29,6 +29,11 @@ class ProcessManager {
   final List<String> _stdoutBuffer = [];
   final List<String> _stderrBuffer = [];
 
+  // ignore: cancel_subscriptions
+  StreamSubscription<String>? _stdoutSub;
+  // ignore: cancel_subscriptions
+  StreamSubscription<String>? _stderrSub;
+
   ProcessManager({CliDownloadService? downloadService})
       : _downloadService = downloadService ??
             CliDownloadService(
@@ -80,7 +85,7 @@ class ProcessManager {
       _hasProcess = true;
       AppLogger.info('CLI started with PID ${_currentProcess!.pid}');
 
-      _currentProcess!.stdout
+      _stdoutSub = _currentProcess!.stdout
           .transform(systemEncoding.decoder)
           .transform(const LineSplitter())
           .listen(
@@ -89,7 +94,7 @@ class ProcessManager {
             onDone: _onStdoutDone,
           );
 
-      _currentProcess!.stderr
+      _stderrSub = _currentProcess!.stderr
           .transform(systemEncoding.decoder)
           .transform(const LineSplitter())
           .listen(
@@ -129,9 +134,23 @@ class ProcessManager {
       AppLogger.error('Error during process stop', e);
       rethrow;
     } finally {
+      await _cancelStreamSubs();
       _hasProcess = false;
       _currentProcess = null;
     }
+  }
+
+  Future<void> _cancelStreamSubs() async {
+    final stdoutSub = _stdoutSub;
+    final stderrSub = _stderrSub;
+    _stdoutSub = null;
+    _stderrSub = null;
+    try {
+      await stdoutSub?.cancel();
+    } catch (_) {}
+    try {
+      await stderrSub?.cancel();
+    } catch (_) {}
   }
 
   Future<void> _unixKill(Process process) async {
@@ -198,6 +217,7 @@ class ProcessManager {
       _currentProcess = null;
       _hasProcess = false;
     }
+    unawaited(_cancelStreamSubs());
     _stdoutController.close();
     _stderrController.close();
     _crashController.close();
@@ -207,21 +227,22 @@ class ProcessManager {
   }
 
   void _onStdoutLine(String line) {
-    _stdoutBuffer.add(line);
-    while (_stdoutBuffer.length > AppConstants.maxLogLines) {
-      _stdoutBuffer.removeAt(0);
-    }
+    _appendBounded(_stdoutBuffer, line);
     _safeAddToController(_stdoutController, line);
     AppLogger.debug('[CLI stdout] $line');
   }
 
   void _onStderrLine(String line) {
-    _stderrBuffer.add(line);
-    while (_stderrBuffer.length > AppConstants.maxLogLines) {
-      _stderrBuffer.removeAt(0);
-    }
+    _appendBounded(_stderrBuffer, line);
     _safeAddToController(_stderrController, line);
     AppLogger.warning('[CLI stderr] $line');
+  }
+
+  static void _appendBounded(List<String> buffer, String line) {
+    buffer.add(line);
+    if (buffer.length > AppConstants.maxLogLines) {
+      buffer.removeRange(0, buffer.length - AppConstants.maxLogLines);
+    }
   }
 
   void _onStderrError(Object error) {

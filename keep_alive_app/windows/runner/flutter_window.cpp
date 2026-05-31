@@ -170,9 +170,41 @@ void FlutterWindow::HandleMethodCall(
     HandleHidePopover(result);
   } else if (method == "getAppSupportDir") {
     HandleGetAppSupportDir(result);
+  } else if (method == "setStatusBarTitle") {
+    HandleSetStatusBarTitle(result);
+  } else if (method == "getBatteryInfo") {
+    HandleGetBatteryInfo(result);
   } else {
     result->NotImplemented();
   }
+}
+
+void FlutterWindow::HandleSetStatusBarTitle(
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result) {
+  // Windows system tray has no inline title slot; accept and ignore so the
+  // shared cross-platform Dart caller does not get MissingPluginException.
+  result->Success();
+}
+
+void FlutterWindow::HandleGetBatteryInfo(
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result) {
+  SYSTEM_POWER_STATUS sps;
+  flutter::EncodableMap battery;
+  if (GetSystemPowerStatus(&sps)) {
+    const bool unknown = sps.BatteryLifePercent == 255;
+    const bool noBattery = (sps.BatteryFlag & 128) != 0;
+    const bool present = !unknown && !noBattery;
+    const double percentage = present ? static_cast<double>(sps.BatteryLifePercent) : 100.0;
+    const bool isCharging = sps.ACLineStatus == 1;
+    battery[flutter::EncodableValue("percentage")] = flutter::EncodableValue(percentage);
+    battery[flutter::EncodableValue("isCharging")] = flutter::EncodableValue(isCharging);
+    battery[flutter::EncodableValue("isPresent")] = flutter::EncodableValue(present);
+  } else {
+    battery[flutter::EncodableValue("percentage")] = flutter::EncodableValue(100.0);
+    battery[flutter::EncodableValue("isCharging")] = flutter::EncodableValue(false);
+    battery[flutter::EncodableValue("isPresent")] = flutter::EncodableValue(false);
+  }
+  result->Success(flutter::EncodableValue(battery));
 }
 
 void FlutterWindow::HandleSetAutoStart(

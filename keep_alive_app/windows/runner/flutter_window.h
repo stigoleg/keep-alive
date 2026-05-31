@@ -43,6 +43,10 @@ class FlutterWindow : public Win32Window {
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
   void HandleGetAppSupportDir(
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
+  void HandleSetStatusBarTitle(
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
+  void HandleGetBatteryInfo(
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
 
   void CreateTrayIcon();
   void RemoveTrayIcon();
