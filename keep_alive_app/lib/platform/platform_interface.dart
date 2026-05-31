@@ -27,6 +27,8 @@ abstract class KeepAlivePlatform {
 
   Future<void> setTrayTooltip(String tooltip);
 
+  Future<void> setStatusBarTitle(String title);
+
   Future<int?> showContextMenu(List<String> items);
 
   Future<void> showPopover();

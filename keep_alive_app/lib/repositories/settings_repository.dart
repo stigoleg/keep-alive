@@ -11,6 +11,7 @@ class SettingsRepository {
   static const _keyClockTime = 'clockTime';
   static const _keyAutoStart = 'autoStart';
   static const _keyStartMinimized = 'startMinimized';
+  static const _keyShowCountdownInMenuBar = 'showCountdownInMenuBar';
 
   SharedPreferences? _prefs;
 
@@ -121,5 +122,15 @@ class SettingsRepository {
   Future<bool> getStartMinimized() async {
     final prefs = await _instance;
     return prefs.getBool(_keyStartMinimized) ?? false;
+  }
+
+  Future<void> setShowCountdownInMenuBar(bool value) async {
+    final prefs = await _instance;
+    await prefs.setBool(_keyShowCountdownInMenuBar, value);
+  }
+
+  Future<bool> getShowCountdownInMenuBar() async {
+    final prefs = await _instance;
+    return prefs.getBool(_keyShowCountdownInMenuBar) ?? false;
   }
 }

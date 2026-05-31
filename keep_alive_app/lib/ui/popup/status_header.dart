@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,11 +11,42 @@ import '../../providers/settings_provider.dart';
 import '../../utils/format_utils.dart';
 import '../theme/app_theme.dart';
 
-class StatusHeader extends ConsumerWidget {
-  const StatusHeader({super.key});
+class StatusHeader extends ConsumerStatefulWidget {
+  const StatusHeader({super.key, this.onOpenSettings});
+
+  final VoidCallback? onOpenSettings;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<StatusHeader> createState() => _StatusHeaderState();
+}
+
+class _StatusHeaderState extends ConsumerState<StatusHeader> {
+  Timer? _countdownTimer;
+
+  @override
+  void dispose() {
+    _stopCountdown();
+    super.dispose();
+  }
+
+  void _stopCountdown() {
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+  }
+
+  void _syncCountdownTimer(bool isActive, int? durationMinutes) {
+    final needsTimer = isActive && durationMinutes != null;
+    if (needsTimer && _countdownTimer == null) {
+      _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    } else if (!needsTimer && _countdownTimer != null) {
+      _stopCountdown();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final processState = ref.watch(cliProcessProvider);
     final settings = ref.watch(appSettingsProvider);
     final batteryAsync = ref.watch(batteryStateProvider);
@@ -21,6 +54,8 @@ class StatusHeader extends ConsumerWidget {
     final theme = Theme.of(context);
     final isActive = processState.isRunning;
     final isError = processState.status == CliProcessStatus.error;
+
+    _syncCountdownTimer(isActive, settings.durationMinutes);
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -69,6 +104,21 @@ class StatusHeader extends ConsumerWidget {
                 ref.read(sessionProvider).toggleKeepAwake(true);
               },
             ),
+          if (widget.onOpenSettings != null) ...[
+            if (isError) const SizedBox(width: AppTheme.spacing4),
+            IconButton(
+              onPressed: widget.onOpenSettings,
+              icon: const Icon(Icons.settings, size: AppTheme.iconSmall),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(
+                minWidth: 28,
+                minHeight: 28,
+              ),
+              style: IconButton.styleFrom(
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
           const SizedBox(width: AppTheme.spacing8),
           batteryAsync.when(
             data: (battery) => _BatteryBadge(percentage: battery.percentage),

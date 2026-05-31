@@ -44,30 +44,34 @@ class TrayManager {
   }
 
   void setActiveState(bool isActive) {
-    if (!_initialized || _isActive == isActive) return;
-    _isActive = isActive;
-
-    final icon = _resolveIcon();
-    final tooltip = _resolveTooltip();
-
-    _platform.setTrayIcon(icon);
-    _platform.setTrayTooltip(tooltip);
+    updateTrayState(isActive, _isError);
   }
 
   void setErrorState(bool isError) {
-    if (!_initialized || _isError == isError) return;
+    updateTrayState(_isActive, isError);
+  }
+
+  void updateTrayState(bool isActive, bool isError) {
+    if (!_initialized) return;
+    if (_isActive == isActive && _isError == isError) return;
+
+    _isActive = isActive;
     _isError = isError;
 
     final icon = _resolveIcon();
     final tooltip = _resolveTooltip();
 
+    AppLogger.info('Tray state: active=$isActive, error=$isError → icon=$icon');
+
     try {
       _platform.setTrayIcon(icon);
       _platform.setTrayTooltip(tooltip);
     } catch (e) {
-      AppLogger.warning('Failed to set error tray icon, falling back: $e');
-      _platform.setTrayIcon(_idleIcon);
-      _platform.setTrayTooltip(tooltip);
+      AppLogger.warning('Failed to update tray icon, falling back to idle: $e');
+      try {
+        _platform.setTrayIcon(_idleIcon);
+        _platform.setTrayTooltip(tooltip);
+      } catch (_) {}
     }
   }
 

@@ -144,6 +144,8 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
             handleSetTrayIcon(call, result: result)
         case "setTrayTooltip":
             handleSetTrayTooltip(call, result: result)
+        case "setStatusBarTitle":
+            handleSetStatusBarTitle(call, result: result)
         case "showContextMenu":
             handleShowContextMenu(call, result: result)
         case "showPopover":
@@ -323,6 +325,30 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
             return
         }
         statusItem?.button?.toolTip = tooltip
+        result(nil)
+    }
+
+    private func handleSetStatusBarTitle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let title = args["title"] as? String else {
+            result(FlutterError(code: "INVALID_ARG", message: "Missing 'title' argument", details: nil))
+            return
+        }
+
+        guard let button = statusItem?.button else {
+            result(nil)
+            return
+        }
+
+        if title.isEmpty {
+            statusItem?.length = NSStatusItem.squareLength
+            button.title = ""
+            button.imagePosition = .imageOnly
+        } else {
+            statusItem?.length = NSStatusItem.variableLength
+            button.title = title
+            button.imagePosition = .imageLeading
+        }
         result(nil)
     }
 

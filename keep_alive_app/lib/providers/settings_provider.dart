@@ -13,6 +13,7 @@ class AppSettingsState {
   final DateTime? clockTime;
   final bool autoStart;
   final bool startMinimized;
+  final bool showCountdownInMenuBar;
 
   const AppSettingsState({
     this.keepAwake = false,
@@ -24,6 +25,7 @@ class AppSettingsState {
     this.clockTime,
     this.autoStart = false,
     this.startMinimized = false,
+    this.showCountdownInMenuBar = false,
   });
 
   CliFlags toCliFlags() => CliFlags(
@@ -44,6 +46,7 @@ class AppSettingsState {
     Object? clockTime = _clearClockTime,
     bool? autoStart,
     bool? startMinimized,
+    bool? showCountdownInMenuBar,
   }) {
     return AppSettingsState(
       keepAwake: keepAwake ?? this.keepAwake,
@@ -62,6 +65,8 @@ class AppSettingsState {
           : clockTime as DateTime?,
       autoStart: autoStart ?? this.autoStart,
       startMinimized: startMinimized ?? this.startMinimized,
+      showCountdownInMenuBar:
+          showCountdownInMenuBar ?? this.showCountdownInMenuBar,
     );
   }
 
@@ -77,7 +82,8 @@ class AppSettingsState {
           durationMinutes == other.durationMinutes &&
           clockTime == other.clockTime &&
           autoStart == other.autoStart &&
-          startMinimized == other.startMinimized;
+          startMinimized == other.startMinimized &&
+          showCountdownInMenuBar == other.showCountdownInMenuBar;
 
   @override
   int get hashCode =>
@@ -89,7 +95,8 @@ class AppSettingsState {
       durationMinutes.hashCode ^
       clockTime.hashCode ^
       autoStart.hashCode ^
-      startMinimized.hashCode;
+      startMinimized.hashCode ^
+      showCountdownInMenuBar.hashCode;
 
   @override
   String toString() =>
@@ -97,7 +104,8 @@ class AppSettingsState {
       'enableLogging: $enableLogging, batteryThreshold: $batteryThreshold, '
       'batteryThresholdEnabled: $batteryThresholdEnabled, '
       'durationMinutes: $durationMinutes, clockTime: $clockTime, '
-      'autoStart: $autoStart, startMinimized: $startMinimized)';
+      'autoStart: $autoStart, startMinimized: $startMinimized, '
+      'showCountdownInMenuBar: $showCountdownInMenuBar)';
 
   static const _clearBatteryThreshold = Object();
   static const _clearDurationMinutes = Object();
@@ -124,6 +132,7 @@ class AppSettingsNotifier extends Notifier<AppSettingsState> {
       clockTime: await _repository.getClockTime(),
       autoStart: await _repository.getAutoStart(),
       startMinimized: await _repository.getStartMinimized(),
+      showCountdownInMenuBar: await _repository.getShowCountdownInMenuBar(),
     );
   }
 
@@ -138,6 +147,7 @@ class AppSettingsNotifier extends Notifier<AppSettingsState> {
     await _repository.setClockTime(s.clockTime);
     await _repository.setAutoStart(s.autoStart);
     await _repository.setStartMinimized(s.startMinimized);
+    await _repository.setShowCountdownInMenuBar(s.showCountdownInMenuBar);
   }
 
   Future<void> setKeepAwake(bool value) async {
@@ -183,6 +193,11 @@ class AppSettingsNotifier extends Notifier<AppSettingsState> {
   Future<void> setStartMinimized(bool value) async {
     await _repository.setStartMinimized(value);
     state = state.copyWith(startMinimized: value);
+  }
+
+  Future<void> setShowCountdownInMenuBar(bool value) async {
+    await _repository.setShowCountdownInMenuBar(value);
+    state = state.copyWith(showCountdownInMenuBar: value);
   }
 }
 

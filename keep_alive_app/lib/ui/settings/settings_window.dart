@@ -160,6 +160,16 @@ class _StartupSection extends StatelessWidget {
                 ref.read(appSettingsProvider.notifier).setStartMinimized(value),
           ),
         ),
+        const SizedBox(height: AppTheme.spacing4),
+        _SettingRow(
+          label: 'Show Countdown in Menu Bar',
+          subtitle: 'Display remaining time in the menu bar icon',
+          child: Switch(
+            value: settings.showCountdownInMenuBar,
+            onChanged: (value) =>
+                ref.read(appSettingsProvider.notifier).setShowCountdownInMenuBar(value),
+          ),
+        ),
       ],
     );
   }

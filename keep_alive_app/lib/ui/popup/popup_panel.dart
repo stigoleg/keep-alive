@@ -6,11 +6,12 @@ import '../theme/app_theme.dart';
 import 'battery_section.dart';
 import 'cli_status_footer.dart';
 import 'status_header.dart';
-import 'timer_section.dart';
 import 'toggle_section.dart';
 
 class PopupPanel extends ConsumerStatefulWidget {
-  const PopupPanel({super.key});
+  const PopupPanel({super.key, this.onOpenSettings});
+
+  final VoidCallback? onOpenSettings;
 
   @override
   ConsumerState<PopupPanel> createState() => _PopupPanelState();
@@ -68,11 +69,9 @@ class _PopupPanelState extends ConsumerState<PopupPanel> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const StatusHeader(),
+              StatusHeader(onOpenSettings: widget.onOpenSettings),
               _buildDivider(theme),
               const ToggleSection(),
-              _buildDivider(theme),
-              const TimerSection(),
               _buildDivider(theme),
               const BatterySection(),
               _buildDivider(theme),

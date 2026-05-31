@@ -7,6 +7,7 @@ import '../../providers/session_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/toggle_switch.dart';
+import 'timer_section.dart';
 
 class ToggleSection extends ConsumerWidget {
   const ToggleSection({super.key});
@@ -36,7 +37,11 @@ class ToggleSection extends ConsumerWidget {
               ref.read(sessionProvider).toggleKeepAwake(value);
             },
           ),
-          _Separator(),
+          if (settings.keepAwake) ...[
+            const SizedBox(height: AppTheme.spacing8),
+            const TimerSection(),
+            _Separator(),
+          ],
           ToggleSwitch(
             label: 'Simulate Activity',
             description: 'Mimic user input to appear active',

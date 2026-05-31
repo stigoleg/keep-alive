@@ -36,6 +36,7 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   final KeepAlivePlatform _platform = KeepAlivePlatform.instance;
   StreamSubscription<String>? _shutdownSubscription;
+  Timer? _menuBarCountdownTimer;
   bool _popupVisible = false;
   bool _quitting = false;
 
@@ -59,11 +60,59 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
 
   @override
   void dispose() {
+    _stopMenuBarCountdown();
     _shutdownSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     windowManager.removeListener(this);
     _trayManager.dispose();
     super.dispose();
+  }
+
+  void _stopMenuBarCountdown() {
+    _menuBarCountdownTimer?.cancel();
+    _menuBarCountdownTimer = null;
+    _platform.setStatusBarTitle('');
+  }
+
+  void _startMenuBarCountdown() {
+    _stopMenuBarCountdown();
+    _menuBarCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _updateMenuBarCountdown();
+    });
+  }
+
+  void _updateMenuBarCountdown() {
+    if (_quitting) return;
+
+    final settings = ref.read(appSettingsProvider);
+    if (!settings.showCountdownInMenuBar) {
+      _platform.setStatusBarTitle('');
+      return;
+    }
+
+    final processState = ref.read(cliProcessProvider);
+    if (!processState.isRunning || settings.durationMinutes == null || processState.startTime == null) {
+      _platform.setStatusBarTitle('');
+      return;
+    }
+
+    final endTime = processState.startTime!.add(Duration(minutes: settings.durationMinutes!));
+    final remaining = endTime.difference(DateTime.now());
+    if (remaining.isNegative || remaining.inMinutes <= 0) {
+      _platform.setStatusBarTitle('Done');
+      return;
+    }
+
+    final text = _formatRemainingShort(remaining.inMinutes);
+    _platform.setStatusBarTitle(text);
+  }
+
+  String _formatRemainingShort(int totalMinutes) {
+    final hours = totalMinutes ~/ 60;
+    final minutes = totalMinutes % 60;
+    if (hours > 0 && minutes > 0) return '${hours}h${minutes}m';
+    if (hours > 0) return '${hours}h';
+    return '${minutes}m';
   }
 
   Future<void> _initApp() async {
@@ -102,9 +151,9 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     }
 
     ref.listenManual(cliProcessProvider, (_, next) {
-      _trayManager.setActiveState(next.isRunning);
-      _trayManager.setErrorState(next.status == CliProcessStatus.error);
-      if (next.status == CliProcessStatus.error) {
+      final isError = next.status == CliProcessStatus.error;
+      _trayManager.updateTrayState(next.isRunning, isError);
+      if (isError) {
         AppLogger.warning('CLI process in error state: ${next.errorMessage}');
       }
     });
@@ -124,6 +173,8 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
         AppLogger.error('Failed to auto-start session', e);
       }
     }
+
+    _startMenuBarCountdown();
 
     AppLogger.info('App initialization complete');
   }
@@ -153,18 +204,28 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
 
     if (!_popupVisible) {
       _popupVisible = true;
-      await _platform.showPopover();
+      unawaited(_platform.showPopover());
     }
 
-    final navigator = _navigatorKey.currentState;
-    if (navigator != null && mounted) {
-      showDialog(
-        context: navigator.context,
-        barrierDismissible: true,
-        builder: (_) => SettingsDialog(
-          onClose: () => navigator.pop(),
-        ),
-      );
+    void showSettingsDialog() {
+      final navigator = _navigatorKey.currentState;
+      if (navigator != null && mounted) {
+        showDialog(
+          context: navigator.context,
+          barrierDismissible: true,
+          builder: (_) => SettingsDialog(
+            onClose: () => navigator.pop(),
+          ),
+        );
+      }
+    }
+
+    if (_popupVisible) {
+      showSettingsDialog();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        showSettingsDialog();
+      });
     }
   }
 
@@ -224,8 +285,8 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
       themeMode: ThemeMode.system,
       theme: _lightTheme,
       darkTheme: _darkTheme,
-      home: const ErrorBoundary(
-        child: PopupPanel(),
+      home: ErrorBoundary(
+        child: PopupPanel(onOpenSettings: _openSettings),
       ),
     );
 

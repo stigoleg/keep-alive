@@ -82,6 +82,13 @@ class KeepAlivePlatformLinux extends KeepAlivePlatform {
   }
 
   @override
+  Future<void> setStatusBarTitle(String title) async {
+    await _channel.invokeMethod(AppConstants.methodSetStatusBarTitle, {
+      'title': title,
+    });
+  }
+
+  @override
   Future<int?> showContextMenu(List<String> items) async {
     final result =
         await _channel.invokeMethod<int>(AppConstants.methodShowContextMenu, {

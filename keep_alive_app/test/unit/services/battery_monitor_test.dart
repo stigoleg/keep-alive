@@ -34,6 +34,9 @@ class _FakePlatform extends KeepAlivePlatform {
   Future<void> setTrayTooltip(String tooltip) async {}
 
   @override
+  Future<void> setStatusBarTitle(String title) async {}
+
+  @override
   Future<int?> showContextMenu(List<String> items) async => null;
 
   @override
