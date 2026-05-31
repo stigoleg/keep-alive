@@ -39,8 +39,8 @@ class CliDownloadService {
   }
 
   Future<String> get binaryPath async {
-    if (_binaryPath != null) return _binaryPath!;
     if (_systemBinaryPath != null) return _systemBinaryPath!;
+    if (_binaryPath != null) return _binaryPath!;
     final dir = await _appSupportDir;
     final name = Platform.isWindows
         ? '${AppConstants.cliBinaryName}.exe'
@@ -72,13 +72,48 @@ class CliDownloadService {
   Future<String?> getInstalledVersion() async {
     final vPath = await versionFilePath;
     final file = File(vPath);
-    if (!file.existsSync()) return null;
-    try {
-      return file.readAsStringSync().trim();
-    } catch (e) {
-      AppLogger.warning('Failed to read version file: $e');
-      return null;
+    if (file.existsSync()) {
+      try {
+        return file.readAsStringSync().trim();
+      } catch (e) {
+        AppLogger.warning('Failed to read version file: $e');
+      }
     }
+
+    final path = await binaryPath;
+    if (path.isNotEmpty) {
+      return _parseVersionFromBinary(path);
+    }
+
+    return null;
+  }
+
+  Future<String?> getSystemBinaryVersion(String path) =>
+      _parseVersionFromBinary(path);
+
+  Future<String?> _parseVersionFromBinary(String path) async {
+    final file = File(path);
+    if (!file.existsSync()) return null;
+
+    try {
+      final result = await Process.run(
+        path,
+        [AppConstants.cliVersionArg],
+        runInShell: true,
+      );
+      if (result.exitCode == 0) {
+        final output = (result.stdout as String).trim();
+        final regex = RegExp(r'(\d+\.\d+\.\d+)');
+        final match = regex.firstMatch(output);
+        if (match != null) {
+          return 'v${match.group(1)}';
+        }
+        AppLogger.debug('Could not parse version from output: $output');
+      }
+    } catch (e) {
+      AppLogger.warning('Failed to query version from binary: $e');
+    }
+    return null;
   }
 
   Future<bool> isUpdateAvailable() async {
@@ -213,6 +248,24 @@ class CliDownloadService {
         return false;
       }
 
+      final brewListResult = await Process.run(
+        'brew',
+        ['list', '--formula', AppConstants.homebrewFormula],
+        runInShell: true,
+      );
+      if (brewListResult.exitCode == 0) {
+        final pathBinary = await _findBinaryInPath();
+        if (pathBinary != null) {
+          final verified = await _verifyBinaryAt(pathBinary);
+          if (verified) {
+            _systemBinaryPath = pathBinary;
+            _usingSystemBinary = true;
+            AppLogger.info('keepalive already installed via Homebrew: $pathBinary');
+            return true;
+          }
+        }
+      }
+
       AppLogger.info('Installing keepalive via Homebrew...');
       final tapResult = await Process.run(
         'brew',
@@ -302,20 +355,6 @@ class CliDownloadService {
   Future<void> ensureCliInstalled({
     void Function(double progress)? onProgress,
   }) async {
-    final installed = await isBinaryInstalled();
-    final version = await getInstalledVersion();
-
-    if (installed && version != null) {
-      final binaryOk = await verifyBinary();
-      if (binaryOk) {
-        AppLogger.info('CLI binary already installed: $version');
-        return;
-      }
-      AppLogger.warning(
-        'Installed binary failed verification, re-downloading',
-      );
-    }
-
     final pathBinary = await _findBinaryInPath();
     if (pathBinary != null) {
       final verified = await _verifyBinaryAt(pathBinary);
@@ -341,6 +380,20 @@ class CliDownloadService {
       }
       AppLogger.warning(
         'keepalive found locally at $localBinary but verification failed',
+      );
+    }
+
+    final installed = await isBinaryInstalled();
+    final version = await getInstalledVersion();
+
+    if (installed && version != null) {
+      final binaryOk = await verifyBinary();
+      if (binaryOk) {
+        AppLogger.info('CLI binary already installed: $version');
+        return;
+      }
+      AppLogger.warning(
+        'Installed binary failed verification, re-downloading',
       );
     }
 
@@ -486,10 +539,14 @@ class CliDownloadService {
       final targetPath = await binaryPath;
       final extractedBinary = _findBinaryInDir(extractDir);
       if (extractedBinary == null) {
-        throw const DownloadException('Binary not found in extracted archive');
+        throw DownloadException('Binary not found in extracted archive ($assetName)');
       }
 
       final targetFile = File(targetPath);
+      final targetParent = targetFile.parent;
+      if (!targetParent.existsSync()) {
+        await targetParent.create(recursive: true);
+      }
       if (targetFile.existsSync()) {
         await targetFile.delete();
       }
@@ -527,20 +584,41 @@ class CliDownloadService {
 
   String? _findBinaryInDir(String dir) {
     final directory = Directory(dir);
-    if (!directory.existsSync()) return null;
+    if (!directory.existsSync()) {
+      AppLogger.warning('Extract directory does not exist: $dir');
+      return null;
+    }
 
-    final binaryName = Platform.isWindows
+    final primaryName = Platform.isWindows
         ? '${AppConstants.cliBinaryName}.exe'
         : AppConstants.cliBinaryName;
 
+    final alternateNames = <String>{
+      primaryName,
+      if (Platform.isWindows) AppConstants.cliBinaryName,
+      AppConstants.cliReleaseBaseName,
+    };
+
+    AppLogger.debug('Searching for binary in $dir (looking for: ${alternateNames.join(', ')})');
+
     for (final entity in directory.listSync(recursive: true)) {
       if (entity is File) {
-        final name = entity.uri.pathSegments.last;
-        if (name == binaryName) {
+        final name = entity.path.split(Platform.pathSeparator).last;
+        AppLogger.debug('  found file: $name');
+        if (alternateNames.contains(name)) {
+          AppLogger.info('Found binary in archive: ${entity.path}');
           return entity.path;
         }
       }
     }
+
+    AppLogger.warning('Binary not found in $dir. Files present:');
+    try {
+      for (final entity in directory.listSync(recursive: false)) {
+        AppLogger.warning('  ${entity.path}');
+      }
+    } catch (_) {}
+
     return null;
   }
 

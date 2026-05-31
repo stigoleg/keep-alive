@@ -42,7 +42,7 @@ void main() {
         expect(result, isFalse);
       });
 
-      test('returns true when binary file exists', () async {
+      test('returns true when binary file exists in app support dir', () async {
         final path = await service.binaryPath;
         await File(path).create(recursive: true);
         final result = await service.isBinaryInstalled();
@@ -51,7 +51,7 @@ void main() {
     });
 
     group('getInstalledVersion', () {
-      test('returns null when version file does not exist', () async {
+      test('returns null when version file and binary do not exist', () async {
         final result = await service.getInstalledVersion();
         expect(result, isNull);
       });
@@ -73,6 +73,27 @@ void main() {
         final result = await service.getInstalledVersion();
         expect(result, 'v2.0.0');
       });
+
+      test('falls back to binary version parsing when version file absent', () async {
+        final binaryPath = await service.binaryPath;
+        await _createMockBinary(binaryPath, 'Keep-Alive Version: 1.0.0\n');
+
+        final result = await service.getInstalledVersion();
+        expect(result, 'v1.0.0');
+      });
+
+      test('returns version from file even when binary also exists', () async {
+        final vPath = await service.versionFilePath;
+        File(vPath)
+          ..createSync(recursive: true)
+          ..writeAsStringSync('v2.1.0\n');
+
+        final binaryPath = await service.binaryPath;
+        await _createMockBinary(binaryPath, 'Keep-Alive Version: 1.0.0\n');
+
+        final result = await service.getInstalledVersion();
+        expect(result, 'v2.1.0');
+      });
     });
 
     group('binaryPath', () {
@@ -80,6 +101,44 @@ void main() {
         final path = await service.binaryPath;
         expect(path, contains(tempDir.path));
         expect(path, contains('keepalive'));
+      });
+
+      test('isUsingSystemBinary starts as false', () {
+        expect(service.isUsingSystemBinary, isFalse);
+      });
+    });
+
+    group('getSystemBinaryVersion', () {
+      test('parses version from binary output', () async {
+        final binaryPath = await service.binaryPath;
+        await _createMockBinary(binaryPath, 'Keep-Alive Version: 1.5.3\n');
+
+        final version = await service.getSystemBinaryVersion(binaryPath);
+        expect(version, 'v1.5.3');
+      });
+
+      test('parses version with extra output before version', () async {
+        final binaryPath = await service.binaryPath;
+        await _createMockBinary(
+          binaryPath,
+          'Some startup info\nKeep-Alive Version: 2.0.0\n',
+        );
+
+        final version = await service.getSystemBinaryVersion(binaryPath);
+        expect(version, 'v2.0.0');
+      });
+
+      test('returns null for non-executable file', () async {
+        final result = await service.getSystemBinaryVersion('/nonexistent/path');
+        expect(result, isNull);
+      });
+
+      test('returns null when version cannot be parsed', () async {
+        final binaryPath = await service.binaryPath;
+        await _createMockBinary(binaryPath, 'No version here\n');
+
+        final result = await service.getSystemBinaryVersion(binaryPath);
+        expect(result, isNull);
       });
     });
 
@@ -118,4 +177,21 @@ void main() {
       }
     });
   });
+}
+
+Future<void> _createMockBinary(String path, String output) async {
+  final file = File(path);
+  final parent = file.parent;
+  if (!parent.existsSync()) {
+    parent.createSync(recursive: true);
+  }
+
+  if (Platform.isWindows) {
+    final batContent = '@echo off\r\necho $output\r\n';
+    await file.writeAsString(batContent);
+  } else {
+    final scriptContent = '#!/bin/sh\necho "$output"';
+    await file.writeAsString(scriptContent);
+    await Process.run('chmod', ['+x', path]);
+  }
 }
