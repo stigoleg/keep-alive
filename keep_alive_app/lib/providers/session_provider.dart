@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/logger.dart';
 import '../models/cli_flags.dart';
+import 'battery_provider.dart';
 import 'cli_binary_provider.dart';
 import 'process_provider.dart';
 import 'settings_provider.dart';
@@ -20,7 +21,9 @@ class SessionOrchestrator {
 
     if (active) {
       try {
-        AppLogger.info('Waiting for CLI binary readiness before starting session');
+        AppLogger.info(
+          'Waiting for CLI binary readiness before starting session',
+        );
         await _ref.read(cliBinaryProvider.notifier).waitUntilReady();
       } catch (e) {
         AppLogger.error('CLI binary not ready: $e');
@@ -28,12 +31,11 @@ class SessionOrchestrator {
         rethrow;
       }
 
-      final flags = _ref.read(appSettingsProvider).toCliFlags();
+      final settings = await _settingsForCli();
+      final flags = settings.toCliFlags();
       AppLogger.info('Starting keep-alive session with flags: $flags');
       try {
-        await _ref
-            .read(cliProcessProvider.notifier)
-            .startSession(flags);
+        await _ref.read(cliProcessProvider.notifier).startSession(flags);
       } catch (e) {
         await _ref.read(appSettingsProvider.notifier).setKeepAwake(false);
         rethrow;
@@ -56,9 +58,7 @@ class SessionOrchestrator {
     if (processState.isRunning) {
       AppLogger.info('Flags changed while running, restarting CLI');
       try {
-        await _ref
-            .read(cliProcessProvider.notifier)
-            .restartSession(flags);
+        await _ref.read(cliProcessProvider.notifier).restartSession(flags);
       } catch (e) {
         AppLogger.error('Failed to restart CLI with new flags', e);
         await _ref.read(appSettingsProvider.notifier).setKeepAwake(false);
@@ -68,31 +68,62 @@ class SessionOrchestrator {
   }
 
   Future<void> applySettingsAndRestart() async {
-    final settings = _ref.read(appSettingsProvider);
+    var settings = _ref.read(appSettingsProvider);
     if (!settings.keepAwake) return;
 
+    settings = await _settingsForCli();
     final flags = settings.toCliFlags();
     final processState = _ref.read(cliProcessProvider);
 
     if (processState.isRunning) {
       AppLogger.info('Settings changed, restarting CLI');
       try {
-        await _ref
-            .read(cliProcessProvider.notifier)
-            .restartSession(flags);
+        await _ref.read(cliProcessProvider.notifier).restartSession(flags);
       } catch (e) {
         AppLogger.error('Failed to restart CLI after settings change', e);
       }
     } else {
       try {
-        await _ref
-            .read(cliProcessProvider.notifier)
-            .startSession(flags);
+        await _ref.read(cliProcessProvider.notifier).startSession(flags);
       } catch (e) {
         AppLogger.error('Failed to start CLI after settings change', e);
         await _ref.read(appSettingsProvider.notifier).setKeepAwake(false);
         rethrow;
       }
     }
+  }
+
+  Future<AppSettingsState> _settingsForCli() async {
+    final settings = _ref.read(appSettingsProvider);
+    if (!settings.batteryThresholdEnabled) return settings;
+
+    final currentBattery = _ref
+        .read(batteryStateProvider)
+        .valueOrNull
+        ?.percentage;
+    if (currentBattery == null) return settings;
+
+    final maxThreshold = currentBattery.floor() - 1;
+    final notifier = _ref.read(appSettingsProvider.notifier);
+    if (maxThreshold < 1) {
+      AppLogger.warning(
+        'Disabling battery threshold because current battery is too low',
+      );
+      await notifier.setBatteryThresholdEnabled(false);
+      return _ref.read(appSettingsProvider);
+    }
+
+    final safeThreshold = (settings.batteryThreshold ?? maxThreshold)
+        .clamp(1, maxThreshold)
+        .toInt();
+    if (settings.batteryThreshold != safeThreshold) {
+      AppLogger.info(
+        'Clamping battery threshold to $safeThreshold% before starting CLI',
+      );
+      await notifier.setBatteryThreshold(safeThreshold);
+      return _ref.read(appSettingsProvider);
+    }
+
+    return settings;
   }
 }

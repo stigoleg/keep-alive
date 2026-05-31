@@ -8,6 +8,7 @@ Widget buildBatterySlider({
   ValueChanged<int>? onChanged,
   String? label,
   bool disabled = false,
+  int maxValue = 100,
 }) {
   return MaterialApp(
     home: Scaffold(
@@ -16,6 +17,7 @@ Widget buildBatterySlider({
         onChanged: onChanged ?? (_) {},
         label: label,
         disabled: disabled,
+        maxValue: maxValue,
       ),
     ),
   );
@@ -62,14 +64,26 @@ void main() {
       expect(slider.divisions, 99);
     });
 
-    testWidgets('calls onChanged with rounded value when slider dragged',
-        (tester) async {
+    testWidgets('uses provided max value', (tester) async {
+      await tester.pumpWidget(buildBatterySlider(value: 42, maxValue: 90));
+      final slider = tester.widget<Slider>(find.byType(Slider));
+      expect(slider.max, 90.0);
+      expect(slider.divisions, 89);
+    });
+
+    testWidgets('clamps displayed value to provided max', (tester) async {
+      await tester.pumpWidget(buildBatterySlider(value: 93, maxValue: 90));
+      final slider = tester.widget<Slider>(find.byType(Slider));
+      expect(slider.value, 90.0);
+      expect(find.text(FormatUtils.battery(90.0)), findsOneWidget);
+    });
+
+    testWidgets('calls onChanged with rounded value when slider dragged', (
+      tester,
+    ) async {
       int? receivedValue;
       await tester.pumpWidget(
-        buildBatterySlider(
-          value: 50,
-          onChanged: (v) => receivedValue = v,
-        ),
+        buildBatterySlider(value: 50, onChanged: (v) => receivedValue = v),
       );
 
       final slider = find.byType(Slider);
@@ -80,9 +94,7 @@ void main() {
     });
 
     testWidgets('renders disabled state with reduced opacity', (tester) async {
-      await tester.pumpWidget(
-        buildBatterySlider(value: 50, disabled: true),
-      );
+      await tester.pumpWidget(buildBatterySlider(value: 50, disabled: true));
 
       final opacityFinder = find.byWidgetPredicate(
         (w) => w is Opacity && w.opacity == 0.45,
@@ -91,38 +103,27 @@ void main() {
     });
 
     testWidgets('slider is disabled when disabled is true', (tester) async {
-      await tester.pumpWidget(
-        buildBatterySlider(value: 50, disabled: true),
-      );
+      await tester.pumpWidget(buildBatterySlider(value: 50, disabled: true));
 
       final slider = tester.widget<Slider>(find.byType(Slider));
       expect(slider.onChanged, isNull);
     });
 
     testWidgets('shows warning text when disabled', (tester) async {
-      await tester.pumpWidget(
-        buildBatterySlider(value: 50, disabled: true),
-      );
+      await tester.pumpWidget(buildBatterySlider(value: 50, disabled: true));
 
-      expect(
-        find.text('Current battery is below threshold'),
-        findsOneWidget,
-      );
+      expect(find.text('Current battery is below threshold'), findsOneWidget);
     });
 
     testWidgets('does not show warning text when enabled', (tester) async {
-      await tester.pumpWidget(
-        buildBatterySlider(value: 50, disabled: false),
-      );
+      await tester.pumpWidget(buildBatterySlider(value: 50, disabled: false));
 
-      expect(
-        find.text('Current battery is below threshold'),
-        findsNothing,
-      );
+      expect(find.text('Current battery is below threshold'), findsNothing);
     });
 
-    testWidgets('percentage text shown in disabled state with label',
-        (tester) async {
+    testWidgets('percentage text shown in disabled state with label', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         buildBatterySlider(
           value: 30,

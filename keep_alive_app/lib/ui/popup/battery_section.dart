@@ -17,8 +17,8 @@ class BatterySection extends ConsumerWidget {
     final batteryAsync = ref.watch(batteryStateProvider);
 
     final currentBattery = batteryAsync.valueOrNull?.percentage ?? 100.0;
-    final threshold = settings.batteryThreshold;
-    final belowThreshold = threshold != null && currentBattery < threshold;
+    final maxThreshold = _maxThresholdFor(currentBattery);
+    final threshold = _clampThreshold(settings.batteryThreshold, maxThreshold);
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -32,10 +32,12 @@ class BatterySection extends ConsumerWidget {
           ToggleSwitch(
             label: 'Stop when battery drops to',
             value: settings.batteryThresholdEnabled,
-            onChanged: (value) {
-              ref
-                  .read(appSettingsProvider.notifier)
-                  .setBatteryThresholdEnabled(value);
+            onChanged: (value) async {
+              final notifier = ref.read(appSettingsProvider.notifier);
+              if (value) {
+                await notifier.setBatteryThreshold(threshold);
+              }
+              await notifier.setBatteryThresholdEnabled(value);
               ref.read(sessionProvider).applySettingsAndRestart();
             },
           ),
@@ -46,13 +48,14 @@ class BatterySection extends ConsumerWidget {
                 right: AppTheme.spacing8,
               ),
               child: BatterySlider(
-                value: threshold ?? 50,
+                value: threshold,
+                maxValue: maxThreshold,
                 label: 'Threshold:',
-                disabled: belowThreshold,
-                onChanged: (value) {
-                  ref
+                onChanged: (value) async {
+                  final safeValue = _clampThreshold(value, maxThreshold);
+                  await ref
                       .read(appSettingsProvider.notifier)
-                      .setBatteryThreshold(value);
+                      .setBatteryThreshold(safeValue);
                   ref.read(sessionProvider).applySettingsAndRestart();
                 },
               ),
@@ -60,5 +63,13 @@ class BatterySection extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  int _maxThresholdFor(double currentBattery) {
+    return (currentBattery.floor() - 1).clamp(1, 99).toInt();
+  }
+
+  int _clampThreshold(int? value, int maxThreshold) {
+    return (value ?? maxThreshold).clamp(1, maxThreshold).toInt();
   }
 }
