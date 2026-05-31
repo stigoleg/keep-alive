@@ -12,7 +12,7 @@ private let kPopoverHeight: CGFloat = 480.0
 class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
     private var contextMenuResult: FlutterResult?
-    private weak var flutterChannel: FlutterMethodChannel?
+    private var flutterChannel: FlutterMethodChannel?
     private var popoverVisible = false
     private var localEventMonitor: Any?
     private var globalEventMonitor: Any?
@@ -286,23 +286,16 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     private func handleSetTrayIcon(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         guard let args = call.arguments as? [String: Any],
               let iconPath = args["iconPath"] as? String else {
-            fputs("[KeepAlive] setTrayIcon: INVALID_ARG\n", stderr)
             result(FlutterError(code: "INVALID_ARG", message: "Missing 'iconPath' argument", details: nil))
             return
         }
 
-        fputs("[KeepAlive] setTrayIcon: looking up \(iconPath)\n", stderr)
-
         guard let resolvedPath = resolveAssetPath(iconPath) else {
-            fputs("[KeepAlive] setTrayIcon: ASSET_NOT_FOUND \(iconPath)\n", stderr)
             result(FlutterError(code: "ASSET_NOT_FOUND", message: "Could not resolve asset: \(iconPath)", details: nil))
             return
         }
 
-        fputs("[KeepAlive] setTrayIcon: resolved to \(resolvedPath)\n", stderr)
-
         if statusItem == nil {
-            fputs("[KeepAlive] Creating NSStatusItem\n", stderr)
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
             statusItem?.button?.target = self
             statusItem?.button?.action = #selector(statusBarButtonClicked(_:))
@@ -314,9 +307,7 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
             image.size = NSSize(width: kTrayIconSize, height: kTrayIconSize)
             statusItem?.button?.image = image
             statusItem?.button?.imagePosition = .imageOnly
-            fputs("[KeepAlive] setTrayIcon: SUCCESS\n", stderr)
         } else {
-            fputs("[KeepAlive] setTrayIcon: FAILED load image\n", stderr)
             result(FlutterError(code: "IMAGE_LOAD_FAILED", message: "Could not load image", details: nil))
             return
         }
@@ -335,9 +326,9 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     }
 
     @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
-        guard let event = NSApp.currentEvent else { return }
+        let event = NSApp.currentEvent
 
-        if event.type == .rightMouseUp {
+        if event?.type == .rightMouseUp {
             hidePopover()
             flutterChannel?.invokeMethod("onTrayEvent", arguments: "rightClick")
         } else {
