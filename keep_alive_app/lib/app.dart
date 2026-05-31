@@ -121,11 +121,9 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     await windowManager.setResizable(false);
     await windowManager.setMinimizable(false);
     await windowManager.setMaximizable(false);
-    await windowManager.setSkipTaskbar(true);
     await windowManager.setSize(const Size(320, 500));
-    await windowManager.center();
-    await windowManager.hide();
     await windowManager.waitUntilReadyToShow();
+    await windowManager.hide();
   }
 
   Future<void> _togglePopup() async {

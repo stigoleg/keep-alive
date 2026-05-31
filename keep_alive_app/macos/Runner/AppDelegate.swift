@@ -235,11 +235,38 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
         let filename = nsKey.lastPathComponent
         let name = (filename as NSString).deletingPathExtension
         let ext = (filename as NSString).pathExtension
-        return Bundle.main.path(
+
+        if let path = Bundle.main.path(
             forResource: name,
             ofType: ext.isEmpty ? nil : ext,
             inDirectory: directory.isEmpty ? nil : directory
-        )
+        ) {
+            return path
+        }
+
+        for bundle in Bundle.allFrameworks {
+            if bundle.bundlePath.contains("App.framework") {
+                if let path = bundle.path(
+                    forResource: name,
+                    ofType: ext.isEmpty ? nil : ext,
+                    inDirectory: directory.isEmpty ? nil : directory
+                ) {
+                    return path
+                }
+            }
+        }
+
+        for bundle in Bundle.allBundles {
+            if let path = bundle.path(
+                forResource: name,
+                ofType: ext.isEmpty ? nil : ext,
+                inDirectory: directory.isEmpty ? nil : directory
+            ) {
+                return path
+            }
+        }
+
+        return nil
     }
 
     // MARK: - Tray Icon
