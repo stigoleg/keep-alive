@@ -56,16 +56,6 @@ class ToggleSection extends ConsumerWidget {
               },
             ),
           ],
-          _Separator(),
-          ToggleSwitch(
-            label: 'Enable Logging',
-            description: 'Write debug output to log file',
-            value: settings.enableLogging,
-            onChanged: (value) {
-              ref.read(appSettingsProvider.notifier).setEnableLogging(value);
-              ref.read(sessionProvider).applySettingsAndRestart();
-            },
-          ),
         ],
       ),
     );

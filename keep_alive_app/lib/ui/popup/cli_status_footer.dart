@@ -58,7 +58,7 @@ class CliStatusFooter extends ConsumerWidget {
       case DownloadStatus.installed:
         icon = const Icon(Icons.check_circle,
             size: AppTheme.iconSmall, color: AppTheme.activeColor);
-        text = 'CLI v$version';
+        text = 'CLI $version';
         break;
       case DownloadStatus.downloading:
         icon = SizedBox(
@@ -139,9 +139,10 @@ class CliStatusFooter extends ConsumerWidget {
           },
           icon: const Icon(Icons.refresh, size: AppTheme.iconSmall),
           label: Text(
-            state.latestVersion != state.installedVersion
+            state.latestVersion != null &&
+                    state.latestVersion != state.installedVersion
                 ? 'Update'
-                : 'Reinstall',
+                : 'Check for updates',
             style: theme.textTheme.labelMedium,
           ),
           style: TextButton.styleFrom(

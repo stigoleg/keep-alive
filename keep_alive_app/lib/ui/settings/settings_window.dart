@@ -7,6 +7,7 @@ import '../../core/logger.dart';
 import '../../models/download_state.dart';
 import '../../platform/platform_interface.dart';
 import '../../providers/cli_binary_provider.dart';
+import '../../providers/session_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/toggle_switch.dart';
@@ -211,7 +212,7 @@ class _UpdatesSection extends StatelessWidget {
   String get _subtitle {
     return switch (binaryState.status) {
       DownloadStatus.installed =>
-        'v${binaryState.installedVersion ?? 'unknown'} installed',
+        '${binaryState.installedVersion ?? 'unknown'} installed',
       DownloadStatus.downloading => 'Downloading\u2026',
       DownloadStatus.notInstalled => 'Not installed',
       DownloadStatus.error => 'Error: ${binaryState.errorMessage ?? 'unknown'}',
@@ -370,6 +371,7 @@ class _LogSectionState extends ConsumerState<_LogSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final settings = ref.watch(appSettingsProvider);
     final logs = _resolveLogs();
     final displayLogs = logs.length > _displayCap
         ? logs.sublist(logs.length - _displayCap)
@@ -378,6 +380,24 @@ class _LogSectionState extends ConsumerState<_LogSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Text(
+          'Logging',
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: AppTheme.spacing4),
+        ToggleSwitch(
+          label: 'Enable Logging',
+          description: 'Write debug output to log file',
+          value: settings.enableLogging,
+          onChanged: (value) {
+            ref.read(appSettingsProvider.notifier).setEnableLogging(value);
+            ref.read(sessionProvider).applySettingsAndRestart();
+          },
+        ),
+        const SizedBox(height: AppTheme.spacing8),
         Row(
           children: [
             Expanded(

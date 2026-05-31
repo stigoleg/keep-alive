@@ -51,7 +51,6 @@ void main() {
       expect(find.text('Idle'), findsOneWidget);
       expect(find.text('Keep System Awake'), findsOneWidget);
       expect(find.text('Simulate Activity'), findsOneWidget);
-      expect(find.text('Enable Logging'), findsOneWidget);
       expect(find.text('Timer'), findsOneWidget);
     });
 
