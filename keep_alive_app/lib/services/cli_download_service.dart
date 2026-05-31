@@ -235,6 +235,20 @@ class CliDownloadService {
   Future<void> ensureCliInstalled({
     void Function(double progress)? onProgress,
   }) async {
+    final installed = await isBinaryInstalled();
+    final version = await getInstalledVersion();
+
+    if (installed && version != null) {
+      final binaryOk = await verifyBinary();
+      if (binaryOk) {
+        AppLogger.info('CLI binary already installed: $version');
+        return;
+      }
+      AppLogger.warning(
+        'Installed binary failed verification, re-downloading',
+      );
+    }
+
     final pathBinary = await _findBinaryInPath();
     if (pathBinary != null) {
       final verified = await _verifyBinaryAt(pathBinary);
@@ -257,20 +271,6 @@ class CliDownloadService {
     if (PlatformUtils.isWindows) {
       final scoopInstalled = await _tryInstallViaScoop();
       if (scoopInstalled) return;
-    }
-
-    final installed = await isBinaryInstalled();
-    final version = await getInstalledVersion();
-
-    if (installed && version != null) {
-      final binaryOk = await verifyBinary();
-      if (binaryOk) {
-        AppLogger.info('CLI binary already installed: $version');
-        return;
-      }
-      AppLogger.warning(
-        'Installed binary failed verification, re-downloading',
-      );
     }
 
     await _downloadAndInstall(onProgress: onProgress);

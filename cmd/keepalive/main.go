@@ -96,7 +96,7 @@ func main() {
 	signals := getSignals()
 	signal.Notify(sigChan, signals...)
 
-	if cfg.Headless {
+	if !isTerminal() {
 		headlessKeeper := keepalive.NewKeeper()
 		keeperRef = headlessKeeper
 		headlessKeeper.SetSimulateActivity(cfg.SimulateActivity)
@@ -293,6 +293,15 @@ func executeCleanup(p *tea.Program) {
 			p.Kill()
 		}
 	})
+}
+
+// isTerminal returns true if stdin is a terminal (character device).
+func isTerminal() bool {
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
 // getSignals returns the list of signals to handle based on the platform
