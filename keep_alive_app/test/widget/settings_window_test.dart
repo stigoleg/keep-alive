@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keep_alive_app/core/constants.dart';
 import 'package:keep_alive_app/ui/settings/settings_window.dart';
+import 'package:keep_alive_app/ui/widgets/toggle_switch.dart';
 
 Widget buildSettingsDialog({required VoidCallback onClose}) {
   return ProviderScope(
@@ -87,8 +88,8 @@ void main() {
       await tester.tap(find.text('Open Settings'));
       await tester.pumpAndSettle();
 
-      final switches = find.byType(Switch);
-      expect(switches, findsAtLeastNWidgets(2));
+      final toggles = find.byType(ToggleSwitch);
+      expect(toggles, findsAtLeastNWidgets(2));
     });
   });
 }

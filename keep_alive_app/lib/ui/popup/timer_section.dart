@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -226,28 +227,98 @@ class _ClockPicker extends StatelessWidget {
   }
 
   Future<void> _showTimePicker(BuildContext context) async {
-    final initialTime = clockTime != null
-        ? TimeOfDay(hour: clockTime!.hour, minute: clockTime!.minute)
-        : const TimeOfDay(hour: 9, minute: 0);
+    final now = DateTime.now();
+    final initial = clockTime ??
+        DateTime(now.year, now.month, now.day, now.hour + 1);
 
-    final picked = await showTimePicker(
+    DateTime selected = initial;
+    final theme = Theme.of(context);
+    final use24h = MediaQuery.of(context).alwaysUse24HourFormat;
+
+    final confirmed = await showDialog<bool>(
       context: context,
-      initialTime: initialTime,
-      builder: (context, child) {
-        return MediaQuery(
-          data: MediaQuery.of(context).copyWith(
-            alwaysUse24HourFormat: false,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: theme.colorScheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
           ),
-          child: child!,
+          child: SizedBox(
+            width: 280,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(
+                    top: AppTheme.spacing12,
+                    bottom: AppTheme.spacing4,
+                  ),
+                  child: Text('Until time',
+                      style: theme.textTheme.titleMedium),
+                ),
+                SizedBox(
+                  height: 180,
+                  child: CupertinoTheme(
+                    data: CupertinoThemeData(
+                      brightness: theme.brightness,
+                      textTheme: CupertinoTextThemeData(
+                        dateTimePickerTextStyle: TextStyle(
+                          fontSize: 20,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                    child: CupertinoDatePicker(
+                      mode: CupertinoDatePickerMode.time,
+                      use24hFormat: use24h,
+                      initialDateTime: initial,
+                      onDateTimeChanged: (dt) => selected = dt,
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppTheme.spacing8,
+                    AppTheme.spacing4,
+                    AppTheme.spacing8,
+                    AppTheme.spacing8,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () =>
+                            Navigator.of(dialogContext).pop(false),
+                        child: const Text('Cancel'),
+                      ),
+                      const SizedBox(width: AppTheme.spacing4),
+                      FilledButton(
+                        onPressed: () =>
+                            Navigator.of(dialogContext).pop(true),
+                        child: const Text('Done'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         );
       },
     );
 
-    if (picked == null || !context.mounted) return;
+    if (confirmed != true || !context.mounted) return;
 
-    final now = DateTime.now();
-    var date = DateTime(now.year, now.month, now.day, picked.hour, picked.minute);
-    if (date.isBefore(now)) {
+    final today = DateTime.now();
+    var date = DateTime(
+      today.year,
+      today.month,
+      today.day,
+      selected.hour,
+      selected.minute,
+    );
+    if (date.isBefore(today)) {
       date = date.add(const Duration(days: 1));
     }
 

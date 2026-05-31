@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../utils/platform_utils.dart';
 import '../theme/app_theme.dart';
-import 'battery_section.dart';
 import 'cli_status_footer.dart';
 import 'status_header.dart';
 import 'toggle_section.dart';
@@ -35,7 +35,7 @@ class _PopupPanelState extends ConsumerState<PopupPanel> {
     final contentHeight = renderBox.size.height;
     if (contentHeight <= 0) return;
 
-    final targetHeight = contentHeight + 16;
+    final targetHeight = contentHeight;
     if (_lastHeight != null && (targetHeight - _lastHeight!).abs() < 0.5) {
       return;
     }
@@ -59,12 +59,17 @@ class _PopupPanelState extends ConsumerState<PopupPanel> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // On macOS, keep the surface semi-transparent so the NSVisualEffectView /
+    // Liquid Glass underneath shows through (native menu-bar popover feel).
+    final surfaceColor = PlatformUtils.isMacOS
+        ? theme.colorScheme.surface.withValues(alpha: 0.55)
+        : theme.colorScheme.surface;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Container(
         decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
+          color: surfaceColor,
           borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
         ),
         clipBehavior: Clip.antiAlias,
@@ -80,8 +85,6 @@ class _PopupPanelState extends ConsumerState<PopupPanel> {
                   StatusHeader(onOpenSettings: widget.onOpenSettings),
                   _buildDivider(theme),
                   const ToggleSection(),
-                  _buildDivider(theme),
-                  const BatterySection(),
                   _buildDivider(theme),
                   const CliStatusFooter(),
                 ],

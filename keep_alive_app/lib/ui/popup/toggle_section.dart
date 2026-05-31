@@ -7,6 +7,7 @@ import '../../providers/session_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/toggle_switch.dart';
+import 'battery_section.dart';
 import 'timer_section.dart';
 
 class ToggleSection extends ConsumerWidget {
@@ -40,6 +41,8 @@ class ToggleSection extends ConsumerWidget {
           if (settings.keepAwake) ...[
             const SizedBox(height: AppTheme.spacing8),
             const TimerSection(),
+            const SizedBox(height: AppTheme.spacing4),
+            const BatterySection(),
             _Separator(),
           ],
           ToggleSwitch(

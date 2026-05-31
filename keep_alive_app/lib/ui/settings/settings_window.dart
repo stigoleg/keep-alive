@@ -9,6 +9,7 @@ import '../../platform/platform_interface.dart';
 import '../../providers/cli_binary_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/toggle_switch.dart';
 
 class SettingsDialog extends ConsumerWidget {
   const SettingsDialog({super.key, required this.onClose});
@@ -142,33 +143,26 @@ class _StartupSection extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AppTheme.spacing8),
-        _SettingRow(
+        ToggleSwitch(
           label: 'Start on Login',
-          subtitle: 'Launch automatically when you log in',
-          child: Switch(
-            value: settings.autoStart,
-            onChanged: (value) => _setAutoStart(value, ref),
-          ),
+          description: 'Launch automatically when you log in',
+          value: settings.autoStart,
+          onChanged: (value) => _setAutoStart(value, ref),
         ),
-        const SizedBox(height: AppTheme.spacing4),
-        _SettingRow(
+        ToggleSwitch(
           label: 'Start Minimized',
-          subtitle: 'Hide to system tray on launch',
-          child: Switch(
-            value: settings.startMinimized,
-            onChanged: (value) =>
-                ref.read(appSettingsProvider.notifier).setStartMinimized(value),
-          ),
+          description: 'Hide to system tray on launch',
+          value: settings.startMinimized,
+          onChanged: (value) =>
+              ref.read(appSettingsProvider.notifier).setStartMinimized(value),
         ),
-        const SizedBox(height: AppTheme.spacing4),
-        _SettingRow(
+        ToggleSwitch(
           label: 'Show Countdown in Menu Bar',
-          subtitle: 'Display remaining time in the menu bar icon',
-          child: Switch(
-            value: settings.showCountdownInMenuBar,
-            onChanged: (value) =>
-                ref.read(appSettingsProvider.notifier).setShowCountdownInMenuBar(value),
-          ),
+          description: 'Display remaining time in the menu bar icon',
+          value: settings.showCountdownInMenuBar,
+          onChanged: (value) => ref
+              .read(appSettingsProvider.notifier)
+              .setShowCountdownInMenuBar(value),
         ),
       ],
     );
@@ -345,6 +339,8 @@ class _LogSection extends ConsumerStatefulWidget {
 
 class _LogSectionState extends ConsumerState<_LogSection> {
   String? _activeFilter;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchText = '';
 
   static const _filters = <String, String?>{
     'All': null,
@@ -354,12 +350,30 @@ class _LogSectionState extends ConsumerState<_LogSection> {
     'Error': 'SEVERE',
   };
 
+  static const int _displayCap = 500;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<String> _resolveLogs() {
+    final base = _activeFilter != null
+        ? AppLogger.filteredLogs(_activeFilter)
+        : AppLogger.recentLogs;
+    if (_searchText.isEmpty) return base;
+    final needle = _searchText.toLowerCase();
+    return base.where((line) => line.toLowerCase().contains(needle)).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final logs = _activeFilter != null
-        ? AppLogger.filteredLogs(_activeFilter)
-        : AppLogger.recentLogs;
+    final logs = _resolveLogs();
+    final displayLogs = logs.length > _displayCap
+        ? logs.sublist(logs.length - _displayCap)
+        : logs;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -412,6 +426,44 @@ class _LogSectionState extends ConsumerState<_LogSection> {
           ],
         ),
         const SizedBox(height: AppTheme.spacing6),
+        SizedBox(
+          height: 32,
+          child: TextField(
+            controller: _searchController,
+            onChanged: (value) => setState(() => _searchText = value),
+            style: theme.textTheme.bodySmall,
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'Search logs',
+              prefixIcon: const Icon(Icons.search, size: AppTheme.iconSmall),
+              prefixIconConstraints: const BoxConstraints(
+                minWidth: 32,
+                minHeight: 32,
+              ),
+              suffixIcon: _searchText.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.close, size: AppTheme.iconSmall),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 28,
+                        minHeight: 28,
+                      ),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _searchText = '');
+                      },
+                    ),
+              contentPadding: const EdgeInsets.symmetric(
+                vertical: AppTheme.spacing4,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: AppTheme.spacing6),
         Wrap(
           spacing: AppTheme.spacing4,
           children: _filters.entries.map((entry) {
@@ -442,26 +494,78 @@ class _LogSectionState extends ConsumerState<_LogSection> {
           }).toList(),
         ),
         const SizedBox(height: AppTheme.spacing8),
-        _LogViewer(logs: logs),
+        _LogViewer(logs: displayLogs),
       ],
     );
   }
 }
 
-class _LogViewer extends StatelessWidget {
+class _LogViewer extends StatefulWidget {
   const _LogViewer({required this.logs});
 
   final List<String> logs;
 
   @override
+  State<_LogViewer> createState() => _LogViewerState();
+}
+
+class _LogViewerState extends State<_LogViewer> {
+  final ScrollController _controller = ScrollController();
+  bool _autoTail = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEndIfTailing());
+  }
+
+  @override
+  void didUpdateWidget(_LogViewer old) {
+    super.didUpdateWidget(old);
+    if (old.logs.length != widget.logs.length) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _scrollToEndIfTailing());
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_onScroll);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_controller.hasClients) return;
+    final atBottom = _controller.position.pixels >=
+        _controller.position.maxScrollExtent - 12;
+    if (atBottom != _autoTail) {
+      setState(() => _autoTail = atBottom);
+    }
+  }
+
+  void _scrollToEndIfTailing() {
+    if (!_autoTail || !_controller.hasClients) return;
+    _controller.jumpTo(_controller.position.maxScrollExtent);
+  }
+
+  Color _colorForLine(ThemeData theme, String line) {
+    if (line.contains('[SEVERE]')) return AppTheme.errorColor;
+    if (line.contains('[WARNING]')) return AppTheme.warningColor;
+    if (line.contains('[INFO]')) {
+      return theme.colorScheme.onSurface.withValues(alpha: 0.85);
+    }
+    return theme.colorScheme.onSurface.withValues(alpha: 0.55);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final displayLogs =
-        logs.length > 100 ? logs.sublist(logs.length - 100) : logs;
 
     return Container(
       width: double.infinity,
-      height: 120,
+      height: 240,
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
@@ -471,25 +575,38 @@ class _LogViewer extends StatelessWidget {
         ),
       ),
       padding: const EdgeInsets.all(AppTheme.spacing8),
-      child: displayLogs.isEmpty
+      child: widget.logs.isEmpty
           ? Center(
               child: Text(
-                'No log entries yet',
+                'No log entries match',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
                 ),
               ),
             )
           : Scrollbar(
+              controller: _controller,
               child: SingleChildScrollView(
-                child: SelectableText(
-                  displayLogs.join('\n'),
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 11,
-                    color: theme.colorScheme.onSurface
-                        .withValues(alpha: 0.8),
-                    height: 1.4,
+                controller: _controller,
+                child: SelectableText.rich(
+                  TextSpan(
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
+                    children: [
+                      for (var i = 0; i < widget.logs.length; i++) ...[
+                        TextSpan(
+                          text: widget.logs[i],
+                          style: TextStyle(
+                            color: _colorForLine(theme, widget.logs[i]),
+                          ),
+                        ),
+                        if (i < widget.logs.length - 1)
+                          const TextSpan(text: '\n'),
+                      ],
+                    ],
                   ),
                 ),
               ),
