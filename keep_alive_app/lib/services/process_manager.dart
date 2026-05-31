@@ -23,6 +23,8 @@ class ProcessManager {
       StreamController<String>.broadcast();
   final StreamController<CliProcessException> _crashController =
       StreamController<CliProcessException>.broadcast();
+  final StreamController<int> _exitCodeController =
+      StreamController<int>.broadcast();
 
   final List<String> _stdoutBuffer = [];
   final List<String> _stderrBuffer = [];
@@ -44,6 +46,8 @@ class ProcessManager {
 
   Stream<CliProcessException> get unexpectedExitStream =>
       _crashController.stream;
+
+  Stream<int> get processExitStream => _exitCodeController.stream;
 
   List<String> get stdoutLines => List.unmodifiable(_stdoutBuffer);
 
@@ -197,6 +201,7 @@ class ProcessManager {
     _stdoutController.close();
     _stderrController.close();
     _crashController.close();
+    _exitCodeController.close();
     _stdoutBuffer.clear();
     _stderrBuffer.clear();
   }
@@ -241,6 +246,7 @@ class ProcessManager {
       _stdoutController,
       '[Process exited with code $exitCode]',
     );
+    _safeAddToExitCodeController(exitCode);
     if (wasRunning && !wasRequested && exitCode != 0) {
       final exception = CliProcessException(
         'CLI process exited unexpectedly with code $exitCode',
@@ -249,6 +255,12 @@ class ProcessManager {
       if (!_crashController.isClosed) {
         _crashController.add(exception);
       }
+    }
+  }
+
+  void _safeAddToExitCodeController(int code) {
+    if (!_exitCodeController.isClosed) {
+      _exitCodeController.add(code);
     }
   }
 

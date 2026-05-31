@@ -23,6 +23,7 @@ class CliProcessNotifier extends Notifier<CliProcessState> {
   StreamSubscription<String>? _stdoutSub;
   StreamSubscription<String>? _stderrSub;
   StreamSubscription<CliProcessException>? _crashSub;
+  StreamSubscription<int>? _exitSub;
 
   @override
   CliProcessState build() {
@@ -48,10 +49,18 @@ class CliProcessNotifier extends Notifier<CliProcessState> {
       }
     });
 
+    _exitSub = _processManager.processExitStream.listen((exitCode) {
+      if (exitCode == 0 && state.isRunning) {
+        AppLogger.info('CLI process completed normally');
+        state = const CliProcessState(status: CliProcessStatus.idle);
+      }
+    });
+
     ref.onDispose(() {
       _stdoutSub?.cancel();
       _stderrSub?.cancel();
       _crashSub?.cancel();
+      _exitSub?.cancel();
       _processManager.dispose();
     });
 

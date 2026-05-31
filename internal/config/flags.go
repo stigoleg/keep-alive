@@ -20,6 +20,7 @@ type Config struct {
 	SimulateActivity bool
 	EnableLogging    bool
 	ShowVersion      bool
+	Headless         bool
 }
 
 func formatError(err error) string {
@@ -85,6 +86,9 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 	enableLogging := flags.Bool("log", false, "Enable logging to debug.log file")
 	flags.BoolVar(enableLogging, "l", false, "Enable logging to debug.log file")
 
+	headless := flags.Bool("headless", false, "Run in headless mode (no TUI, for background/subprocess use)")
+	flags.BoolVar(headless, "H", false, "Run in headless mode (no TUI, for background/subprocess use)")
+
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		if err == flag.ErrHelp {
 			return nil, err
@@ -144,5 +148,6 @@ func ParseFlagsWithNow(version string, now time.Time) (*Config, error) {
 		BatteryThreshold: *battery,
 		SimulateActivity: *simulateActivity,
 		EnableLogging:    *enableLogging,
+		Headless:         *headless,
 	}, nil
 }

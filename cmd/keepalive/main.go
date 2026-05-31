@@ -92,6 +92,32 @@ func main() {
 		batteryStatus = status
 	}
 
+	sigChan := make(chan os.Signal, 1)
+	signals := getSignals()
+	signal.Notify(sigChan, signals...)
+
+	if cfg.Headless {
+		headlessKeeper := keepalive.NewKeeper()
+		keeperRef = headlessKeeper
+		headlessKeeper.SetSimulateActivity(cfg.SimulateActivity)
+
+		if cfg.SimulateActivity {
+			activeStatus := platform.GetActivitySimulationStatus()
+			if !activeStatus.Available {
+				fmt.Printf("keep-alive: warning: activity simulation unavailable: %s\n", activeStatus.Message)
+			}
+		}
+
+		depMessage := platform.GetDependencyMessage()
+		if depMessage != "" {
+			log.Printf("keep-alive: missing dependencies: %s", depMessage)
+		}
+
+		runHeadless(keeperRef, cfg, sigChan)
+		executeCleanup(nil)
+		return
+	}
+
 	if cfg.Duration > 0 || cfg.BatteryThreshold > 0 {
 		model = ui.InitialModelWithLimits(cfg.Duration, cfg.BatteryThreshold, batteryStatus, cfg.SimulateActivity)
 	} else {
@@ -115,11 +141,6 @@ func main() {
 	}
 
 	keeperRef = model.KeepAlive
-
-	// Set up signal handling
-	sigChan := make(chan os.Signal, 1)
-	signals := getSignals()
-	signal.Notify(sigChan, signals...)
 
 	// Create program with signal handling
 	p := tea.NewProgram(
@@ -149,6 +170,95 @@ func main() {
 
 	// Ensure cleanup runs on normal exit
 	executeCleanup(nil)
+}
+
+// runHeadless runs the keep-alive logic directly without the TUI.
+// It returns when the session completes (duration expires, battery
+// threshold met, or a termination signal is received).
+func runHeadless(keeper *keepalive.Keeper, cfg *config.Config, sigChan chan os.Signal) {
+	fmt.Println("keep-alive: starting (headless mode)")
+
+	keeper.SetSimulateActivity(cfg.SimulateActivity)
+	if cfg.SimulateActivity {
+		activeStatus := platform.GetActivitySimulationStatus()
+		if !activeStatus.Available {
+			fmt.Printf("keep-alive: warning: activity simulation unavailable: %s\n", activeStatus.Message)
+		} else {
+			fmt.Println("keep-alive: activity simulation enabled")
+		}
+	}
+
+	var err error
+	if cfg.Duration > 0 {
+		d := time.Duration(cfg.Duration) * time.Minute
+		fmt.Printf("keep-alive: starting timed session (%s)\n", d)
+		err = keeper.StartTimed(d)
+	} else {
+		fmt.Println("keep-alive: starting indefinite session")
+		err = keeper.StartIndefinite()
+	}
+	if err != nil {
+		fmt.Fprint(os.Stderr, ui.ErrorBanner(fmt.Sprintf("failed to start: %v", err)))
+		os.Exit(1)
+	}
+
+	// Start battery polling if threshold is set
+	var batteryStop chan struct{}
+	if cfg.BatteryThreshold > 0 {
+		batteryStop = make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-batteryStop:
+					return
+				case <-ticker.C:
+					status, err := platform.GetBatteryStatus()
+					if err != nil {
+						fmt.Printf("keep-alive: battery check failed: %v\n", err)
+						continue
+					}
+					fmt.Printf("keep-alive: battery %d%% (threshold %d%%)\n",
+						status.Percentage, cfg.BatteryThreshold)
+					if status.Percentage <= cfg.BatteryThreshold {
+						fmt.Printf("keep-alive: battery threshold reached (%d%% <= %d%%), stopping\n",
+							status.Percentage, cfg.BatteryThreshold)
+						keeper.Stop()
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	// Compute an overall deadline for the session duration timer
+	sessionDeadline := make(chan struct{})
+	if cfg.Duration > 0 {
+		deadline := time.Duration(cfg.Duration) * time.Minute
+		go func() {
+			<-time.After(deadline)
+			fmt.Println("keep-alive: duration elapsed, stopping")
+			close(sessionDeadline)
+		}()
+	}
+
+	// Wait for termination signal, duration expiry, or battery stop
+	select {
+	case sig := <-sigChan:
+		fmt.Printf("keep-alive: received signal %v, stopping\n", sig)
+		if isSIGTSTP(sig) {
+			fmt.Println("keep-alive: preventing suspension and initiating graceful shutdown")
+		}
+	case <-sessionDeadline:
+	}
+
+	if batteryStop != nil {
+		close(batteryStop)
+	}
+
+	keeper.Stop()
+	fmt.Println("keep-alive: stopped (headless mode)")
 }
 
 // executeCleanup performs cleanup operations with timeout protection

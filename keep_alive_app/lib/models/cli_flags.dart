@@ -18,7 +18,7 @@ class CliFlags {
   });
 
   List<String> toArgs() {
-    final args = <String>[];
+    final args = <String>['--headless'];
     if (durationMinutes != null) {
       args.addAll(['--duration', durationMinutes.toString()]);
     }

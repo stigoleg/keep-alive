@@ -4,36 +4,36 @@ import 'package:keep_alive_app/models/cli_flags.dart';
 void main() {
   group('CliFlags', () {
     group('toArgs', () {
-      test('empty flags emits only --log', () {
+      test('empty flags emits only --headless and --log', () {
         const flags = CliFlags();
-        expect(flags.toArgs(), ['--log']);
+        expect(flags.toArgs(), ['--headless', '--log']);
       });
 
       test('durationMinutes emits --duration flag', () {
         const flags = CliFlags(durationMinutes: 120);
-        expect(flags.toArgs(), ['--duration', '120', '--log']);
+        expect(flags.toArgs(), ['--headless', '--duration', '120', '--log']);
       });
 
       test('clockTime emits --clock flag in HH:mm format', () {
         final clockTime = DateTime(2025, 1, 1, 17, 30);
         final flags = CliFlags(clockTime: clockTime);
-        expect(flags.toArgs(), ['--clock', '17:30', '--log']);
+        expect(flags.toArgs(), ['--headless', '--clock', '17:30', '--log']);
       });
 
       test('clockTime pads single-digit hours', () {
         final clockTime = DateTime(2025, 1, 1, 9, 5);
         final flags = CliFlags(clockTime: clockTime);
-        expect(flags.toArgs(), ['--clock', '09:05', '--log']);
+        expect(flags.toArgs(), ['--headless', '--clock', '09:05', '--log']);
       });
 
       test('batteryThreshold emits --battery flag', () {
         const flags = CliFlags(batteryThreshold: 30);
-        expect(flags.toArgs(), ['--battery', '30', '--log']);
+        expect(flags.toArgs(), ['--headless', '--battery', '30', '--log']);
       });
 
       test('simulateActivity emits --active flag', () {
         const flags = CliFlags(simulateActivity: true);
-        expect(flags.toArgs(), ['--active', '--log']);
+        expect(flags.toArgs(), ['--headless', '--active', '--log']);
       });
 
       test('all flags combined', () {
@@ -46,6 +46,7 @@ void main() {
         expect(args, containsAll(['--duration', '90']));
         expect(args, containsAll(['--battery', '20']));
         expect(args, contains('--active'));
+        expect(args.first, '--headless');
         expect(args.last, '--log');
       });
 
