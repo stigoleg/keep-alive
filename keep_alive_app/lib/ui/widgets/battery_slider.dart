@@ -40,7 +40,31 @@ class BatterySlider extends StatelessWidget {
                   style: theme.textTheme.bodySmall,
                 ),
               ),
-              Text(
+            ],
+          ),
+          const SizedBox(height: AppTheme.spacing4),
+        ],
+        Row(
+          children: [
+            Expanded(
+              child: Opacity(
+                opacity: disabled ? 0.45 : 1.0,
+                child: Slider(
+                  value: value.toDouble(),
+                  min: 1,
+                  max: 100,
+                  divisions: 99,
+                  activeColor: disabled
+                      ? theme.colorScheme.error
+                      : theme.colorScheme.primary,
+                  onChanged: disabled ? null : (v) => onChanged(v.round()),
+                ),
+              ),
+            ),
+            const SizedBox(width: AppTheme.spacing8),
+            SizedBox(
+              width: 40,
+              child: Text(
                 FormatUtils.battery(value.toDouble()),
                 style: theme.textTheme.titleMedium?.copyWith(
                   color: disabled
@@ -48,22 +72,10 @@ class BatterySlider extends StatelessWidget {
                       : theme.colorScheme.onSurface,
                   fontWeight: FontWeight.w700,
                 ),
+                textAlign: TextAlign.center,
               ),
-            ],
-          ),
-          const SizedBox(height: AppTheme.spacing4),
-        ],
-        Opacity(
-          opacity: disabled ? 0.45 : 1.0,
-          child: Slider(
-            value: value.toDouble(),
-            min: 1,
-            max: 100,
-            divisions: 99,
-            activeColor:
-                disabled ? theme.colorScheme.error : theme.colorScheme.primary,
-            onChanged: disabled ? null : (v) => onChanged(v.round()),
-          ),
+            ),
+          ],
         ),
         if (disabled)
           Padding(

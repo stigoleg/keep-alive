@@ -23,6 +23,7 @@ void main() {
         durationMinutes: 60,
         clockTime: clockTime,
         batteryThreshold: 30,
+        batteryThresholdEnabled: true,
         simulateActivity: true,
         enableLogging: true,
       );

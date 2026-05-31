@@ -166,107 +166,91 @@ class _ModeChip extends StatelessWidget {
   }
 }
 
-class _ClockPicker extends StatefulWidget {
+class _ClockPicker extends StatelessWidget {
   final DateTime? clockTime;
   final ValueChanged<DateTime> onChanged;
 
   const _ClockPicker({this.clockTime, required this.onChanged});
 
   @override
-  State<_ClockPicker> createState() => _ClockPickerState();
-}
-
-class _ClockPickerState extends State<_ClockPicker> {
-  late TextEditingController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(
-      text: widget.clockTime != null
-          ? FormatUtils.timeOfDay24(widget.clockTime!)
-          : '',
-    );
-  }
-
-  @override
-  void didUpdateWidget(_ClockPicker oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.clockTime != widget.clockTime) {
-      _controller.text = widget.clockTime != null
-          ? FormatUtils.timeOfDay24(widget.clockTime!)
-          : '';
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final hasTime = clockTime != null;
+    final display = hasTime
+        ? FormatUtils.timeOfDay(clockTime!)
+        : 'Pick a time';
 
-    return Container(
-      padding: const EdgeInsets.all(AppTheme.spacing12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.access_time,
+    return InkWell(
+      onTap: () => _showTimePicker(context),
+      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.spacing16,
+          vertical: AppTheme.spacing12,
+        ),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: theme.colorScheme.outline.withValues(alpha: 0.5),
+          ),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.access_time,
               size: AppTheme.iconMedium,
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
-          const SizedBox(width: AppTheme.spacing8),
-          SizedBox(
-            width: 80,
-            child: TextField(
-              controller: _controller,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.headlineSmall,
-              decoration: const InputDecoration(
-                hintText: 'HH:MM',
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: AppTheme.spacing8,
-                  vertical: AppTheme.spacing6,
-                ),
-              ),
-              keyboardType: TextInputType.datetime,
-              onSubmitted: (value) => _validateAndSet(value),
-              onTapOutside: (_) {
-                FocusScope.of(context).unfocus();
-              },
+              color: theme.colorScheme.primary,
             ),
-          ),
-          const SizedBox(width: AppTheme.spacing4),
-          Text(
-            '(24h)',
-            style: theme.textTheme.bodySmall,
-          ),
-        ],
+            const SizedBox(width: AppTheme.spacing8),
+            Text(
+              display,
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: hasTime
+                    ? theme.colorScheme.onSurface
+                    : theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: AppTheme.spacing4),
+            Icon(
+              Icons.arrow_drop_down,
+              size: AppTheme.iconSmall,
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  void _validateAndSet(String value) {
-    final parts = value.trim().split(':');
-    if (parts.length != 2) return;
+  Future<void> _showTimePicker(BuildContext context) async {
+    final initialTime = clockTime != null
+        ? TimeOfDay(hour: clockTime!.hour, minute: clockTime!.minute)
+        : const TimeOfDay(hour: 9, minute: 0);
 
-    final hour = int.tryParse(parts[0]);
-    final minute = int.tryParse(parts[1]);
-    if (hour == null || minute == null) return;
-    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return;
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: initialTime,
+      builder: (context, child) {
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            alwaysUse24HourFormat: false,
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked == null || !context.mounted) return;
 
     final now = DateTime.now();
-    var clockTime = DateTime(now.year, now.month, now.day, hour, minute);
-    if (clockTime.isBefore(now)) {
-      clockTime = clockTime.add(const Duration(days: 1));
+    var date = DateTime(now.year, now.month, now.day, picked.hour, picked.minute);
+    if (date.isBefore(now)) {
+      date = date.add(const Duration(days: 1));
     }
 
-    widget.onChanged(clockTime);
+    onChanged(date);
   }
 }

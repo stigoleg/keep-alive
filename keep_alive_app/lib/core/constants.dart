@@ -6,6 +6,7 @@ class AppConstants {
   static const String appVersion = '1.0.0';
   static const String githubRepo = 'stigoleg/keep-alive';
   static const String cliBinaryName = 'keepalive';
+  static const String cliReleaseBaseName = 'keep-alive';
   static const String githubApiBaseUrl = 'https://api.github.com';
   static const String githubReleasesPath = '/repos/stigoleg/keep-alive/releases';
   static const String githubDownloadBaseUrl =

@@ -59,7 +59,7 @@ class GitHubApiService {
     }
 
     final ext = osName == 'Windows' ? 'zip' : 'tar.gz';
-    return '${AppConstants.cliBinaryName}_${osName}_$arch.$ext';
+    return '${AppConstants.cliReleaseBaseName}_${osName}_$arch.$ext';
   }
 
   String? findPlatformAssetUrl(GitHubRelease release) {

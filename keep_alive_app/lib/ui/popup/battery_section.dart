@@ -47,7 +47,7 @@ class BatterySection extends ConsumerWidget {
               ),
               child: BatterySlider(
                 value: threshold ?? 50,
-                label: null,
+                label: 'Threshold:',
                 disabled: belowThreshold,
                 onChanged: (value) {
                   ref

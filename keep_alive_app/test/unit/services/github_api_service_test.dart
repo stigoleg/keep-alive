@@ -16,7 +16,7 @@ void main() {
         final service = GitHubApiService(dio: dio);
         final name = service.getAssetNameForCurrentPlatform();
         expect(name, isNotEmpty);
-        expect(name, contains('keepalive'));
+        expect(name, contains('keep-alive'));
         expect(name, anyOf(endsWith('.tar.gz'), endsWith('.zip')));
       });
 
