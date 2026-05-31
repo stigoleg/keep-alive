@@ -32,12 +32,16 @@ class KeepAliveApp extends ConsumerStatefulWidget {
 
 class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     with WidgetsBindingObserver, WindowListener {
+  static const double _settingsPopupMinHeight = 480;
+
   final TrayManager _trayManager = TrayManager();
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   final KeepAlivePlatform _platform = KeepAlivePlatform.instance;
   StreamSubscription<String>? _shutdownSubscription;
   Timer? _menuBarCountdownTimer;
   bool _popupVisible = false;
+  bool _settingsOpen = false;
+  int _windowResizeRevision = 0;
   bool _quitting = false;
 
   @override
@@ -51,7 +55,7 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
         AppLogger.info('System shutdown signal received from native platform');
         _handleQuit();
       } else if (event == AppConstants.trayEventPopoverDismissed) {
-        _popupVisible = false;
+        _handlePopoverDismissed();
       }
     });
 
@@ -89,7 +93,8 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     }
     final settings = ref.read(appSettingsProvider);
     final processState = ref.read(cliProcessProvider);
-    final shouldRun = settings.showCountdownInMenuBar &&
+    final shouldRun =
+        settings.showCountdownInMenuBar &&
         processState.isRunning &&
         settings.durationMinutes != null &&
         processState.startTime != null;
@@ -111,12 +116,16 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     }
 
     final processState = ref.read(cliProcessProvider);
-    if (!processState.isRunning || settings.durationMinutes == null || processState.startTime == null) {
+    if (!processState.isRunning ||
+        settings.durationMinutes == null ||
+        processState.startTime == null) {
       _platform.setStatusBarTitle('');
       return;
     }
 
-    final endTime = processState.startTime!.add(Duration(minutes: settings.durationMinutes!));
+    final endTime = processState.startTime!.add(
+      Duration(minutes: settings.durationMinutes!),
+    );
     final remaining = endTime.difference(DateTime.now());
     if (remaining.isNegative || remaining.inMinutes <= 0) {
       _platform.setStatusBarTitle('Done');
@@ -188,7 +197,8 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
       AppLogger.info('Auto-starting keep-alive session from previous state');
       final flags = settings.toCliFlags();
       try {
-        final binaryReady = ref.read(cliBinaryProvider).status == DownloadStatus.installed;
+        final binaryReady =
+            ref.read(cliBinaryProvider).status == DownloadStatus.installed;
         if (binaryReady) {
           unawaited(ref.read(cliProcessProvider.notifier).startSession(flags));
         } else {
@@ -216,8 +226,7 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     if (_quitting) return;
 
     if (_popupVisible) {
-      _popupVisible = false;
-      await _platform.hidePopover();
+      await _hidePopup();
     } else {
       _popupVisible = true;
       await _platform.showPopover();
@@ -226,6 +235,7 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
 
   Future<void> _openSettings() async {
     if (_quitting) return;
+    if (_settingsOpen) return;
 
     if (!_popupVisible) {
       _popupVisible = true;
@@ -235,12 +245,13 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     void showSettingsDialog() {
       final navigator = _navigatorKey.currentState;
       if (navigator != null && mounted) {
-        showDialog(
-          context: navigator.context,
-          barrierDismissible: true,
-          builder: (_) => SettingsDialog(
-            onClose: () => navigator.pop(),
-          ),
+        _setSettingsOpen(true);
+        unawaited(
+          showDialog(
+            context: navigator.context,
+            barrierDismissible: true,
+            builder: (_) => SettingsDialog(onClose: () => navigator.pop()),
+          ).whenComplete(() => _setSettingsOpen(false)),
         );
       }
     }
@@ -252,6 +263,39 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
         showSettingsDialog();
       });
     }
+  }
+
+  Future<void> _hidePopup() async {
+    _popupVisible = false;
+    _closeSettingsDialog();
+    await _platform.hidePopover();
+  }
+
+  void _handlePopoverDismissed() {
+    _popupVisible = false;
+    _closeSettingsDialog();
+  }
+
+  void _closeSettingsDialog() {
+    if (!_settingsOpen) return;
+    _setSettingsOpen(false);
+    final navigator = _navigatorKey.currentState;
+    if (navigator != null) {
+      navigator.popUntil((route) => route.isFirst);
+    }
+  }
+
+  void _setSettingsOpen(bool isOpen) {
+    if (_settingsOpen == isOpen) return;
+    if (!mounted) {
+      _settingsOpen = isOpen;
+      _windowResizeRevision++;
+      return;
+    }
+    setState(() {
+      _settingsOpen = isOpen;
+      _windowResizeRevision++;
+    });
   }
 
   Future<void> _handleQuit() async {
@@ -302,6 +346,12 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
   }
 
   @override
+  void onWindowBlur() {
+    if (!_popupVisible || _quitting) return;
+    unawaited(_hidePopup());
+  }
+
+  @override
   Widget build(BuildContext context) {
     Widget app = MaterialApp(
       title: AppConstants.appName,
@@ -311,7 +361,11 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
       theme: _lightTheme,
       darkTheme: _darkTheme,
       home: ErrorBoundary(
-        child: PopupPanel(onOpenSettings: _openSettings),
+        child: PopupPanel(
+          onOpenSettings: _openSettings,
+          minWindowHeight: _settingsOpen ? _settingsPopupMinHeight : null,
+          resizeRevision: _windowResizeRevision,
+        ),
       ),
     );
 

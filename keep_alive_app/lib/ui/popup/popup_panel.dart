@@ -9,9 +9,16 @@ import 'status_header.dart';
 import 'toggle_section.dart';
 
 class PopupPanel extends ConsumerStatefulWidget {
-  const PopupPanel({super.key, this.onOpenSettings});
+  const PopupPanel({
+    super.key,
+    this.onOpenSettings,
+    this.minWindowHeight,
+    this.resizeRevision = 0,
+  });
 
   final VoidCallback? onOpenSettings;
+  final double? minWindowHeight;
+  final int resizeRevision;
 
   @override
   ConsumerState<PopupPanel> createState() => _PopupPanelState();
@@ -27,6 +34,15 @@ class _PopupPanelState extends ConsumerState<PopupPanel> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _syncWindowSize());
   }
 
+  @override
+  void didUpdateWidget(PopupPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.minWindowHeight != widget.minWindowHeight ||
+        oldWidget.resizeRevision != widget.resizeRevision) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _syncWindowSize());
+    }
+  }
+
   void _syncWindowSize() {
     final renderBox =
         _contentKey.currentContext?.findRenderObject() as RenderBox?;
@@ -35,17 +51,24 @@ class _PopupPanelState extends ConsumerState<PopupPanel> {
     final contentHeight = renderBox.size.height;
     if (contentHeight <= 0) return;
 
-    final targetHeight = contentHeight;
+    var targetHeight = contentHeight;
+    final minWindowHeight = widget.minWindowHeight;
+    if (minWindowHeight != null && targetHeight < minWindowHeight) {
+      targetHeight = minWindowHeight;
+    }
     if (_lastHeight != null && (targetHeight - _lastHeight!).abs() < 0.5) {
       return;
     }
     _lastHeight = targetHeight;
 
-    windowManager.getBounds().then((bounds) {
-      // Anchor the top edge to the menu bar — only resize, never reposition.
-      // setSize on macOS/Win/Linux preserves the top-left origin.
-      windowManager.setSize(Size(bounds.size.width, targetHeight));
-    }).catchError((_) {});
+    windowManager
+        .getBounds()
+        .then((bounds) {
+          // Anchor the top edge to the menu bar — only resize, never reposition.
+          // setSize on macOS/Win/Linux preserves the top-left origin.
+          windowManager.setSize(Size(bounds.size.width, targetHeight));
+        })
+        .catchError((_) {});
   }
 
   bool _onSizeChanged(SizeChangedLayoutNotification _) {

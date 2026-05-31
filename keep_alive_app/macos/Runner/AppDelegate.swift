@@ -87,6 +87,14 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
         ) { [weak self] event in
             self?.handleGlobalEvent(event)
         }
+
+        applicationActivationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleApplicationDidResignActive()
+        }
     }
 
     private func teardownEventMonitors() {
@@ -97,6 +105,10 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
         if let monitor = globalEventMonitor {
             NSEvent.removeMonitor(monitor)
             globalEventMonitor = nil
+        }
+        if let observer = applicationActivationObserver {
+            NotificationCenter.default.removeObserver(observer)
+            applicationActivationObserver = nil
         }
     }
 
@@ -128,6 +140,13 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
                 flutterChannel?.invokeMethod("onTrayEvent", arguments: "popoverDismissed")
             }
         }
+    }
+
+    private func handleApplicationDidResignActive() {
+        guard popoverVisible else { return }
+
+        hidePopover()
+        flutterChannel?.invokeMethod("onTrayEvent", arguments: "popoverDismissed")
     }
 
     // MARK: - Method Channel Handler

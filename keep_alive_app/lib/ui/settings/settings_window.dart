@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/constants.dart';
 import '../../core/logger.dart';
@@ -99,20 +101,12 @@ class _Header extends StatelessWidget {
         children: [
           const Icon(Icons.settings, size: AppTheme.iconMedium),
           const SizedBox(width: AppTheme.spacing8),
-          Expanded(
-            child: Text(
-              'Settings',
-              style: theme.textTheme.titleMedium,
-            ),
-          ),
+          Expanded(child: Text('Settings', style: theme.textTheme.titleMedium)),
           IconButton(
             onPressed: onClose,
             icon: const Icon(Icons.close, size: AppTheme.iconMedium),
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(
-              minWidth: 32,
-              minHeight: 32,
-            ),
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
             style: IconButton.styleFrom(
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
@@ -222,44 +216,42 @@ class _UpdatesSection extends StatelessWidget {
   Widget _actionButton(BuildContext context, ThemeData theme) {
     return switch (binaryState.status) {
       DownloadStatus.installed => TextButton(
-          onPressed: () async {
-            final notifier = ref.read(cliBinaryProvider.notifier);
-            if (await notifier.checkForUpdate()) {
-              if (context.mounted) notifier.downloadLatest();
-            }
-          },
-          style: TextButton.styleFrom(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppTheme.spacing10,
-              vertical: AppTheme.spacing4,
-            ),
-            minimumSize: Size.zero,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        onPressed: () async {
+          final notifier = ref.read(cliBinaryProvider.notifier);
+          if (await notifier.checkForUpdate()) {
+            if (context.mounted) notifier.downloadLatest();
+          }
+        },
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.spacing10,
+            vertical: AppTheme.spacing4,
           ),
-          child: const Text('Check'),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
+        child: const Text('Check'),
+      ),
       DownloadStatus.notInstalled || DownloadStatus.error => TextButton(
-          onPressed: () =>
-              ref.read(cliBinaryProvider.notifier).downloadLatest(),
-          style: TextButton.styleFrom(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppTheme.spacing10,
-              vertical: AppTheme.spacing4,
-            ),
-            minimumSize: Size.zero,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        onPressed: () => ref.read(cliBinaryProvider.notifier).downloadLatest(),
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.spacing10,
+            vertical: AppTheme.spacing4,
           ),
-          child: const Text('Download'),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
+        child: const Text('Download'),
+      ),
       DownloadStatus.downloading => SizedBox(
-          width: AppTheme.iconMedium,
-          height: AppTheme.iconMedium,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            value:
-                binaryState.progress > 0 ? binaryState.progress : null,
-          ),
+        width: AppTheme.iconMedium,
+        height: AppTheme.iconMedium,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          value: binaryState.progress > 0 ? binaryState.progress : null,
         ),
+      ),
     };
   }
 }
@@ -291,10 +283,8 @@ class _AboutSection extends StatelessWidget {
         Row(
           children: [
             TextButton.icon(
-              onPressed: () => showLicensePage(
-                context: context,
-                applicationName: AppConstants.appName,
-                applicationVersion: AppConstants.appVersion,
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const _LicenseScreen()),
               ),
               icon: const Icon(Icons.description, size: AppTheme.iconSmall),
               label: const Text('View Licenses'),
@@ -309,10 +299,7 @@ class _AboutSection extends StatelessWidget {
             ),
             const Spacer(),
             TextButton.icon(
-              onPressed: () {
-                Clipboard.setData(
-                    const ClipboardData(text: 'https://github.com/${AppConstants.githubRepo}'));
-              },
+              onPressed: _openGithub,
               icon: const Icon(Icons.open_in_new, size: AppTheme.iconSmall),
               label: const Text('GitHub'),
               style: TextButton.styleFrom(
@@ -329,6 +316,173 @@ class _AboutSection extends StatelessWidget {
       ],
     );
   }
+
+  Future<void> _openGithub() async {
+    final uri = Uri.parse(AppConstants.githubUrl);
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched) {
+      AppLogger.warning('Failed to open GitHub URL: ${AppConstants.githubUrl}');
+    }
+  }
+}
+
+class _LicenseScreen extends StatelessWidget {
+  const _LicenseScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      backgroundColor: theme.colorScheme.surface,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _LicenseHeader(onClose: () => Navigator.of(context).pop()),
+            Expanded(
+              child: FutureBuilder<List<_LicenseNotice>>(
+                future: _loadLicenses(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState != ConnectionState.done) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+
+                  final notices = snapshot.data ?? const <_LicenseNotice>[];
+                  return ListView.separated(
+                    padding: const EdgeInsets.all(AppTheme.spacing16),
+                    itemCount: notices.length + 1,
+                    separatorBuilder: (_, __) =>
+                        const SizedBox(height: AppTheme.spacing12),
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        return Text(
+                          '${AppConstants.appName} ${AppConstants.appVersion}',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurface.withValues(
+                              alpha: 0.65,
+                            ),
+                          ),
+                        );
+                      }
+
+                      final notice = notices[index - 1];
+                      return _LicenseNoticeTile(notice: notice);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<List<_LicenseNotice>> _loadLicenses() async {
+    final entries = await LicenseRegistry.licenses.toList();
+    final notices = <_LicenseNotice>[];
+
+    for (final entry in entries) {
+      final text = entry.paragraphs
+          .map((paragraph) => paragraph.text)
+          .where((text) => text.trim().isNotEmpty)
+          .join('\n\n');
+      for (final package in entry.packages) {
+        notices.add(_LicenseNotice(package: package, text: text));
+      }
+    }
+
+    notices.sort((a, b) => a.package.compareTo(b.package));
+    return notices;
+  }
+}
+
+class _LicenseHeader extends StatelessWidget {
+  const _LicenseHeader({required this.onClose});
+
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.spacing16,
+        vertical: AppTheme.spacing8,
+      ),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: theme.dividerColor.withValues(alpha: 0.2),
+            width: 0.5,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.description, size: AppTheme.iconMedium),
+          const SizedBox(width: AppTheme.spacing8),
+          Expanded(child: Text('Licenses', style: theme.textTheme.titleMedium)),
+          IconButton(
+            onPressed: onClose,
+            icon: const Icon(Icons.close, size: AppTheme.iconMedium),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            style: IconButton.styleFrom(
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LicenseNotice {
+  const _LicenseNotice({required this.package, required this.text});
+
+  final String package;
+  final String text;
+}
+
+class _LicenseNoticeTile extends StatelessWidget {
+  const _LicenseNoticeTile({required this.notice});
+
+  final _LicenseNotice notice;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+        border: Border.all(
+          color: theme.dividerColor.withValues(alpha: 0.2),
+          width: 0.5,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppTheme.spacing12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(notice.package, style: theme.textTheme.titleSmall),
+            const SizedBox(height: AppTheme.spacing8),
+            SelectableText(
+              notice.text,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.72),
+                height: 1.35,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _LogSection extends ConsumerStatefulWidget {
@@ -339,7 +493,7 @@ class _LogSection extends ConsumerStatefulWidget {
 }
 
 class _LogSectionState extends ConsumerState<_LogSection> {
-  String? _activeFilter;
+  String _activeFilter = 'All';
   final TextEditingController _searchController = TextEditingController();
   String _searchText = '';
 
@@ -360,8 +514,9 @@ class _LogSectionState extends ConsumerState<_LogSection> {
   }
 
   List<String> _resolveLogs() {
-    final base = _activeFilter != null
-        ? AppLogger.filteredLogs(_activeFilter)
+    final level = _filters[_activeFilter];
+    final base = level != null
+        ? AppLogger.filteredLogs(level)
         : AppLogger.recentLogs;
     if (_searchText.isEmpty) return base;
     final needle = _searchText.toLowerCase();
@@ -397,7 +552,7 @@ class _LogSectionState extends ConsumerState<_LogSection> {
             ref.read(sessionProvider).applySettingsAndRestart();
           },
         ),
-        const SizedBox(height: AppTheme.spacing8),
+        const SizedBox(height: AppTheme.spacing12),
         Row(
           children: [
             Expanded(
@@ -445,37 +600,82 @@ class _LogSectionState extends ConsumerState<_LogSection> {
             ),
           ],
         ),
-        const SizedBox(height: AppTheme.spacing6),
+        const SizedBox(height: AppTheme.spacing10),
+        _LogFilterBar(
+          searchController: _searchController,
+          searchText: _searchText,
+          activeFilter: _activeFilter,
+          filters: _filters.keys.toList(growable: false),
+          onSearchChanged: (value) => setState(() => _searchText = value),
+          onClearSearch: () {
+            _searchController.clear();
+            setState(() => _searchText = '');
+          },
+          onFilterChanged: (value) {
+            if (value == null) return;
+            setState(() => _activeFilter = value);
+          },
+        ),
+        const SizedBox(height: AppTheme.spacing12),
+        _LogViewer(logs: displayLogs),
+      ],
+    );
+  }
+}
+
+class _LogFilterBar extends StatelessWidget {
+  const _LogFilterBar({
+    required this.searchController,
+    required this.searchText,
+    required this.activeFilter,
+    required this.filters,
+    required this.onSearchChanged,
+    required this.onClearSearch,
+    required this.onFilterChanged,
+  });
+
+  final TextEditingController searchController;
+  final String searchText;
+  final String activeFilter;
+  final List<String> filters;
+  final ValueChanged<String> onSearchChanged;
+  final VoidCallback onClearSearch;
+  final ValueChanged<String?> onFilterChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Column(
+      children: [
         SizedBox(
-          height: 32,
+          height: 36,
           child: TextField(
-            controller: _searchController,
-            onChanged: (value) => setState(() => _searchText = value),
+            controller: searchController,
+            onChanged: onSearchChanged,
             style: theme.textTheme.bodySmall,
             decoration: InputDecoration(
               isDense: true,
               hintText: 'Search logs',
               prefixIcon: const Icon(Icons.search, size: AppTheme.iconSmall),
               prefixIconConstraints: const BoxConstraints(
-                minWidth: 32,
-                minHeight: 32,
+                minWidth: 34,
+                minHeight: 34,
               ),
-              suffixIcon: _searchText.isEmpty
+              suffixIcon: searchText.isEmpty
                   ? null
                   : IconButton(
                       icon: const Icon(Icons.close, size: AppTheme.iconSmall),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(
-                        minWidth: 28,
-                        minHeight: 28,
+                        minWidth: 30,
+                        minHeight: 30,
                       ),
-                      onPressed: () {
-                        _searchController.clear();
-                        setState(() => _searchText = '');
-                      },
+                      onPressed: onClearSearch,
                     ),
               contentPadding: const EdgeInsets.symmetric(
-                vertical: AppTheme.spacing4,
+                horizontal: AppTheme.spacing8,
+                vertical: AppTheme.spacing8,
               ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
@@ -483,38 +683,26 @@ class _LogSectionState extends ConsumerState<_LogSection> {
             ),
           ),
         ),
-        const SizedBox(height: AppTheme.spacing6),
-        Wrap(
-          spacing: AppTheme.spacing4,
-          children: _filters.entries.map((entry) {
-            final selected = _activeFilter == entry.value;
-            return SizedBox(
-              height: 28,
-              child: ChoiceChip(
-                label: Text(
-                  entry.key,
-                  style: const TextStyle(fontSize: 11),
-                ),
-                selected: selected,
-                onSelected: (_) {
-                  setState(() => _activeFilter = entry.value);
-                },
-                selectedColor: theme.colorScheme.primaryContainer,
-                labelStyle: TextStyle(
-                  color: selected
-                      ? theme.colorScheme.onPrimaryContainer
-                      : theme.colorScheme.onSurface.withValues(alpha: 0.7),
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: AppTheme.spacing8),
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-              ),
-            );
-          }).toList(),
-        ),
         const SizedBox(height: AppTheme.spacing8),
-        _LogViewer(logs: displayLogs),
+        DropdownButtonFormField<String>(
+          initialValue: activeFilter,
+          isDense: true,
+          decoration: InputDecoration(
+            labelText: 'Level',
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: AppTheme.spacing12,
+              vertical: AppTheme.spacing8,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+            ),
+          ),
+          items: [
+            for (final filter in filters)
+              DropdownMenuItem<String>(value: filter, child: Text(filter)),
+          ],
+          onChanged: onFilterChanged,
+        ),
       ],
     );
   }
@@ -537,15 +725,18 @@ class _LogViewerState extends State<_LogViewer> {
   void initState() {
     super.initState();
     _controller.addListener(_onScroll);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEndIfTailing());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _scrollToEndIfTailing(),
+    );
   }
 
   @override
   void didUpdateWidget(_LogViewer old) {
     super.didUpdateWidget(old);
     if (old.logs.length != widget.logs.length) {
-      WidgetsBinding.instance
-          .addPostFrameCallback((_) => _scrollToEndIfTailing());
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToEndIfTailing(),
+      );
     }
   }
 
@@ -558,7 +749,8 @@ class _LogViewerState extends State<_LogViewer> {
 
   void _onScroll() {
     if (!_controller.hasClients) return;
-    final atBottom = _controller.position.pixels >=
+    final atBottom =
+        _controller.position.pixels >=
         _controller.position.maxScrollExtent - 12;
     if (atBottom != _autoTail) {
       setState(() => _autoTail = atBottom);
@@ -582,10 +774,11 @@ class _LogViewerState extends State<_LogViewer> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final textColor = theme.colorScheme.onSurface.withValues(alpha: 0.62);
 
     return Container(
       width: double.infinity,
-      height: 240,
+      height: 260,
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
@@ -594,43 +787,86 @@ class _LogViewerState extends State<_LogViewer> {
           width: 0.5,
         ),
       ),
-      padding: const EdgeInsets.all(AppTheme.spacing8),
-      child: widget.logs.isEmpty
-          ? Center(
-              child: Text(
-                'No log entries match',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
-                ),
-              ),
-            )
-          : Scrollbar(
-              controller: _controller,
-              child: SingleChildScrollView(
-                controller: _controller,
-                child: SelectableText.rich(
-                  TextSpan(
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      height: 1.4,
-                    ),
-                    children: [
-                      for (var i = 0; i < widget.logs.length; i++) ...[
-                        TextSpan(
-                          text: widget.logs[i],
-                          style: TextStyle(
-                            color: _colorForLine(theme, widget.logs[i]),
-                          ),
-                        ),
-                        if (i < widget.logs.length - 1)
-                          const TextSpan(text: '\n'),
-                      ],
-                    ],
-                  ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Container(
+            height: 34,
+            padding: const EdgeInsets.symmetric(horizontal: AppTheme.spacing10),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: theme.dividerColor.withValues(alpha: 0.18),
+                  width: 0.5,
                 ),
               ),
             ),
+            child: Row(
+              children: [
+                Text(
+                  '${widget.logs.length} entries',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: textColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                Icon(
+                  _autoTail ? Icons.vertical_align_bottom : Icons.pause,
+                  size: AppTheme.iconSmall,
+                  color: textColor,
+                ),
+                const SizedBox(width: AppTheme.spacing4),
+                Text(
+                  _autoTail ? 'Tail' : 'Paused',
+                  style: theme.textTheme.labelSmall?.copyWith(color: textColor),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: widget.logs.isEmpty
+                ? Center(
+                    child: Text(
+                      'No log entries match',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withValues(
+                          alpha: 0.4,
+                        ),
+                      ),
+                    ),
+                  )
+                : Scrollbar(
+                    controller: _controller,
+                    child: SingleChildScrollView(
+                      controller: _controller,
+                      padding: const EdgeInsets.all(AppTheme.spacing10),
+                      child: SelectableText.rich(
+                        TextSpan(
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                            height: 1.4,
+                          ),
+                          children: [
+                            for (var i = 0; i < widget.logs.length; i++) ...[
+                              TextSpan(
+                                text: widget.logs[i],
+                                style: TextStyle(
+                                  color: _colorForLine(theme, widget.logs[i]),
+                                ),
+                              ),
+                              if (i < widget.logs.length - 1)
+                                const TextSpan(text: '\n'),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -656,10 +892,7 @@ class _SettingRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                label,
-                style: theme.textTheme.bodyMedium,
-              ),
+              Text(label, style: theme.textTheme.bodyMedium),
               Text(
                 subtitle,
                 style: theme.textTheme.bodySmall?.copyWith(
