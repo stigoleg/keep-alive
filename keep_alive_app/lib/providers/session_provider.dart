@@ -4,6 +4,7 @@ import '../core/logger.dart';
 import '../models/cli_flags.dart';
 import 'battery_provider.dart';
 import 'cli_binary_provider.dart';
+import '../platform/platform_interface.dart';
 import 'process_provider.dart';
 import 'settings_provider.dart';
 
@@ -94,7 +95,21 @@ class SessionOrchestrator {
   }
 
   Future<AppSettingsState> _settingsForCli() async {
-    final settings = _ref.read(appSettingsProvider);
+    var settings = _ref.read(appSettingsProvider);
+    if (settings.simulateActivity) {
+      final allowed = await KeepAlivePlatform.instance
+          .ensureActivitySimulationPermission();
+      if (!allowed) {
+        AppLogger.warning(
+          'Disabling activity simulation because Accessibility permission is missing',
+        );
+        await _ref
+            .read(appSettingsProvider.notifier)
+            .setSimulateActivity(false);
+        settings = _ref.read(appSettingsProvider);
+      }
+    }
+
     if (!settings.batteryThresholdEnabled) return settings;
 
     final currentBattery = _ref

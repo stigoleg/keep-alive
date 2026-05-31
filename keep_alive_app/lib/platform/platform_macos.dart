@@ -49,8 +49,9 @@ class KeepAlivePlatformMacOS extends KeepAlivePlatform {
 
   @override
   Future<String> getPlatformName() async {
-    final result =
-        await _channel.invokeMethod<String>(AppConstants.methodGetPlatformName);
+    final result = await _channel.invokeMethod<String>(
+      AppConstants.methodGetPlatformName,
+    );
     return result ?? 'macOS';
   }
 
@@ -63,8 +64,9 @@ class KeepAlivePlatformMacOS extends KeepAlivePlatform {
 
   @override
   Future<bool> isAutoStartEnabled() async {
-    final result = await _channel
-        .invokeMethod<bool>(AppConstants.methodIsAutoStartEnabled);
+    final result = await _channel.invokeMethod<bool>(
+      AppConstants.methodIsAutoStartEnabled,
+    );
     return result ?? false;
   }
 
@@ -90,11 +92,19 @@ class KeepAlivePlatformMacOS extends KeepAlivePlatform {
   }
 
   @override
+  Future<bool> ensureActivitySimulationPermission() async {
+    final result = await _channel.invokeMethod<bool>(
+      AppConstants.methodEnsureActivityPermission,
+    );
+    return result ?? false;
+  }
+
+  @override
   Future<int?> showContextMenu(List<String> items) async {
-    final result =
-        await _channel.invokeMethod<int>(AppConstants.methodShowContextMenu, {
-      'items': items,
-    });
+    final result = await _channel.invokeMethod<int>(
+      AppConstants.methodShowContextMenu,
+      {'items': items},
+    );
     return result;
   }
 
@@ -110,8 +120,9 @@ class KeepAlivePlatformMacOS extends KeepAlivePlatform {
 
   @override
   Future<BatteryInfo> getBatteryInfo() async {
-    final result = await _channel
-        .invokeMapMethod<String, dynamic>(AppConstants.methodGetBatteryInfo);
+    final result = await _channel.invokeMapMethod<String, dynamic>(
+      AppConstants.methodGetBatteryInfo,
+    );
     if (result == null) {
       return const BatteryInfo(percentage: 100.0, isPresent: false);
     }
@@ -120,8 +131,9 @@ class KeepAlivePlatformMacOS extends KeepAlivePlatform {
 
   @override
   Future<String> getAppSupportDir() async {
-    final result = await _channel
-        .invokeMethod<String>(AppConstants.methodGetAppSupportDir);
+    final result = await _channel.invokeMethod<String>(
+      AppConstants.methodGetAppSupportDir,
+    );
     if (result == null || result.isEmpty) {
       throw PlatformException(
         code: 'APP_SUPPORT_DIR_ERROR',

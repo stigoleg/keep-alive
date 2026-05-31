@@ -1,5 +1,6 @@
 import Cocoa
 import FlutterMacOS
+import ApplicationServices
 import IOKit.ps
 import ServiceManagement
 
@@ -165,6 +166,8 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
             handleSetTrayTooltip(call, result: result)
         case "setStatusBarTitle":
             handleSetStatusBarTitle(call, result: result)
+        case "ensureActivitySimulationPermission":
+            handleEnsureActivitySimulationPermission(result: result)
         case "showContextMenu":
             handleShowContextMenu(call, result: result)
         case "showPopover":
@@ -369,6 +372,12 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
             button.imagePosition = .imageLeading
         }
         result(nil)
+    }
+
+    private func handleEnsureActivitySimulationPermission(result: @escaping FlutterResult) {
+        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        let options = [promptKey: true] as CFDictionary
+        result(AXIsProcessTrustedWithOptions(options))
     }
 
     @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {

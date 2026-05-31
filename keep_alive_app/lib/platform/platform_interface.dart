@@ -29,6 +29,8 @@ abstract class KeepAlivePlatform {
 
   Future<void> setStatusBarTitle(String title);
 
+  Future<bool> ensureActivitySimulationPermission();
+
   Future<int?> showContextMenu(List<String> items);
 
   Future<void> showPopover();
