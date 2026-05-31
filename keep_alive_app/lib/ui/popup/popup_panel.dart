@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../theme/app_theme.dart';
 import 'battery_section.dart';
@@ -7,11 +9,49 @@ import 'status_header.dart';
 import 'timer_section.dart';
 import 'toggle_section.dart';
 
-class PopupPanel extends StatelessWidget {
+class PopupPanel extends ConsumerStatefulWidget {
   const PopupPanel({super.key});
 
   @override
+  ConsumerState<PopupPanel> createState() => _PopupPanelState();
+}
+
+class _PopupPanelState extends ConsumerState<PopupPanel> {
+  final GlobalKey _contentKey = GlobalKey();
+  double? _lastHeight;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncWindowSize());
+  }
+
+  void _syncWindowSize() {
+    final renderBox =
+        _contentKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null || !renderBox.hasSize) return;
+
+    final contentHeight = renderBox.size.height;
+    if (contentHeight <= 0) return;
+
+    final targetHeight = contentHeight + 16;
+    if (targetHeight == _lastHeight) return;
+    _lastHeight = targetHeight;
+
+    windowManager.getBounds().then((bounds) {
+      final dyChange = bounds.size.height - targetHeight;
+      windowManager.setSize(Size(bounds.size.width, targetHeight));
+      windowManager.setPosition(Offset(
+        bounds.left,
+        bounds.top + dyChange,
+      ));
+    }).catchError((_) {});
+  }
+
+  @override
   Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncWindowSize());
+
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -24,6 +64,7 @@ class PopupPanel extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: SingleChildScrollView(
           child: Column(
+            key: _contentKey,
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [

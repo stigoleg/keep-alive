@@ -111,16 +111,16 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
         guard popoverVisible else { return }
 
         if let window = mainFlutterWindow {
-            let clickLocation = event.locationInWindow
+            let mouseLocation = NSEvent.mouseLocation
             let windowFrame = window.frame
             let statusButtonFrame = statusItem?.button?.window?.convertToScreen(
                 statusItem!.button!.convert(statusItem!.button!.bounds, to: nil)
             )
 
-            let clickedInWindow = NSPointInRect(clickLocation, windowFrame)
+            let clickedInWindow = NSPointInRect(mouseLocation, windowFrame)
             var clickedInStatusBar = false
             if let sf = statusButtonFrame {
-                clickedInStatusBar = NSPointInRect(event.locationInWindow, sf)
+                clickedInStatusBar = NSPointInRect(mouseLocation, sf)
             }
 
             if !clickedInWindow && !clickedInStatusBar {
@@ -383,6 +383,7 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
             return
         }
 
+        let windowHeight = window.frame.height
         let statusFrame = statusButton.window?.convertToScreen(statusButton.convert(statusButton.bounds, to: nil))
         let screenFrame = NSScreen.main?.visibleFrame ?? .zero
 
@@ -390,10 +391,10 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
         let anchorY: CGFloat
         if let frame = statusFrame {
             anchorX = frame.midX - kPopoverWidth / 2
-            anchorY = frame.minY - kPopoverHeight - 4
+            anchorY = frame.minY - windowHeight - 4
         } else {
             anchorX = screenFrame.maxX - kPopoverWidth - 16
-            anchorY = screenFrame.maxY - kPopoverHeight - 4
+            anchorY = screenFrame.maxY - windowHeight - 4
         }
 
         var x = max(screenFrame.minX + 8, anchorX)
@@ -401,14 +402,14 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
         if x + kPopoverWidth > screenFrame.maxX {
             x = screenFrame.maxX - kPopoverWidth - 8
         }
-        if y + kPopoverHeight > screenFrame.maxY {
-            y = statusFrame?.maxY ?? screenFrame.maxY - kPopoverHeight
+        if y + windowHeight > screenFrame.maxY {
+            y = statusFrame?.maxY ?? screenFrame.maxY - windowHeight
             if let frame = statusFrame {
                 y = frame.maxY + 4
             }
         }
 
-        window.setFrame(NSRect(x: x, y: y, width: kPopoverWidth, height: kPopoverHeight), display: false)
+        window.setFrame(NSRect(x: x, y: y, width: kPopoverWidth, height: windowHeight), display: false)
 
         if let flutterWindow = window as? MainFlutterWindow {
             flutterWindow.animateShow()

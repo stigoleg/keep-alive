@@ -124,7 +124,7 @@ class TrayManager {
         onTogglePopup?.call();
       case 1:
         onOpenSettings?.call();
-      case 2:
+      case 3:
         onQuit?.call();
     }
   }
