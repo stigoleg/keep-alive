@@ -429,10 +429,6 @@ static void my_application_activate(GApplication* application) {
       method_channel_cb, self, NULL);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
-
-  g_autoptr(FlValue) readyArgs = fl_value_new_null();
-  fl_method_channel_invoke_method(self->method_channel,
-      "nativeReady", readyArgs, NULL, NULL, NULL);
 }
 
 static gboolean my_application_local_command_line(GApplication* application,

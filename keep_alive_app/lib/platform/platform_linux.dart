@@ -9,7 +9,6 @@ import 'platform_interface.dart';
 class KeepAlivePlatformLinux extends KeepAlivePlatform {
   static const _channel = MethodChannel(AppConstants.platformChannelName);
 
-  Completer<void>? _nativeReadyCompleter;
   StreamController<String>? __trayEventController;
 
   StreamController<String> get _trayEventController {
@@ -25,26 +24,20 @@ class KeepAlivePlatformLinux extends KeepAlivePlatform {
 
   @override
   Future<void> waitUntilNativeReady() async {
-    if (_nativeReadyCompleter != null) return _nativeReadyCompleter!.future;
-
-    _nativeReadyCompleter = Completer<void>();
     _trayEventController;
 
-    try {
-      await _nativeReadyCompleter!.future.timeout(
-        const Duration(seconds: 10),
-      );
-    } on TimeoutException {
-      _nativeReadyCompleter = null;
+    for (var i = 0; i < 20; i++) {
+      try {
+        await _channel.invokeMethod<String>('getPlatformName');
+        return;
+      } on MissingPluginException {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
     }
   }
 
   Future<dynamic> _handleMethodCall(MethodCall call) async {
     switch (call.method) {
-      case 'nativeReady':
-        final c = _nativeReadyCompleter;
-        _nativeReadyCompleter = null;
-        if (c != null && !c.isCompleted) c.complete();
       case AppConstants.methodOnTrayEvent:
         final event = call.arguments as String?;
         if (event != null) _trayEventController.add(event);

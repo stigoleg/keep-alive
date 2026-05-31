@@ -13,11 +13,20 @@ void main(List<String> args) async {
 
   AppLogger.info('KeepAlive app starting (${AppConstants.appVersion})');
 
-  await windowManager.ensureInitialized();
+  try {
+    await windowManager.ensureInitialized();
+    AppLogger.info('Window manager initialized');
+  } catch (e, stack) {
+    AppLogger.error('Window manager failed to initialize', e, stack);
+  }
 
-  await KeepAlivePlatform.instance.waitUntilNativeReady();
+  try {
+    await KeepAlivePlatform.instance.waitUntilNativeReady();
+    AppLogger.info('Native platform ready');
+  } catch (e, stack) {
+    AppLogger.error('Platform not ready, continuing anyway', e, stack);
+  }
 
-  AppLogger.info('Native platform ready, launching app');
-
+  AppLogger.info('Launching app widget tree');
   runApp(const ProviderScope(child: KeepAliveApp()));
 }

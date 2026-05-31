@@ -18,8 +18,8 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     private var globalEventMonitor: Any?
     private var applicationActivationObserver: NSObjectProtocol?
 
-    override func applicationDidFinishLaunching(_ aNotification: Notification) {
-        super.applicationDidFinishLaunching(aNotification)
+    override func applicationWillFinishLaunching(_ notification: Notification) {
+        super.applicationWillFinishLaunching(notification)
 
         guard let controller = mainFlutterWindow?.contentViewController as? FlutterViewController else {
             return
@@ -36,10 +36,12 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
         }
 
         mainFlutterWindow?.delegate = self
+    }
+
+    override func applicationDidFinishLaunching(_ aNotification: Notification) {
+        super.applicationDidFinishLaunching(aNotification)
 
         setupEventMonitors()
-
-        channel.invokeMethod("nativeReady", arguments: nil)
     }
 
     override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -147,6 +149,8 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
             handleShowPopover(result: result)
         case "hidePopover":
             handleHidePopover(result: result)
+        case "getBatteryInfo":
+            handleGetBatteryInfo(result: result)
         case "getAppSupportDir":
             handleGetAppSupportDir(result: result)
         default:
@@ -246,10 +250,18 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
 
         for bundle in Bundle.allFrameworks {
             if bundle.bundlePath.contains("App.framework") {
+                let prefix = "Contents/Frameworks/App.framework/Resources"
+                var relativeDir = directory
+                if relativeDir.hasPrefix(prefix) {
+                    relativeDir = String(relativeDir.dropFirst(prefix.count))
+                    if relativeDir.hasPrefix("/") { relativeDir = String(relativeDir.dropFirst()) }
+                }
+                let searchDir: String? = relativeDir.isEmpty ? nil : relativeDir
+
                 if let path = bundle.path(
                     forResource: name,
                     ofType: ext.isEmpty ? nil : ext,
-                    inDirectory: directory.isEmpty ? nil : directory
+                    inDirectory: searchDir
                 ) {
                     return path
                 }
@@ -274,16 +286,23 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     private func handleSetTrayIcon(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         guard let args = call.arguments as? [String: Any],
               let iconPath = args["iconPath"] as? String else {
+            fputs("[KeepAlive] setTrayIcon: INVALID_ARG\n", stderr)
             result(FlutterError(code: "INVALID_ARG", message: "Missing 'iconPath' argument", details: nil))
             return
         }
 
+        fputs("[KeepAlive] setTrayIcon: looking up \(iconPath)\n", stderr)
+
         guard let resolvedPath = resolveAssetPath(iconPath) else {
+            fputs("[KeepAlive] setTrayIcon: ASSET_NOT_FOUND \(iconPath)\n", stderr)
             result(FlutterError(code: "ASSET_NOT_FOUND", message: "Could not resolve asset: \(iconPath)", details: nil))
             return
         }
 
+        fputs("[KeepAlive] setTrayIcon: resolved to \(resolvedPath)\n", stderr)
+
         if statusItem == nil {
+            fputs("[KeepAlive] Creating NSStatusItem\n", stderr)
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
             statusItem?.button?.target = self
             statusItem?.button?.action = #selector(statusBarButtonClicked(_:))
@@ -295,6 +314,11 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
             image.size = NSSize(width: kTrayIconSize, height: kTrayIconSize)
             statusItem?.button?.image = image
             statusItem?.button?.imagePosition = .imageOnly
+            fputs("[KeepAlive] setTrayIcon: SUCCESS\n", stderr)
+        } else {
+            fputs("[KeepAlive] setTrayIcon: FAILED load image\n", stderr)
+            result(FlutterError(code: "IMAGE_LOAD_FAILED", message: "Could not load image", details: nil))
+            return
         }
 
         result(nil)
@@ -434,6 +458,29 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
             result(appSupport)
         } else {
             result(FlutterError(code: "DIR_ERROR", message: "Could not resolve application support directory", details: nil))
+        }
+    }
+
+    // MARK: - Battery Info
+
+    private func handleGetBatteryInfo(result: @escaping FlutterResult) {
+        let batteryInfo: [String: Any] = [
+            "percentage": 100.0,
+            "isCharging": true,
+            "isPresent": true,
+        ]
+        result(batteryInfo)
+    }
+}
+
+private extension Data {
+    func appendToFile(_ path: String) {
+        if let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: path)) {
+            handle.seekToEndOfFile()
+            handle.write(self)
+            try? handle.close()
+        } else {
+            try? write(to: URL(fileURLWithPath: path))
         }
     }
 }

@@ -118,12 +118,10 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
 
   Future<void> _configureMainWindow() async {
     await windowManager.setTitle(AppConstants.appName);
-    await windowManager.setResizable(false);
-    await windowManager.setMinimizable(false);
-    await windowManager.setMaximizable(false);
     await windowManager.setSize(const Size(320, 500));
     await windowManager.waitUntilReadyToShow();
     await windowManager.hide();
+    AppLogger.info('Main window configured and hidden');
   }
 
   Future<void> _togglePopup() async {

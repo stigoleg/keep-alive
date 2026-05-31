@@ -60,9 +60,6 @@ bool FlutterWindow::OnCreate() {
 
   InitMethodChannel();
 
-  platform_channel_->InvokeMethod("nativeReady",
-      std::make_unique<flutter::EncodableValue>(flutter::EncodableMap()));
-
   return true;
 }
 

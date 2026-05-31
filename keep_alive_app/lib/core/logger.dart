@@ -1,3 +1,5 @@
+import 'dart:io' show stderr;
+
 import 'package:logging/logging.dart';
 
 import 'constants.dart';
@@ -16,8 +18,18 @@ class AppLogger {
   }
 
   static void _onRecord(LogRecord record) {
-    final line = '${record.time} [${record.level.name}] '
-        '${record.loggerName}: ${record.message}';
+    final buffer = StringBuffer();
+    buffer.write('${record.time} [${record.level.name}] '
+        '${record.loggerName}: ${record.message}');
+    if (record.error != null) {
+      buffer.write(' | error: ${record.error}');
+    }
+    if (record.stackTrace != null) {
+      buffer.write('\n${record.stackTrace}');
+    }
+    final line = buffer.toString();
+
+    stderr.writeln(line);
 
     _ringBuffer.add(line);
     while (_ringBuffer.length > AppConstants.maxLogLines) {

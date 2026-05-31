@@ -27,15 +27,18 @@ class TrayManager {
     this.onQuit = onQuit;
 
     try {
+      AppLogger.info('Setting tray icon: $_idleIcon');
       await _platform.setTrayIcon(_idleIcon);
+      AppLogger.info('Tray icon set, setting tooltip');
       await _platform.setTrayTooltip(_idleTooltip);
+      AppLogger.info('Tray tooltip set, subscribing to events');
 
       _eventSubscription = _platform.trayEventStream.listen(_handleTrayEvent);
 
       _initialized = true;
       AppLogger.info('System tray initialized via platform channel');
-    } catch (e) {
-      AppLogger.error('Failed to initialize system tray', e);
+    } catch (e, stack) {
+      AppLogger.error('Failed to initialize system tray: $e', e, stack);
       rethrow;
     }
   }
