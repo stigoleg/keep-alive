@@ -30,8 +30,6 @@ class AppConstants {
   static const String methodSetTrayIcon = 'setTrayIcon';
   static const String methodSetTrayTooltip = 'setTrayTooltip';
   static const String methodSetStatusBarTitle = 'setStatusBarTitle';
-  static const String methodEnsureActivityPermission =
-      'ensureActivitySimulationPermission';
   static const String methodShowContextMenu = 'showContextMenu';
   static const String methodShowPopover = 'showPopover';
   static const String methodHidePopover = 'hidePopover';

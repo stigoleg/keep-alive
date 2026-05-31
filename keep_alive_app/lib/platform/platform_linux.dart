@@ -91,9 +91,6 @@ class KeepAlivePlatformLinux extends KeepAlivePlatform {
   }
 
   @override
-  Future<bool> ensureActivitySimulationPermission() async => true;
-
-  @override
   Future<int?> showContextMenu(List<String> items) async {
     final result = await _channel.invokeMethod<int>(
       AppConstants.methodShowContextMenu,

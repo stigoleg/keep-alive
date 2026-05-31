@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/download_state.dart';
-import '../../core/logger.dart';
-import '../../platform/platform_interface.dart';
 import '../../providers/cli_binary_provider.dart';
 import '../../providers/session_provider.dart';
 import '../../providers/settings_provider.dart';
@@ -51,26 +49,6 @@ class ToggleSection extends ConsumerWidget {
               description: 'Mimic user input to appear active',
               value: settings.simulateActivity,
               onChanged: (value) async {
-                if (value) {
-                  final allowed = await KeepAlivePlatform.instance
-                      .ensureActivitySimulationPermission();
-                  if (!allowed) {
-                    AppLogger.warning(
-                      'Activity simulation needs Accessibility permission before it can move the mouse',
-                    );
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Allow KeepAlive in Accessibility settings, then enable Simulate Activity again.',
-                          ),
-                        ),
-                      );
-                    }
-                    return;
-                  }
-                }
-
                 await ref
                     .read(appSettingsProvider.notifier)
                     .setSimulateActivity(value);

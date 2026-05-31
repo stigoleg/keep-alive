@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -20,17 +19,11 @@ import (
 
 const (
 	jitterWarnEvery = 60 * time.Second
-
-	// scriptExecutionTimeout limits how long we wait for osascript to complete.
-	// This protects against hangs if Accessibility is misconfigured or the
-	// scripting environment is not responding.
-	scriptExecutionTimeout = 3 * time.Second
 )
 
 type darwinCapabilities struct {
 	caffeinateAvailable bool
 	pmsetAvailable      bool
-	osascriptAvailable  bool
 }
 
 // getIdleTime returns the system idle time on macOS
@@ -44,44 +37,7 @@ func getIdleTime() (time.Duration, error) {
 }
 
 func getIdleTimeCoreGraphics() (time.Duration, error) {
-	if _, err := exec.LookPath("osascript"); err != nil {
-		return 0, err
-	}
-
-	script := `
-ObjC.import('CoreGraphics');
-var seconds = $.CGEventSourceSecondsSinceLastEventType($.kCGEventSourceStateHIDSystemState, $.kCGAnyInputEventType);
-console.log(seconds);
-`
-
-	out, err := runJXAScript(script)
-	if err != nil {
-		return 0, err
-	}
-
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" {
-		return 0, fmt.Errorf("empty idle-time output")
-	}
-
-	seconds, parseErr := strconv.ParseFloat(trimmed, 64)
-	if parseErr != nil {
-		re := regexp.MustCompile(`([0-9]+(?:\.[0-9]+)?)`)
-		match := re.FindStringSubmatch(trimmed)
-		if len(match) < 2 {
-			return 0, fmt.Errorf("failed to parse coregraphics idle output %q: %v", trimmed, parseErr)
-		}
-		seconds, parseErr = strconv.ParseFloat(match[1], 64)
-		if parseErr != nil {
-			return 0, fmt.Errorf("failed to parse coregraphics idle output %q: %v", trimmed, parseErr)
-		}
-	}
-
-	if seconds < 0 {
-		seconds = 0
-	}
-
-	return time.Duration(seconds * float64(time.Second)), nil
+	return coreGraphicsIdleTime()
 }
 
 func getIdleTimeIOReg() (time.Duration, error) {
@@ -219,12 +175,6 @@ func detectDarwinCapabilities() (darwinCapabilities, error) {
 		caps.pmsetAvailable = true
 	}
 
-	if _, err := exec.LookPath("osascript"); err != nil {
-		log.Printf("darwin: osascript not available; mouse jitter will not work: %v", err)
-	} else {
-		caps.osascriptAvailable = true
-	}
-
 	return caps, nil
 }
 
@@ -316,20 +266,6 @@ func (k *darwinKeepAlive) simulateChatAppActivity() {
 	)
 }
 
-func runJXAScript(script string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), scriptExecutionTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "osascript", "-l", "JavaScript", "-e", script)
-	out, err := cmd.CombinedOutput()
-
-	if ctx.Err() == context.DeadlineExceeded {
-		return out, fmt.Errorf("osascript timed out after %s", scriptExecutionTimeout)
-	}
-
-	return out, err
-}
-
 func (k *darwinKeepAlive) warnJitterFailureOnce(err error) {
 	nowNS := time.Now().UnixNano()
 	last := atomic.LoadInt64(&k.lastJitterWarnNS)
@@ -338,62 +274,44 @@ func (k *darwinKeepAlive) warnJitterFailureOnce(err error) {
 	}
 	atomic.StoreInt64(&k.lastJitterWarnNS, nowNS)
 
-	log.Printf("darwin: mouse jitter failed (%v). This can happen in headless/remote sessions where cursor warping is unavailable.", err)
+	log.Printf("darwin: mouse jitter failed (%v). This can happen when Accessibility permission is missing or in headless/remote sessions.", err)
 }
 
 // jitterMouseRoundPattern applies a small random round pattern and returns to origin.
 func (k *darwinKeepAlive) jitterMouseRoundPattern(sessionDuration time.Duration) error {
 	points := k.patternGen.GenerateRoundJitterPoints()
-	script := k.buildMouseMovementScript(points, sessionDuration)
-
-	out, err := runJXAScript(script)
-	if err != nil {
-		return fmt.Errorf("osascript failed: %v (output: %q)", err, string(out))
+	if len(points) == 0 {
+		return nil
 	}
-	return nil
-}
 
-func (k *darwinKeepAlive) buildMouseMovementScript(points []MousePoint, sessionDuration time.Duration) string {
+	originX, originY, err := coreGraphicsMouseLocation()
+	if err != nil {
+		return err
+	}
+
 	stepDelay := jitterStepDelay(sessionDuration, len(points))
 
-	// Use CGEventCreateMouseEvent + CGEventPost to generate real HID mouse-move
-	// events. These are recognized by applications (Slack, Teams) as genuine user
-	// input, unlike CGWarpMouseCursorPosition which only repositions the cursor.
-	script := `
-ObjC.import('CoreGraphics');
-
-function loc() {
-	var ev = $.CGEventCreate(null);
-	var p = $.CGEventGetLocation(ev);
-	return {x: p.x, y: p.y};
-}
-
-function moveTo(x, y) {
-	var pt = $.CGPointMake(x, y);
-	var ev = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, pt, $.kCGMouseButtonLeft);
-	if (ev != null) {
-		$.CGEventPost($.kCGHIDEventTap, ev);
-	} else {
-		// Fallback: warp cursor directly if event creation fails
-		$.CGWarpMouseCursorPosition(pt);
-	}
-}
-
-var origin = loc();
-var x0 = origin.x;
-var y0 = origin.y;
-`
-
 	for _, pt := range points {
-		d := k.patternGen.JitterStepDelayWithVariance(stepDelay)
-		script += fmt.Sprintf("moveTo(x0 + %f, y0 + %f);\ndelay(%f);\n", pt.X, pt.Y, d.Seconds())
+		select {
+		case <-k.ctx.Done():
+			_ = coreGraphicsPostMouseMove(originX, originY)
+			return nil
+		default:
+		}
+
+		if err := coreGraphicsPostMouseMove(originX+pt.X, originY+pt.Y); err != nil {
+			_ = coreGraphicsPostMouseMove(originX, originY)
+			return err
+		}
+		time.Sleep(k.patternGen.JitterStepDelayWithVariance(stepDelay))
 	}
 
-	returnD := k.patternGen.JitterStepDelayWithVariance(stepDelay)
-	script += fmt.Sprintf("\n// Return to origin\nmoveTo(x0, y0);\ndelay(%f);\n", returnD.Seconds())
-	script += `console.log("ok");
-`
-	return script
+	if err := coreGraphicsPostMouseMove(originX, originY); err != nil {
+		return err
+	}
+	time.Sleep(k.patternGen.JitterStepDelayWithVariance(stepDelay))
+
+	return nil
 }
 
 func (k *darwinKeepAlive) killProcessLocked() {
@@ -568,17 +486,10 @@ func GetDependencyMessage() string {
 }
 
 func GetActivitySimulationStatus() ActivitySimulationStatus {
-	if _, err := exec.LookPath("osascript"); err != nil {
-		return ActivitySimulationStatus{
-			Available: false,
-			Message:   "Active status simulation is unavailable on macOS because osascript is not installed. KeepAlive will still prevent system sleep, but Slack/Teams activity cannot be simulated.",
-		}
-	}
-
 	return ActivitySimulationStatus{
 		Available: true,
 		Method:    "CoreGraphics mouse events",
-		Message:   "Active status simulation uses CoreGraphics mouse events. macOS Accessibility permissions may still be required in normal desktop sessions.",
+		Message:   "Active status simulation uses direct CoreGraphics mouse events. macOS Accessibility permission is required for the app or terminal that starts KeepAlive.",
 	}
 }
 

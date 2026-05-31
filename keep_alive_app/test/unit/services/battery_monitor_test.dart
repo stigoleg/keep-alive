@@ -37,9 +37,6 @@ class _FakePlatform extends KeepAlivePlatform {
   Future<void> setStatusBarTitle(String title) async {}
 
   @override
-  Future<bool> ensureActivitySimulationPermission() async => true;
-
-  @override
   Future<int?> showContextMenu(List<String> items) async => null;
 
   @override

@@ -92,14 +92,6 @@ class KeepAlivePlatformMacOS extends KeepAlivePlatform {
   }
 
   @override
-  Future<bool> ensureActivitySimulationPermission() async {
-    final result = await _channel.invokeMethod<bool>(
-      AppConstants.methodEnsureActivityPermission,
-    );
-    return result ?? false;
-  }
-
-  @override
   Future<int?> showContextMenu(List<String> items) async {
     final result = await _channel.invokeMethod<int>(
       AppConstants.methodShowContextMenu,
