@@ -33,7 +33,9 @@ class CliFlags {
     if (simulateActivity) {
       args.add('--active');
     }
-    args.add('--log');
+    if (enableLogging) {
+      args.add('--log');
+    }
     return args;
   }
 

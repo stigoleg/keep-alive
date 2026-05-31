@@ -4,35 +4,40 @@ import 'package:keep_alive_app/models/cli_flags.dart';
 void main() {
   group('CliFlags', () {
     group('toArgs', () {
-      test('empty flags emits only --log', () {
+      test('empty flags emits empty args', () {
         const flags = CliFlags();
+        expect(flags.toArgs(), []);
+      });
+
+      test('enableLogging emits --log', () {
+        const flags = CliFlags(enableLogging: true);
         expect(flags.toArgs(), ['--log']);
       });
 
       test('durationMinutes emits --duration flag', () {
-        const flags = CliFlags(durationMinutes: 120);
+        const flags = CliFlags(durationMinutes: 120, enableLogging: true);
         expect(flags.toArgs(), ['--duration', '120', '--log']);
       });
 
       test('clockTime emits --clock flag in HH:mm format', () {
         final clockTime = DateTime(2025, 1, 1, 17, 30);
-        final flags = CliFlags(clockTime: clockTime);
+        final flags = CliFlags(clockTime: clockTime, enableLogging: true);
         expect(flags.toArgs(), ['--clock', '17:30', '--log']);
       });
 
       test('clockTime pads single-digit hours', () {
         final clockTime = DateTime(2025, 1, 1, 9, 5);
-        final flags = CliFlags(clockTime: clockTime);
+        final flags = CliFlags(clockTime: clockTime, enableLogging: true);
         expect(flags.toArgs(), ['--clock', '09:05', '--log']);
       });
 
       test('batteryThreshold emits --battery flag', () {
-        const flags = CliFlags(batteryThreshold: 30);
+        const flags = CliFlags(batteryThreshold: 30, enableLogging: true);
         expect(flags.toArgs(), ['--battery', '30', '--log']);
       });
 
       test('simulateActivity emits --active flag', () {
-        const flags = CliFlags(simulateActivity: true);
+        const flags = CliFlags(simulateActivity: true, enableLogging: true);
         expect(flags.toArgs(), ['--active', '--log']);
       });
 
@@ -41,6 +46,7 @@ void main() {
           durationMinutes: 90,
           batteryThreshold: 20,
           simulateActivity: true,
+          enableLogging: true,
         );
         final args = flags.toArgs();
         expect(args, containsAll(['--duration', '90']));
@@ -49,9 +55,18 @@ void main() {
         expect(args.last, '--log');
       });
 
+      test('--log is omitted when enableLogging is false', () {
+        const flags = CliFlags(
+          durationMinutes: 90,
+          simulateActivity: true,
+        );
+        final args = flags.toArgs();
+        expect(args, isNot(contains('--log')));
+      });
+
       test('both duration and clock time flags are emitted if both set', () {
         final clockTime = DateTime(2025, 1, 1, 18, 0);
-        final flags = CliFlags(durationMinutes: 60, clockTime: clockTime);
+        final flags = CliFlags(durationMinutes: 60, clockTime: clockTime, enableLogging: true);
         final args = flags.toArgs();
         expect(args, containsAll(['--duration', '60']));
         expect(args, containsAll(['--clock', '18:00']));

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -26,6 +28,7 @@ final cliBinaryProvider =
 class CliBinaryNotifier extends Notifier<DownloadState> {
   late final GitHubApiService _apiService;
   late final CliDownloadService _downloadService;
+  Completer<void>? _readyCompleter;
 
   @override
   DownloadState build() {
@@ -33,6 +36,23 @@ class CliBinaryNotifier extends Notifier<DownloadState> {
     _downloadService = ref.watch(cliDownloadServiceProvider);
     return const DownloadState();
   }
+
+  Future<void> waitUntilReady() async {
+    if (state.status == DownloadStatus.installed) return;
+    if (state.status == DownloadStatus.downloading) {
+      await (_readyCompleter?.future ?? Future<void>.value());
+      return;
+    }
+    _readyCompleter = Completer<void>();
+    try {
+      await checkAndInstall();
+    } finally {
+      _readyCompleter?.complete();
+      _readyCompleter = null;
+    }
+  }
+
+  bool get isReady => state.status == DownloadStatus.installed;
 
   Future<void> checkAndInstall() async {
     try {
@@ -73,6 +93,9 @@ class CliBinaryNotifier extends Notifier<DownloadState> {
 
   Future<void> downloadLatest() async {
     try {
+      final prevCompleter = _readyCompleter;
+      _readyCompleter = Completer<void>();
+
       state = state.copyWith(
         status: DownloadStatus.downloading,
         progress: 0.0,
@@ -93,18 +116,24 @@ class CliBinaryNotifier extends Notifier<DownloadState> {
       );
 
       AppLogger.info('CLI updated to $version');
+      prevCompleter?.complete();
+      _readyCompleter?.complete();
     } on DownloadException catch (e) {
       AppLogger.error('Failed to download latest CLI (DownloadException)', e);
       state = state.copyWith(
         status: DownloadStatus.error,
         errorMessage: e.message,
       );
+      _readyCompleter?.complete();
     } catch (e) {
       AppLogger.error('Failed to download latest CLI', e);
       state = state.copyWith(
         status: DownloadStatus.error,
         errorMessage: e.toString(),
       );
+      _readyCompleter?.complete();
+    } finally {
+      _readyCompleter = null;
     }
   }
 

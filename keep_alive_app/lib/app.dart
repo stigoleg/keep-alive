@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 import 'core/constants.dart';
 import 'core/logger.dart';
 import 'models/cli_process_state.dart';
+import 'models/download_state.dart';
 import 'platform/platform_interface.dart';
 import 'providers/cli_binary_provider.dart';
 import 'providers/process_provider.dart';
@@ -82,6 +83,14 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     }
 
     try {
+      AppLogger.info('Checking CLI binary availability');
+      await ref.read(cliBinaryProvider.notifier).checkAndInstall();
+      AppLogger.info('CLI binary check complete');
+    } catch (e) {
+      AppLogger.error('Failed to install CLI binary', e);
+    }
+
+    try {
       await _trayManager.initialize(
         onTogglePopup: _togglePopup,
         onOpenSettings: _openSettings,
@@ -91,8 +100,6 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
       AppLogger.error('Failed to initialize tray, running headless', e);
       return;
     }
-
-    unawaited(ref.read(cliBinaryProvider.notifier).checkAndInstall());
 
     ref.listenManual(cliProcessProvider, (_, next) {
       _trayManager.setActiveState(next.isRunning);
@@ -107,7 +114,12 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
       AppLogger.info('Auto-starting keep-alive session from previous state');
       final flags = settings.toCliFlags();
       try {
-        unawaited(ref.read(cliProcessProvider.notifier).startSession(flags));
+        final binaryReady = ref.read(cliBinaryProvider).status == DownloadStatus.installed;
+        if (binaryReady) {
+          unawaited(ref.read(cliProcessProvider.notifier).startSession(flags));
+        } else {
+          AppLogger.warning('Skipping auto-start: CLI binary not installed');
+        }
       } catch (e) {
         AppLogger.error('Failed to auto-start session', e);
       }

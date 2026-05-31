@@ -133,6 +133,73 @@ class CliDownloadService {
     return null;
   }
 
+  String? _findLocalBinary() {
+    final binaryName = Platform.isWindows
+        ? '${AppConstants.cliBinaryName}.exe'
+        : AppConstants.cliBinaryName;
+
+    final candidateDirs = <String>[];
+    if (Platform.script.path.isNotEmpty) {
+      final scriptDir = File(Platform.script.toFilePath()).parent;
+      candidateDirs.add(scriptDir.path);
+      candidateDirs.add('${scriptDir.path}/build');
+      if (scriptDir.path.endsWith('/cmd/keepalive')) {
+        candidateDirs.add(scriptDir.parent.parent.path);
+      }
+    }
+
+    final envOverrides = Platform.environment;
+    final keepaliveHome = envOverrides['KEEPALIVE_HOME'];
+    if (keepaliveHome != null) {
+      candidateDirs.add(keepaliveHome);
+    }
+
+    for (final dir in candidateDirs) {
+      final path = '$dir/$binaryName';
+      final file = File(path);
+      if (file.existsSync()) {
+        if (Platform.isWindows || _canExecute(file)) {
+          AppLogger.info('Found local keepalive binary: $path');
+          return path;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  bool _canExecute(File file) {
+    try {
+      if (_hasExecutableBitSet(file)) return true;
+      _setExecutableSync(file.path);
+      _hasExecutableBitSet(file);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _hasExecutableBitSet(File file) {
+    try {
+      final stat = file.statSync();
+      final mode = stat.modeString();
+      return mode.contains('x');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _setExecutableSync(String path) {
+    try {
+      final result = Process.runSync('chmod', ['+x', path]);
+      if (result.exitCode != 0) {
+        AppLogger.warning('chmod +x failed: ${result.stderr}');
+      }
+    } catch (e) {
+      AppLogger.warning('Failed to set executable bit: $e');
+    }
+  }
+
   Future<bool> _tryInstallViaHomebrew() async {
     if (Platform.isWindows) return false;
     try {
@@ -260,6 +327,20 @@ class CliDownloadService {
       }
       AppLogger.warning(
         'keepalive found in PATH at $pathBinary but verification failed',
+      );
+    }
+
+    final localBinary = _findLocalBinary();
+    if (localBinary != null) {
+      final verified = await _verifyBinaryAt(localBinary);
+      if (verified) {
+        _systemBinaryPath = localBinary;
+        _usingSystemBinary = true;
+        AppLogger.info('Using keepalive from local filesystem: $localBinary');
+        return;
+      }
+      AppLogger.warning(
+        'keepalive found locally at $localBinary but verification failed',
       );
     }
 

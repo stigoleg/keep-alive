@@ -366,6 +366,7 @@
 				Flutter/ephemeral/FlutterOutputs.xcfilelist,
 			);
 			outputPaths = (
+				"$(PROJECT_DIR)/Flutter/ephemeral/.app_filename && \"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh embed",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;

@@ -41,6 +41,7 @@ class KeepAlivePlatformMacOS extends KeepAlivePlatform {
       case AppConstants.methodOnTrayEvent:
         final event = call.arguments as String?;
         if (event != null) _trayEventController.add(event);
+        break;
       case 'systemShutdown':
         _trayEventController.add('systemShutdown');
     }

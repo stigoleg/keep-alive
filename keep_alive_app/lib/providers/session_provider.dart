@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/logger.dart';
 import '../models/cli_flags.dart';
+import 'cli_binary_provider.dart';
 import 'process_provider.dart';
 import 'settings_provider.dart';
 
@@ -18,6 +19,15 @@ class SessionOrchestrator {
     await _ref.read(appSettingsProvider.notifier).setKeepAwake(active);
 
     if (active) {
+      try {
+        AppLogger.info('Waiting for CLI binary readiness before starting session');
+        await _ref.read(cliBinaryProvider.notifier).waitUntilReady();
+      } catch (e) {
+        AppLogger.error('CLI binary not ready: $e');
+        await _ref.read(appSettingsProvider.notifier).setKeepAwake(false);
+        rethrow;
+      }
+
       final flags = _ref.read(appSettingsProvider).toCliFlags();
       AppLogger.info('Starting keep-alive session with flags: $flags');
       try {
