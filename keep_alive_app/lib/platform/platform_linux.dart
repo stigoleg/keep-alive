@@ -9,7 +9,9 @@ import 'platform_interface.dart';
 class KeepAlivePlatformLinux extends KeepAlivePlatform {
   static const _channel = MethodChannel(AppConstants.platformChannelName);
 
+  Completer<void>? _nativeReadyCompleter;
   StreamController<String>? __trayEventController;
+
   StreamController<String> get _trayEventController {
     if (__trayEventController == null) {
       __trayEventController = StreamController<String>.broadcast();
@@ -21,14 +23,33 @@ class KeepAlivePlatformLinux extends KeepAlivePlatform {
   @override
   Stream<String> get trayEventStream => _trayEventController.stream;
 
+  @override
+  Future<void> waitUntilNativeReady() async {
+    if (_nativeReadyCompleter != null) return _nativeReadyCompleter!.future;
+
+    _nativeReadyCompleter = Completer<void>();
+    _trayEventController;
+
+    try {
+      await _nativeReadyCompleter!.future.timeout(
+        const Duration(seconds: 10),
+      );
+    } on TimeoutException {
+      _nativeReadyCompleter = null;
+    }
+  }
+
   Future<dynamic> _handleMethodCall(MethodCall call) async {
-    if (call.method == AppConstants.methodOnTrayEvent) {
-      final event = call.arguments as String?;
-      if (event != null) {
-        _trayEventController.add(event);
-      }
-    } else if (call.method == 'systemShutdown') {
-      _trayEventController.add('systemShutdown');
+    switch (call.method) {
+      case 'nativeReady':
+        final c = _nativeReadyCompleter;
+        _nativeReadyCompleter = null;
+        if (c != null && !c.isCompleted) c.complete();
+      case AppConstants.methodOnTrayEvent:
+        final event = call.arguments as String?;
+        if (event != null) _trayEventController.add(event);
+      case 'systemShutdown':
+        _trayEventController.add('systemShutdown');
     }
   }
 

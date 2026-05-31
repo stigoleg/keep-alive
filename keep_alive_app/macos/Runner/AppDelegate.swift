@@ -14,8 +14,13 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     private var contextMenuResult: FlutterResult?
     private weak var flutterChannel: FlutterMethodChannel?
     private var popoverVisible = false
+    private var localEventMonitor: Any?
+    private var globalEventMonitor: Any?
+    private var applicationActivationObserver: NSObjectProtocol?
 
     override func applicationDidFinishLaunching(_ aNotification: Notification) {
+        super.applicationDidFinishLaunching(aNotification)
+
         guard let controller = mainFlutterWindow?.contentViewController as? FlutterViewController else {
             return
         }
@@ -31,6 +36,10 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
         }
 
         mainFlutterWindow?.delegate = self
+
+        setupEventMonitors()
+
+        channel.invokeMethod("nativeReady", arguments: nil)
     }
 
     override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -38,6 +47,7 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     }
 
     override func applicationWillTerminate(_ notification: Notification) {
+        teardownEventMonitors()
         hidePopover()
         if let channel = flutterChannel {
             channel.invokeMethod("systemShutdown", arguments: nil)
@@ -57,6 +67,64 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
 
         hidePopover()
         flutterChannel?.invokeMethod("onTrayEvent", arguments: "popoverDismissed")
+    }
+
+    // MARK: - Event Monitors
+
+    private func setupEventMonitors() {
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            self?.handleLocalEvent(event)
+            return event
+        }
+
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            self?.handleGlobalEvent(event)
+        }
+    }
+
+    private func teardownEventMonitors() {
+        if let monitor = localEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            localEventMonitor = nil
+        }
+        if let monitor = globalEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalEventMonitor = nil
+        }
+    }
+
+    private func handleLocalEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.keyCode == 53, popoverVisible {
+            hidePopover()
+            flutterChannel?.invokeMethod("onTrayEvent", arguments: "popoverDismissed")
+        }
+    }
+
+    private func handleGlobalEvent(_ event: NSEvent) {
+        guard popoverVisible else { return }
+
+        if let window = mainFlutterWindow {
+            let clickLocation = event.locationInWindow
+            let windowFrame = window.frame
+            let statusButtonFrame = statusItem?.button?.window?.convertToScreen(
+                statusItem!.button!.convert(statusItem!.button!.bounds, to: nil)
+            )
+
+            let clickedInWindow = NSPointInRect(clickLocation, windowFrame)
+            var clickedInStatusBar = false
+            if let sf = statusButtonFrame {
+                clickedInStatusBar = NSPointInRect(event.locationInWindow, sf)
+            }
+
+            if !clickedInWindow && !clickedInStatusBar {
+                hidePopover()
+                flutterChannel?.invokeMethod("onTrayEvent", arguments: "popoverDismissed")
+            }
+        }
     }
 
     // MARK: - Method Channel Handler
@@ -222,6 +290,7 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
             hidePopover()
             flutterChannel?.invokeMethod("onTrayEvent", arguments: "rightClick")
         } else {
+            hidePopover()
             flutterChannel?.invokeMethod("onTrayEvent", arguments: "leftClick")
         }
     }
@@ -296,7 +365,14 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
             }
         }
 
-        window.setFrame(NSRect(x: x, y: y, width: kPopoverWidth, height: kPopoverHeight), display: true)
+        window.setFrame(NSRect(x: x, y: y, width: kPopoverWidth, height: kPopoverHeight), display: false)
+
+        if let flutterWindow = window as? MainFlutterWindow {
+            flutterWindow.animateShow()
+        } else {
+            window.alphaValue = 1.0
+        }
+
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
@@ -311,8 +387,16 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
 
     private func hidePopover() {
         guard popoverVisible else { return }
-        mainFlutterWindow?.orderOut(nil)
         popoverVisible = false
+
+        guard let window = mainFlutterWindow else { return }
+
+        if let flutterWindow = window as? MainFlutterWindow {
+            flutterWindow.animateHide()
+        } else {
+            window.orderOut(nil)
+            window.alphaValue = 0.0
+        }
     }
 
     // MARK: - App Support Dir

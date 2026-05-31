@@ -1,6 +1,8 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import '../../utils/platform_utils.dart';
 
 class ToggleSwitch extends StatelessWidget {
   final String label;
@@ -67,16 +69,27 @@ class ToggleSwitch extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: AppTheme.spacing8),
-                  Switch(
-                    value: value,
-                    onChanged: effectiveEnabled ? onChanged : null,
-                  ),
+                  _buildSwitch(context, effectiveEnabled),
                 ],
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildSwitch(BuildContext context, bool effectiveEnabled) {
+    if (PlatformUtils.isMacOS) {
+      return CupertinoSwitch(
+        value: value,
+        onChanged: effectiveEnabled ? onChanged : null,
+        activeTrackColor: CupertinoTheme.of(context).primaryColor,
+      );
+    }
+    return Switch(
+      value: value,
+      onChanged: effectiveEnabled ? onChanged : null,
     );
   }
 }

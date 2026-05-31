@@ -2,10 +2,6 @@ import 'package:flutter/material.dart';
 
 import 'app_theme.dart';
 
-/// macOS menu bar popup theme.
-///
-/// Compact layout with translucent surface colors, SF-style typography,
-/// 12px rounded corners, and macOS-style small capsule switches.
 class MacOSTheme {
   MacOSTheme._();
 
@@ -19,16 +15,21 @@ class MacOSTheme {
       seedColor: Colors.blueGrey,
       brightness: brightness,
     ).copyWith(
-      surface: (isDark ? const Color(0xFF1E1E20) : const Color(0xFFF5F5F5))
-          .withValues(alpha: 0.92),
+      surface: (isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF6F6F6))
+          .withValues(alpha: isDark ? 0.94 : 0.90),
       surfaceContainerHighest:
-          (isDark ? const Color(0xFF2C2C2E) : Colors.white).withValues(alpha: 0.88),
+          (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE8E8E8))
+              .withValues(alpha: 0.88),
+      onSurface: isDark ? const Color(0xFFFFFFFF) : const Color(0xFF1D1D1F),
+      onSurfaceVariant:
+          isDark ? const Color(0xFF98989D) : const Color(0xFF6E6E73),
     );
 
     return ThemeData(
       useMaterial3: true,
       colorScheme: colorScheme,
       brightness: brightness,
+      scaffoldBackgroundColor: Colors.transparent,
       cardTheme: CardThemeData(
         elevation: 0,
         margin: EdgeInsets.zero,
@@ -38,7 +39,13 @@ class MacOSTheme {
         ),
       ),
       switchTheme: SwitchThemeData(
-        trackOutlineWidth: WidgetStateProperty.all(1.5),
+        thumbIcon: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return const Icon(Icons.check, size: 12, color: Colors.white);
+          }
+          return null;
+        }),
+        trackOutlineWidth: WidgetStateProperty.all(0),
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         splashRadius: 14,
       ),
@@ -49,16 +56,16 @@ class MacOSTheme {
         thumbColor: colorScheme.primary,
         overlayColor: colorScheme.primary.withValues(alpha: 0.12),
       ),
-      textTheme: _compactTextTheme(isDark),
+      textTheme: _sfCompactTextTheme(isDark),
       iconTheme: IconThemeData(
-        size: AppTheme.iconMedium,
-        color: colorScheme.onSurface.withValues(alpha: 0.8),
+        size: AppTheme.iconSmall,
+        color: colorScheme.onSurfaceVariant,
       ),
       inputDecorationTheme: InputDecorationTheme(
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: AppTheme.spacing8,
-          vertical: AppTheme.spacing6,
+          horizontal: AppTheme.spacing6,
+          vertical: AppTheme.spacing4,
         ),
         filled: true,
         fillColor: colorScheme.surfaceContainerHighest,
@@ -70,7 +77,7 @@ class MacOSTheme {
       dividerTheme: DividerThemeData(
         space: 1,
         thickness: 0.5,
-        color: colorScheme.surfaceContainerHighest,
+        color: colorScheme.onSurface.withValues(alpha: 0.08),
       ),
       popupMenuTheme: PopupMenuThemeData(
         shape: RoundedRectangleBorder(
@@ -89,48 +96,56 @@ class MacOSTheme {
           fontSize: 11,
         ),
         padding: const EdgeInsets.symmetric(
-          horizontal: AppTheme.spacing8,
+          horizontal: AppTheme.spacing6,
           vertical: AppTheme.spacing4,
         ),
       ),
     );
   }
 
-  static TextTheme _compactTextTheme(bool isDark) {
-    final base = ThemeData(brightness: isDark ? Brightness.dark : Brightness.light).textTheme;
-    final color = isDark ? Colors.white : Colors.black87;
-    return base.copyWith(
-      headlineSmall: base.headlineSmall?.copyWith(
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-        color: color,
-      ),
-      titleMedium: base.titleMedium?.copyWith(
-        fontSize: 12,
-        fontWeight: FontWeight.w600,
-        color: color,
-      ),
-      titleSmall: base.titleSmall?.copyWith(
-        fontSize: 11,
-        fontWeight: FontWeight.w600,
-        color: color.withValues(alpha: 0.7),
-      ),
-      bodyMedium: base.bodyMedium?.copyWith(
+  static TextTheme _sfCompactTextTheme(bool isDark) {
+    final color = isDark ? Colors.white : const Color(0xFF1D1D1F);
+    final secondary =
+        isDark ? const Color(0xFF98989D) : const Color(0xFF6E6E73);
+
+    return TextTheme(
+      headlineSmall: TextStyle(
         fontSize: 13,
+        fontWeight: FontWeight.w600,
         color: color,
+        letterSpacing: -0.08,
       ),
-      bodySmall: base.bodySmall?.copyWith(
+      titleMedium: TextStyle(
         fontSize: 11,
-        color: color.withValues(alpha: 0.6),
+        fontWeight: FontWeight.w500,
+        color: color,
+        letterSpacing: -0.05,
       ),
-      labelLarge: base.labelLarge?.copyWith(
+      titleSmall: TextStyle(
+        fontSize: 10,
+        fontWeight: FontWeight.w500,
+        color: secondary,
+      ),
+      bodyMedium: TextStyle(
         fontSize: 12,
+        fontWeight: FontWeight.w400,
+        color: color,
+        letterSpacing: -0.05,
+      ),
+      bodySmall: TextStyle(
+        fontSize: 10,
+        fontWeight: FontWeight.w400,
+        color: secondary,
+      ),
+      labelLarge: TextStyle(
+        fontSize: 11,
         fontWeight: FontWeight.w600,
         color: color,
       ),
-      labelMedium: base.labelMedium?.copyWith(
-        fontSize: 11,
-        color: color.withValues(alpha: 0.7),
+      labelMedium: TextStyle(
+        fontSize: 10,
+        fontWeight: FontWeight.w500,
+        color: secondary,
       ),
     );
   }

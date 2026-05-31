@@ -16,6 +16,9 @@ class _FakePlatform extends KeepAlivePlatform {
   Stream<String> get trayEventStream => _controller.stream;
 
   @override
+  Future<void> waitUntilNativeReady() async {}
+
+  @override
   Future<String> getPlatformName() async => 'Fake';
 
   @override

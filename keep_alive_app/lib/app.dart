@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show exit;
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
@@ -117,12 +118,14 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
 
   Future<void> _configureMainWindow() async {
     await windowManager.setTitle(AppConstants.appName);
-    await windowManager.setMinimumSize(const Size(1, 1));
     await windowManager.setResizable(false);
     await windowManager.setMinimizable(false);
     await windowManager.setMaximizable(false);
     await windowManager.setSkipTaskbar(true);
+    await windowManager.setSize(const Size(320, 500));
+    await windowManager.center();
     await windowManager.hide();
+    await windowManager.waitUntilReadyToShow();
   }
 
   Future<void> _togglePopup() async {
@@ -206,7 +209,7 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    Widget app = MaterialApp(
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
       navigatorKey: _navigatorKey,
@@ -217,6 +220,18 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
         child: PopupPanel(),
       ),
     );
+
+    if (PlatformUtils.isMacOS) {
+      app = CupertinoTheme(
+        data: CupertinoThemeData(
+          brightness: MediaQuery.platformBrightnessOf(context),
+          primaryColor: CupertinoColors.systemBlue,
+        ),
+        child: app,
+      );
+    }
+
+    return app;
   }
 }
 

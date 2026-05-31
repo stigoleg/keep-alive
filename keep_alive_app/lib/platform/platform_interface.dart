@@ -38,4 +38,6 @@ abstract class KeepAlivePlatform {
   Future<BatteryInfo> getBatteryInfo();
 
   Stream<String> get trayEventStream;
+
+  Future<void> waitUntilNativeReady();
 }
