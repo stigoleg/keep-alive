@@ -7,9 +7,10 @@ import '../core/logger.dart';
 import '../models/cli_flags.dart';
 import '../models/cli_process_state.dart';
 import '../services/process_manager.dart';
+import 'cli_binary_provider.dart';
 
 final processManagerProvider = Provider<ProcessManager>((ref) {
-  return ProcessManager();
+  return ProcessManager(downloadService: ref.watch(cliDownloadServiceProvider));
 });
 
 final cliProcessProvider =

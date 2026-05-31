@@ -326,12 +326,30 @@ class _AboutSection extends StatelessWidget {
   }
 }
 
-class _LogSection extends ConsumerWidget {
+class _LogSection extends ConsumerStatefulWidget {
   const _LogSection();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_LogSection> createState() => _LogSectionState();
+}
+
+class _LogSectionState extends ConsumerState<_LogSection> {
+  String? _activeFilter;
+
+  static const _filters = <String, String?>{
+    'All': null,
+    'Debug': 'FINE',
+    'Info': 'INFO',
+    'Warning': 'WARNING',
+    'Error': 'SEVERE',
+  };
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final logs = _activeFilter != null
+        ? AppLogger.filteredLogs(_activeFilter)
+        : AppLogger.recentLogs;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -349,7 +367,23 @@ class _LogSection extends ConsumerWidget {
             ),
             TextButton.icon(
               onPressed: () {
-                final logs = AppLogger.recentLogs;
+                setState(() {
+                  AppLogger.clearLogs();
+                });
+              },
+              icon: const Icon(Icons.delete_outline, size: AppTheme.iconSmall),
+              label: const Text('Clear'),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppTheme.spacing8,
+                  vertical: AppTheme.spacing4,
+                ),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () {
                 if (logs.isNotEmpty) {
                   Clipboard.setData(ClipboardData(text: logs.join('\n')));
                 }
@@ -367,8 +401,38 @@ class _LogSection extends ConsumerWidget {
             ),
           ],
         ),
+        const SizedBox(height: AppTheme.spacing6),
+        Wrap(
+          spacing: AppTheme.spacing4,
+          children: _filters.entries.map((entry) {
+            final selected = _activeFilter == entry.value;
+            return SizedBox(
+              height: 28,
+              child: ChoiceChip(
+                label: Text(
+                  entry.key,
+                  style: const TextStyle(fontSize: 11),
+                ),
+                selected: selected,
+                onSelected: (_) {
+                  setState(() => _activeFilter = entry.value);
+                },
+                selectedColor: theme.colorScheme.primaryContainer,
+                labelStyle: TextStyle(
+                  color: selected
+                      ? theme.colorScheme.onPrimaryContainer
+                      : theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: AppTheme.spacing8),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+            );
+          }).toList(),
+        ),
         const SizedBox(height: AppTheme.spacing8),
-        _LogViewer(logs: AppLogger.recentLogs),
+        _LogViewer(logs: logs),
       ],
     );
   }

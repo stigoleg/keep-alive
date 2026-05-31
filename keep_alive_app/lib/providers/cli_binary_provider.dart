@@ -7,6 +7,17 @@ import '../models/download_state.dart';
 import '../services/cli_download_service.dart';
 import '../services/github_api_service.dart';
 
+final githubApiServiceProvider = Provider<GitHubApiService>((ref) {
+  return GitHubApiService(dio: Dio());
+});
+
+final cliDownloadServiceProvider = Provider<CliDownloadService>((ref) {
+  return CliDownloadService(
+    apiService: ref.watch(githubApiServiceProvider),
+    dio: Dio(),
+  );
+});
+
 final cliBinaryProvider =
     NotifierProvider<CliBinaryNotifier, DownloadState>(
   CliBinaryNotifier.new,
@@ -18,11 +29,8 @@ class CliBinaryNotifier extends Notifier<DownloadState> {
 
   @override
   DownloadState build() {
-    _apiService = GitHubApiService(dio: Dio());
-    _downloadService = CliDownloadService(
-      apiService: _apiService,
-      dio: Dio(),
-    );
+    _apiService = ref.watch(githubApiServiceProvider);
+    _downloadService = ref.watch(cliDownloadServiceProvider);
     return const DownloadState();
   }
 

@@ -12,6 +12,16 @@ class AppLogger {
 
   static List<String> get recentLogs => List.unmodifiable(_ringBuffer);
 
+  static void clearLogs() {
+    _ringBuffer.clear();
+  }
+
+  static List<String> filteredLogs(String? levelFilter) {
+    if (levelFilter == null) return recentLogs;
+    final upper = levelFilter.toUpperCase();
+    return _ringBuffer.where((line) => line.contains('[$upper]')).toList();
+  }
+
   static void init() {
     Logger.root.level = Level.ALL;
     Logger.root.onRecord.listen(_onRecord);
