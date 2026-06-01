@@ -29,4 +29,20 @@ class VersionUtils {
     }
     return true;
   }
+
+  /// Returns true when [candidate] is strictly newer than [baseline]. Used by
+  /// the update path so that a package manager whose published version is
+  /// behind ours (e.g. Homebrew tap lagging GitHub releases) cannot
+  /// downgrade the active CLI. Unparseable versions are treated as "not
+  /// newer" so we err on the side of refusing an unsafe replacement.
+  static bool isStrictlyGreater(String? candidate, String? baseline) {
+    final a = parse(candidate);
+    final b = parse(baseline);
+    if (a == null || b == null) return false;
+    for (var i = 0; i < 3; i++) {
+      if (a[i] > b[i]) return true;
+      if (a[i] < b[i]) return false;
+    }
+    return false;
+  }
 }

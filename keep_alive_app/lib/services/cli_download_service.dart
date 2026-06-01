@@ -401,6 +401,11 @@ class CliDownloadService {
 
   Future<bool> _upgradeHomebrew(String brew) async {
     AppLogger.info('Updating keepalive via Homebrew...');
+
+    // Snapshot the current active version *before* we touch state, so we can
+    // refuse a downgrade and roll back cleanly.
+    final currentVersion = await _currentActiveVersion();
+
     final tapResult = await _runWithTimeout(brew, [
       'tap',
       AppConstants.homebrewTapRepo,
@@ -426,13 +431,20 @@ class CliDownloadService {
     }
 
     final binaryPath = await _findHomebrewBinary(brew);
-    if (binaryPath == null ||
-        !await _adoptBinary(
-          binaryPath,
-          'Homebrew',
-          installSource: CliInstallSource.homebrew,
-          requireMinVersion: true,
-        )) {
+    if (binaryPath == null) {
+      throw const DownloadException(
+        'Homebrew updated but keepalive binary was not found',
+      );
+    }
+
+    await _assertNotDowngrade(binaryPath, currentVersion, 'Homebrew');
+
+    if (!await _adoptBinary(
+      binaryPath,
+      'Homebrew',
+      installSource: CliInstallSource.homebrew,
+      requireMinVersion: true,
+    )) {
       throw const DownloadException(
         'Homebrew updated but keepalive was not usable',
       );
@@ -563,6 +575,9 @@ class CliDownloadService {
 
   Future<bool> _updateScoop() async {
     AppLogger.info('Updating keepalive via Scoop...');
+
+    final currentVersion = await _currentActiveVersion();
+
     final bucketResult = await _runWithTimeout('scoop', [
       'bucket',
       'add',
@@ -592,13 +607,20 @@ class CliDownloadService {
     }
 
     final binaryPath = await _findScoopBinary();
-    if (binaryPath == null ||
-        !await _adoptBinary(
-          binaryPath,
-          'Scoop',
-          installSource: CliInstallSource.scoop,
-          requireMinVersion: true,
-        )) {
+    if (binaryPath == null) {
+      throw const DownloadException(
+        'Scoop updated but keepalive binary was not found',
+      );
+    }
+
+    await _assertNotDowngrade(binaryPath, currentVersion, 'Scoop');
+
+    if (!await _adoptBinary(
+      binaryPath,
+      'Scoop',
+      installSource: CliInstallSource.scoop,
+      requireMinVersion: true,
+    )) {
       throw const DownloadException(
         'Scoop updated but keepalive was not usable',
       );
@@ -750,6 +772,40 @@ class CliDownloadService {
 
   bool _meetsMinimum(String? version) =>
       VersionUtils.meetsMinimum(version, AppConstants.minimumCliVersion);
+
+  /// Returns the version of the currently active CLI binary, looking first
+  /// at any adopted system binary (e.g. bundled, Homebrew) and falling back
+  /// to the app-managed install in app support. Returns null only when no
+  /// CLI is in use at all.
+  Future<String?> _currentActiveVersion() async {
+    final current = _systemBinaryPath;
+    if (current != null) {
+      return _parseVersionFromBinary(current);
+    }
+    if (await isBinaryInstalled()) {
+      return getInstalledVersion();
+    }
+    return null;
+  }
+
+  /// Refuses to adopt [candidatePath] if its version is older than (or equal
+  /// to) [currentVersion]. A null [currentVersion] means we have no active
+  /// CLI yet and any minimum-meeting install is allowed. Throws so the
+  /// caller can surface a clear "already up to date" message and leave the
+  /// existing adopted binary untouched.
+  Future<void> _assertNotDowngrade(
+    String candidatePath,
+    String? currentVersion,
+    String source,
+  ) async {
+    if (currentVersion == null) return;
+    final newVersion = await _parseVersionFromBinary(candidatePath);
+    if (VersionUtils.isStrictlyGreater(newVersion, currentVersion)) return;
+    throw DownloadException(
+      'Already at $currentVersion; $source has '
+      '${newVersion ?? "unknown"}. Refusing to downgrade.',
+    );
+  }
 
   @visibleForTesting
   Future<bool> tryAdoptForTest(String path, {bool requireMin = false}) =>

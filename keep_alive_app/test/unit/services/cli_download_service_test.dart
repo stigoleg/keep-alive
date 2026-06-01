@@ -223,7 +223,7 @@ void main() {
       if (Platform.isWindows) return;
       final service = buildService();
       final goodPath = '${tempDir.path}/good_keepalive';
-      await _createMockBinary(goodPath, 'Keep-Alive Version: 1.5.3\n');
+      await _createMockBinary(goodPath, 'Keep-Alive Version: 1.5.4\n');
 
       final ok = await service.tryAdoptForTest(goodPath, requireMin: true);
       expect(ok, isTrue);
@@ -291,7 +291,7 @@ void main() {
       final prefix = Directory('${tempDir.path}/brew-prefix')
         ..createSync(recursive: true);
       final binaryPath = p.join(prefix.path, 'bin', 'keepalive');
-      await _createMockBinary(binaryPath, 'Keep-Alive Version: 1.5.3\n');
+      await _createMockBinary(binaryPath, 'Keep-Alive Version: 1.5.4\n');
       final calls = <String>[];
 
       Future<ProcessResult> processRunner(
@@ -321,7 +321,7 @@ void main() {
         if (executable == binaryPath &&
             arguments.length == 1 &&
             arguments.single == AppConstants.cliVersionArg) {
-          return ProcessResult(6, 0, 'Keep-Alive Version: 1.5.3\n', '');
+          return ProcessResult(6, 0, 'Keep-Alive Version: 1.5.4\n', '');
         }
         return ProcessResult(7, 1, '', 'unexpected command');
       }
@@ -341,6 +341,99 @@ void main() {
       expect(calls, contains('/opt/homebrew/bin/brew upgrade keepalive'));
       expect(service.installSource, CliInstallSource.homebrew);
       expect(await service.binaryPath, binaryPath);
+    });
+
+    test('refuses Homebrew downgrade and keeps current binary', () async {
+      if (Platform.isWindows) return;
+
+      // Bundled CLI is already adopted at v1.5.4; the Homebrew tap still
+      // serves v1.5.3. This is the exact scenario that bit a real user:
+      // brew upgrade succeeds but its binary is older than what we have,
+      // and the older binary lacks the headless auto-detect that v1.5.4
+      // introduced — so silently adopting it would crash next start.
+      final prefix = Directory('${tempDir.path}/brew-prefix')
+        ..createSync(recursive: true);
+      final brewBinary = p.join(prefix.path, 'bin', 'keepalive');
+      await _createMockBinary(brewBinary, 'Keep-Alive Version: 1.5.3\n');
+
+      final bundledDir = await Directory.systemTemp.createTemp(
+        'keepalive_bundled_',
+      );
+      addTearDown(() async {
+        if (bundledDir.existsSync()) {
+          await bundledDir.delete(recursive: true);
+        }
+      });
+      final bundledPath = '${bundledDir.path}/keepalive';
+      await _createMockBinary(bundledPath, 'Keep-Alive Version: 1.5.4\n');
+
+      Future<ProcessResult> processRunner(
+        String executable,
+        List<String> arguments, {
+        bool runInShell = false,
+      }) async {
+        if (executable == 'which' && arguments.join(' ') == 'brew') {
+          return ProcessResult(1, 0, '/opt/homebrew/bin/brew\n', '');
+        }
+        if (executable == '/opt/homebrew/bin/brew') {
+          final joined = arguments.join(' ');
+          if (joined == 'list --formula keepalive') {
+            return ProcessResult(2, 0, '', '');
+          }
+          if (joined == 'tap stigoleg/homebrew-tap') {
+            return ProcessResult(3, 0, '', '');
+          }
+          if (joined == 'upgrade keepalive') {
+            return ProcessResult(4, 0, '', '');
+          }
+          if (joined == '--prefix keepalive') {
+            return ProcessResult(5, 0, '${prefix.path}\n', '');
+          }
+        }
+        if (executable == brewBinary &&
+            arguments.single == AppConstants.cliVersionArg) {
+          return ProcessResult(6, 0, 'Keep-Alive Version: 1.5.3\n', '');
+        }
+        if (executable == bundledPath &&
+            arguments.single == AppConstants.cliVersionArg) {
+          return ProcessResult(7, 0, 'Keep-Alive Version: 1.5.4\n', '');
+        }
+        return ProcessResult(99, 1, '', 'unexpected command');
+      }
+
+      final service = CliDownloadService(
+        apiService: GitHubApiService(dio: Dio()),
+        dio: Dio()
+          ..httpClientAdapter = MockHttpAdapter((_) {
+            fail('Homebrew downgrade path should not download archives');
+          }),
+        appSupportDir: tempDir.path,
+        processRunner: processRunner,
+        bundledCliLookup: () async => bundledPath,
+      );
+
+      // Adopt bundled v1.5.4 first to match the user's real state.
+      await service.ensureCliInstalled();
+      expect(service.installSource, CliInstallSource.bundled);
+
+      await expectLater(
+        () => service.updateLatest(),
+        throwsA(
+          isA<DownloadException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('Refusing to downgrade'),
+              contains('1.5.4'),
+              contains('1.5.3'),
+            ),
+          ),
+        ),
+      );
+
+      // Critically: we still point at the bundled binary, not Homebrew's.
+      expect(service.installSource, CliInstallSource.bundled);
+      expect(await service.binaryPath, bundledPath);
     });
   });
 

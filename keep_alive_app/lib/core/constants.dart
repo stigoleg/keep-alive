@@ -17,10 +17,13 @@ class AppConstants {
   static const String cliVersionArg = '--version';
   static const String cliLogArg = '--log';
 
-  /// Minimum CLI version the GUI accepts from external installs. This should
-  /// not exceed the latest published package-manager release, otherwise
-  /// Homebrew/Scoop updates can succeed but still be rejected by the app.
-  static const String minimumCliVersion = 'v1.5.3';
+  /// Minimum CLI version the GUI accepts from external installs.
+  /// v1.5.4 is required because v1.5.3 still depended on the `--headless`
+  /// flag (removed in commit 0eb6faf, replaced by stdin-TTY auto-detection);
+  /// when launched as a Flutter subprocess v1.5.3 silently exits code 1.
+  /// Bumping this back below v1.5.4 is unsafe until package managers also
+  /// catch up.
+  static const String minimumCliVersion = 'v1.5.4';
 
   static const Duration batteryPollInterval = Duration(seconds: 30);
   static const Duration updateCheckInterval = Duration(hours: 24);
