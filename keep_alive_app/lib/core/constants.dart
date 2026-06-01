@@ -17,10 +17,10 @@ class AppConstants {
   static const String cliVersionArg = '--version';
   static const String cliLogArg = '--log';
 
-  /// Minimum CLI version the GUI accepts. Older binaries on PATH (e.g. a stale
-  /// Homebrew install) emit `--active` but lack the fixed activity-simulation
-  /// path, so they are rejected in favour of the app-bundled CLI.
-  static const String minimumCliVersion = 'v1.5.4';
+  /// Minimum CLI version the GUI accepts from external installs. This should
+  /// not exceed the latest published package-manager release, otherwise
+  /// Homebrew/Scoop updates can succeed but still be rejected by the app.
+  static const String minimumCliVersion = 'v1.5.3';
 
   static const Duration batteryPollInterval = Duration(seconds: 30);
   static const Duration updateCheckInterval = Duration(hours: 24);

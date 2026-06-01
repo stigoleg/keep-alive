@@ -203,10 +203,10 @@ void main() {
       if (Platform.isWindows) return;
       final service = buildService();
 
-      // Stale binary 1.5.3 lives on PATH; min required is 1.5.4. The adopt
+      // Stale binary lives on PATH below the required minimum. The adopt
       // step must refuse it so a downgraded Homebrew install cannot mask the
       // fixed bundled CLI.
-      const staleVersion = 'Keep-Alive Version: 1.5.3';
+      const staleVersion = 'Keep-Alive Version: 1.5.2';
       final stalePath = '${tempDir.path}/stale_keepalive';
       await _createMockBinary(stalePath, '$staleVersion\n');
 
@@ -223,7 +223,7 @@ void main() {
       if (Platform.isWindows) return;
       final service = buildService();
       final goodPath = '${tempDir.path}/good_keepalive';
-      await _createMockBinary(goodPath, 'Keep-Alive Version: 1.5.4\n');
+      await _createMockBinary(goodPath, 'Keep-Alive Version: 1.5.3\n');
 
       final ok = await service.tryAdoptForTest(goodPath, requireMin: true);
       expect(ok, isTrue);
@@ -291,7 +291,7 @@ void main() {
       final prefix = Directory('${tempDir.path}/brew-prefix')
         ..createSync(recursive: true);
       final binaryPath = p.join(prefix.path, 'bin', 'keepalive');
-      await _createMockBinary(binaryPath, 'Keep-Alive Version: 1.5.4\n');
+      await _createMockBinary(binaryPath, 'Keep-Alive Version: 1.5.3\n');
       final calls = <String>[];
 
       Future<ProcessResult> processRunner(
@@ -321,7 +321,7 @@ void main() {
         if (executable == binaryPath &&
             arguments.length == 1 &&
             arguments.single == AppConstants.cliVersionArg) {
-          return ProcessResult(6, 0, 'Keep-Alive Version: 1.5.4\n', '');
+          return ProcessResult(6, 0, 'Keep-Alive Version: 1.5.3\n', '');
         }
         return ProcessResult(7, 1, '', 'unexpected command');
       }
