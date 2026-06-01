@@ -31,9 +31,7 @@ Widget buildPopupPanel({
         () => FakeCliBinaryNotifier(binaryState ?? const DownloadState()),
       ),
     ],
-    child: const MaterialApp(
-      home: Scaffold(body: PopupPanel()),
-    ),
+    child: const MaterialApp(home: Scaffold(body: PopupPanel())),
   );
 }
 
@@ -55,17 +53,21 @@ void main() {
     });
 
     testWidgets('renders dividers between sections', (tester) async {
-      await tester.pumpWidget(buildPopupPanel(
-        settings: const AppSettingsState(keepAwake: true),
-        binaryState: const DownloadState(status: DownloadStatus.installed),
-      ));
+      await tester.pumpWidget(
+        buildPopupPanel(
+          settings: const AppSettingsState(keepAwake: true),
+          binaryState: const DownloadState(status: DownloadStatus.installed),
+        ),
+      );
       await tester.pumpAndSettle();
 
       final dividers = find.byType(Divider);
       expect(dividers, findsAtLeastNWidgets(3));
     });
 
-    testWidgets('renders without error when settings are default', (tester) async {
+    testWidgets('renders without error when settings are default', (
+      tester,
+    ) async {
       await tester.pumpWidget(buildPopupPanel());
       await tester.pumpAndSettle();
 
@@ -83,6 +85,25 @@ void main() {
 
       expect(find.text('Timer'), findsOneWidget);
       expect(find.text('Indefinite'), findsOneWidget);
+    });
+
+    testWidgets('dismisses CLI error banner', (tester) async {
+      await tester.pumpWidget(
+        buildPopupPanel(
+          binaryState: const DownloadState(
+            status: DownloadStatus.error,
+            errorMessage: 'Binary not found',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Binary not found'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Dismiss'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Binary not found'), findsNothing);
     });
   });
 }

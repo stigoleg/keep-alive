@@ -1,12 +1,14 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keep_alive_app/core/constants.dart';
 import 'package:keep_alive_app/core/exceptions.dart';
 import 'package:keep_alive_app/services/cli_download_service.dart';
 import 'package:keep_alive_app/services/github_api_service.dart';
+import 'package:path/path.dart' as p;
 
 import 'test_utils.dart';
 
@@ -16,9 +18,7 @@ void main() {
     late CliDownloadService service;
 
     Dio testDio() => Dio()
-      ..httpClientAdapter = MockHttpAdapter(
-        (_) => responseBodyFromJson('{}'),
-      );
+      ..httpClientAdapter = MockHttpAdapter((_) => responseBodyFromJson('{}'));
 
     GitHubApiService testApiService() => GitHubApiService(dio: testDio());
 
@@ -75,13 +75,16 @@ void main() {
         expect(result, 'v2.0.0');
       });
 
-      test('falls back to binary version parsing when version file absent', () async {
-        final binaryPath = await service.binaryPath;
-        await _createMockBinary(binaryPath, 'Keep-Alive Version: 1.0.0\n');
+      test(
+        'falls back to binary version parsing when version file absent',
+        () async {
+          final binaryPath = await service.binaryPath;
+          await _createMockBinary(binaryPath, 'Keep-Alive Version: 1.0.0\n');
 
-        final result = await service.getInstalledVersion();
-        expect(result, 'v1.0.0');
-      });
+          final result = await service.getInstalledVersion();
+          expect(result, 'v1.0.0');
+        },
+      );
 
       test('returns version from file even when binary also exists', () async {
         final vPath = await service.versionFilePath;
@@ -130,7 +133,9 @@ void main() {
       });
 
       test('returns null for non-executable file', () async {
-        final result = await service.getSystemBinaryVersion('/nonexistent/path');
+        final result = await service.getSystemBinaryVersion(
+          '/nonexistent/path',
+        );
         expect(result, isNull);
       });
 
@@ -206,8 +211,11 @@ void main() {
       await _createMockBinary(stalePath, '$staleVersion\n');
 
       final ok = await service.tryAdoptForTest(stalePath, requireMin: true);
-      expect(ok, isFalse,
-          reason: 'CLI below ${AppConstants.minimumCliVersion} must be rejected');
+      expect(
+        ok,
+        isFalse,
+        reason: 'CLI below ${AppConstants.minimumCliVersion} must be rejected',
+      );
       expect(service.isUsingSystemBinary, isFalse);
     });
 
@@ -224,31 +232,147 @@ void main() {
     });
   });
 
-  group('CliDownloadService error handling', () {
-    test('throws DownloadException when getLatestRelease returns no assets', () async {
-      final tempDir = await Directory.systemTemp.createTemp('keepalive_test_');
-      try {
-        final releaseJson = jsonEncode({
-          'tag_name': 'v1.0.0',
-          'assets': [],
-        });
-        final adapter = MockHttpAdapter((_) => responseBodyFromJson(releaseJson));
-        final dio = Dio()..httpClientAdapter = adapter;
-        final apiService = GitHubApiService(dio: dio);
-        final service = CliDownloadService(
-          apiService: apiService,
-          dio: dio,
-          appSupportDir: tempDir.path,
-        );
+  group('CliDownloadService.updateLatest', () {
+    late Directory tempDir;
 
-        expect(
-          () => service.downloadLatest(),
-          throwsA(isA<DownloadException>()),
-        );
-      } finally {
-        await tempDir.delete(recursive: true);
-      }
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('keepalive_update_');
     });
+
+    tearDown(() async {
+      if (tempDir.existsSync()) await tempDir.delete(recursive: true);
+    });
+
+    test('installs binary from downloaded archive', () async {
+      final apiDio = Dio();
+      final assetName = GitHubApiService(
+        dio: apiDio,
+      ).getAssetNameForCurrentPlatform();
+      final archiveBytes = _archiveWithBinary(assetName);
+      final releaseJson = jsonEncode({
+        'tag_name': 'v9.9.9',
+        'assets': [
+          {
+            'name': assetName,
+            'browser_download_url': 'https://example.com/$assetName',
+            'size': archiveBytes.length,
+          },
+        ],
+      });
+      final dio = Dio()
+        ..httpClientAdapter = MockHttpAdapter((options) {
+          final uri = options.uri.toString();
+          if (uri.endsWith('/latest')) {
+            return responseBodyFromJson(releaseJson);
+          }
+          if (uri == 'https://example.com/$assetName') {
+            return ResponseBody.fromBytes(archiveBytes, 200);
+          }
+          return ResponseBody.fromBytes(utf8.encode('not found'), 404);
+        });
+      final service = CliDownloadService(
+        apiService: GitHubApiService(dio: dio),
+        dio: dio,
+        appSupportDir: tempDir.path,
+        processRunner: _testProcessRunner,
+      );
+
+      await service.updateLatest();
+
+      final binaryPath = await service.binaryPath;
+      expect(File(binaryPath).existsSync(), isTrue);
+      expect(await service.getInstalledVersion(), 'v9.9.9');
+      expect(service.installSource, CliInstallSource.appManaged);
+    });
+
+    test('uses Homebrew update when formula is installed', () async {
+      if (Platform.isWindows) return;
+
+      final prefix = Directory('${tempDir.path}/brew-prefix')
+        ..createSync(recursive: true);
+      final binaryPath = p.join(prefix.path, 'bin', 'keepalive');
+      await _createMockBinary(binaryPath, 'Keep-Alive Version: 1.5.4\n');
+      final calls = <String>[];
+
+      Future<ProcessResult> processRunner(
+        String executable,
+        List<String> arguments, {
+        bool runInShell = false,
+      }) async {
+        calls.add('$executable ${arguments.join(' ')}');
+        if (executable == 'which' && arguments.join(' ') == 'brew') {
+          return ProcessResult(1, 0, '/opt/homebrew/bin/brew\n', '');
+        }
+        if (executable == '/opt/homebrew/bin/brew') {
+          final joined = arguments.join(' ');
+          if (joined == 'list --formula keepalive') {
+            return ProcessResult(2, 0, '', '');
+          }
+          if (joined == 'tap stigoleg/homebrew-tap') {
+            return ProcessResult(3, 0, '', '');
+          }
+          if (joined == 'upgrade keepalive') {
+            return ProcessResult(4, 0, '', '');
+          }
+          if (joined == '--prefix keepalive') {
+            return ProcessResult(5, 0, '${prefix.path}\n', '');
+          }
+        }
+        if (executable == binaryPath &&
+            arguments.length == 1 &&
+            arguments.single == AppConstants.cliVersionArg) {
+          return ProcessResult(6, 0, 'Keep-Alive Version: 1.5.4\n', '');
+        }
+        return ProcessResult(7, 1, '', 'unexpected command');
+      }
+
+      final service = CliDownloadService(
+        apiService: GitHubApiService(dio: Dio()),
+        dio: Dio()
+          ..httpClientAdapter = MockHttpAdapter((_) {
+            fail('Homebrew update should not download release archives');
+          }),
+        appSupportDir: tempDir.path,
+        processRunner: processRunner,
+      );
+
+      await service.updateLatest();
+
+      expect(calls, contains('/opt/homebrew/bin/brew upgrade keepalive'));
+      expect(service.installSource, CliInstallSource.homebrew);
+      expect(await service.binaryPath, binaryPath);
+    });
+  });
+
+  group('CliDownloadService error handling', () {
+    test(
+      'throws DownloadException when getLatestRelease returns no assets',
+      () async {
+        final tempDir = await Directory.systemTemp.createTemp(
+          'keepalive_test_',
+        );
+        try {
+          final releaseJson = jsonEncode({'tag_name': 'v1.0.0', 'assets': []});
+          final adapter = MockHttpAdapter(
+            (_) => responseBodyFromJson(releaseJson),
+          );
+          final dio = Dio()..httpClientAdapter = adapter;
+          final apiService = GitHubApiService(dio: dio);
+          final service = CliDownloadService(
+            apiService: apiService,
+            dio: dio,
+            appSupportDir: tempDir.path,
+          );
+
+          expect(
+            () => service.downloadLatest(),
+            throwsA(isA<DownloadException>()),
+          );
+        } finally {
+          await tempDir.delete(recursive: true);
+        }
+      },
+    );
   });
 }
 
@@ -267,4 +391,28 @@ Future<void> _createMockBinary(String path, String output) async {
     await file.writeAsString(scriptContent);
     await Process.run('chmod', ['+x', path]);
   }
+}
+
+List<int> _archiveWithBinary(String assetName) {
+  final binaryName = assetName.endsWith('.zip') ? 'keepalive.exe' : 'keepalive';
+  final content = utf8.encode('#!/bin/sh\necho "Keep-Alive Version: 9.9.9"\n');
+  final archive = Archive()..addFile(ArchiveFile.bytes(binaryName, content));
+
+  if (assetName.endsWith('.zip')) {
+    return ZipEncoder().encode(archive);
+  }
+
+  final tarBytes = TarEncoder().encode(archive);
+  return const GZipEncoder().encode(tarBytes);
+}
+
+Future<ProcessResult> _testProcessRunner(
+  String executable,
+  List<String> arguments, {
+  bool runInShell = false,
+}) async {
+  if (executable == 'chmod') {
+    return Process.run(executable, arguments, runInShell: runInShell);
+  }
+  return ProcessResult(0, 1, '', 'unexpected command');
 }

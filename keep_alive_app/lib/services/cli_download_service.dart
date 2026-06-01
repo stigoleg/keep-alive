@@ -20,31 +20,55 @@ import 'github_api_service.dart';
 /// platform channel; tests inject a custom lookup.
 typedef BundledCliLookup = Future<String?> Function();
 
+typedef ProcessRunner =
+    Future<ProcessResult> Function(
+      String executable,
+      List<String> arguments, {
+      bool runInShell,
+    });
+
+enum CliInstallSource { bundled, local, appManaged, path, homebrew, scoop }
+
 class CliDownloadService {
   final GitHubApiService _apiService;
   final Dio _dio;
   final String? _appSupportDirOverride;
   final BundledCliLookup _bundledCliLookup;
+  final ProcessRunner _processRunner;
 
   String? _binaryPath;
   String? _versionFilePath;
   String? _urlCachePath;
   bool _usingSystemBinary = false;
   String? _systemBinaryPath;
+  CliInstallSource? _installSource;
 
   CliDownloadService({
     required this._apiService,
     required this._dio,
     String? appSupportDir,
     BundledCliLookup? bundledCliLookup,
-  })  : _appSupportDirOverride = appSupportDir,
-        _bundledCliLookup =
-            bundledCliLookup ?? _defaultBundledCliLookup;
+    ProcessRunner? processRunner,
+  }) : _appSupportDirOverride = appSupportDir,
+       _bundledCliLookup = bundledCliLookup ?? _defaultBundledCliLookup,
+       _processRunner = processRunner ?? _defaultProcessRunner;
 
   static Future<String?> _defaultBundledCliLookup() =>
       KeepAlivePlatform.instance.getBundledCliPath();
 
+  static Future<ProcessResult> _defaultProcessRunner(
+    String executable,
+    List<String> arguments, {
+    bool runInShell = false,
+  }) => Process.run(executable, arguments, runInShell: runInShell);
+
   bool get isUsingSystemBinary => _usingSystemBinary;
+
+  CliInstallSource? get installSource => _installSource;
+
+  bool get isUsingPackageManager =>
+      _installSource == CliInstallSource.homebrew ||
+      _installSource == CliInstallSource.scoop;
 
   Future<Directory> get _appSupportDir async {
     final override = _appSupportDirOverride;
@@ -112,11 +136,9 @@ class CliDownloadService {
     if (!file.existsSync()) return null;
 
     try {
-      final result = await Process.run(
-        path,
-        [AppConstants.cliVersionArg],
-        runInShell: true,
-      );
+      final result = await _processRunner(path, [
+        AppConstants.cliVersionArg,
+      ], runInShell: true);
       if (result.exitCode == 0) {
         final output = (result.stdout as String).trim();
         final regex = RegExp(r'(\d+\.\d+\.\d+)');
@@ -148,11 +170,9 @@ class CliDownloadService {
     if (!file.existsSync()) return false;
 
     try {
-      final result = await Process.run(
-        path,
-        [AppConstants.cliVersionArg],
-        runInShell: true,
-      );
+      final result = await _processRunner(path, [
+        AppConstants.cliVersionArg,
+      ], runInShell: true);
       return result.exitCode == 0;
     } catch (_) {
       return false;
@@ -162,11 +182,9 @@ class CliDownloadService {
   Future<String?> _findBinaryInPath() async {
     final command = Platform.isWindows ? 'where' : 'which';
     try {
-      final result = await Process.run(
-        command,
-        [AppConstants.cliBinaryName],
-        runInShell: true,
-      );
+      final result = await _processRunner(command, [
+        AppConstants.cliBinaryName,
+      ], runInShell: true);
       if (result.exitCode == 0) {
         final stdout = (result.stdout as String).trim();
         if (stdout.isNotEmpty) {
@@ -174,7 +192,8 @@ class CliDownloadService {
           final firstPath = lines.first.trim();
           if (firstPath.isNotEmpty) {
             AppLogger.info(
-                'Found keepalive in PATH: ${AppLogger.scrubPath(firstPath)}');
+              'Found keepalive in PATH: ${AppLogger.scrubPath(firstPath)}',
+            );
             return firstPath;
           }
         }
@@ -212,7 +231,8 @@ class CliDownloadService {
       if (file.existsSync()) {
         if (Platform.isWindows || await _canExecute(file)) {
           AppLogger.info(
-              'Found local keepalive binary: ${AppLogger.scrubPath(path)}');
+            'Found local keepalive binary: ${AppLogger.scrubPath(path)}',
+          );
           return path;
         }
       }
@@ -241,64 +261,137 @@ class CliDownloadService {
     }
   }
 
+  Future<String?> _findHomebrewExecutable() async {
+    if (Platform.isWindows) return null;
+
+    try {
+      final result = await _processRunner('which', ['brew'], runInShell: true);
+      if (result.exitCode == 0) {
+        final path = (result.stdout as String).trim().split('\n').first.trim();
+        if (path.isNotEmpty) return path;
+      }
+    } catch (e) {
+      AppLogger.debug('which brew failed: $e');
+    }
+
+    for (final path in const [
+      '/opt/homebrew/bin/brew',
+      '/usr/local/bin/brew',
+      '/home/linuxbrew/.linuxbrew/bin/brew',
+    ]) {
+      if (File(path).existsSync()) return path;
+    }
+
+    return null;
+  }
+
+  Future<bool> _isHomebrewFormulaInstalled(String brew) async {
+    final result = await _processRunner(brew, [
+      'list',
+      '--formula',
+      AppConstants.homebrewFormula,
+    ], runInShell: true);
+    return result.exitCode == 0;
+  }
+
+  Future<String?> _findHomebrewBinary(String brew) async {
+    try {
+      final prefixResult = await _processRunner(brew, [
+        '--prefix',
+        AppConstants.homebrewFormula,
+      ], runInShell: true);
+      if (prefixResult.exitCode == 0) {
+        final prefix = (prefixResult.stdout as String)
+            .trim()
+            .split('\n')
+            .first
+            .trim();
+        final candidate = p.join(prefix, 'bin', AppConstants.cliBinaryName);
+        if (File(candidate).existsSync()) return candidate;
+      }
+    } catch (e) {
+      AppLogger.debug('brew --prefix failed: $e');
+    }
+    return _findBinaryInPath();
+  }
+
+  Future<bool> _adoptExistingHomebrewInstall({
+    bool requireMinVersion = true,
+  }) async {
+    final brew = await _findHomebrewExecutable();
+    if (brew == null) {
+      AppLogger.debug('Homebrew not found');
+      return false;
+    }
+
+    try {
+      if (!await _isHomebrewFormulaInstalled(brew)) return false;
+      final binaryPath = await _findHomebrewBinary(brew);
+      if (binaryPath == null) return false;
+      return _adoptBinary(
+        binaryPath,
+        'Homebrew',
+        installSource: CliInstallSource.homebrew,
+        requireMinVersion: requireMinVersion,
+      );
+    } catch (e) {
+      AppLogger.warning('Homebrew detection failed: $e');
+      return false;
+    }
+  }
+
   Future<bool> _tryInstallViaHomebrew() async {
     if (Platform.isWindows) return false;
     try {
-      final brewResult = await Process.run(
-        'which',
-        ['brew'],
-        runInShell: true,
-      );
-      if (brewResult.exitCode != 0) {
+      final brew = await _findHomebrewExecutable();
+      if (brew == null) {
         AppLogger.debug('Homebrew not found in PATH');
         return false;
       }
 
-      final brewListResult = await Process.run(
-        'brew',
-        ['list', '--formula', AppConstants.homebrewFormula],
-        runInShell: true,
-      );
-      if (brewListResult.exitCode == 0) {
-        final pathBinary = await _findBinaryInPath();
-        if (pathBinary != null &&
-            await _adoptBinary(pathBinary, 'Homebrew',
-                requireMinVersion: true)) {
+      if (await _isHomebrewFormulaInstalled(brew)) {
+        if (await _adoptExistingHomebrewInstall()) {
           return true;
         }
+        final upgraded = await _upgradeHomebrew(brew);
+        if (upgraded) return true;
+        return false;
       }
 
       AppLogger.info('Installing keepalive via Homebrew...');
-      final tapResult = await _runWithTimeout(
-        'brew',
-        ['tap', AppConstants.homebrewTapRepo],
-      );
+      final tapResult = await _runWithTimeout(brew, [
+        'tap',
+        AppConstants.homebrewTapRepo,
+      ]);
       if (tapResult == null) {
         AppLogger.warning('brew tap timed out (non-fatal)');
       } else if (tapResult.exitCode != 0) {
-        AppLogger.warning(
-            'brew tap failed (non-fatal): ${tapResult.stderr}');
+        AppLogger.warning('brew tap failed (non-fatal): ${tapResult.stderr}');
       }
 
-      final installResult = await _runWithTimeout(
-        'brew',
-        ['install', AppConstants.homebrewFormula],
-      );
+      final installResult = await _runWithTimeout(brew, [
+        'install',
+        AppConstants.homebrewFormula,
+      ]);
       if (installResult == null) {
         AppLogger.warning(
-            'brew install timed out after ${AppConstants.packageManagerInstallTimeoutSeconds}s, falling back to direct download');
+          'brew install timed out after ${AppConstants.packageManagerInstallTimeoutSeconds}s, falling back to direct download',
+        );
         return false;
       }
       if (installResult.exitCode == 0) {
-        final binaryPath = await _findBinaryInPath();
+        final binaryPath = await _findHomebrewBinary(brew);
         if (binaryPath != null &&
-            await _adoptBinary(binaryPath, 'Homebrew',
-                requireMinVersion: true)) {
+            await _adoptBinary(
+              binaryPath,
+              'Homebrew',
+              installSource: CliInstallSource.homebrew,
+              requireMinVersion: true,
+            )) {
           return true;
         }
       } else {
-        AppLogger.warning(
-            'brew install failed: ${installResult.stderr}');
+        AppLogger.warning('brew install failed: ${installResult.stderr}');
       }
     } catch (e) {
       AppLogger.warning('Homebrew install failed: $e');
@@ -306,12 +399,53 @@ class CliDownloadService {
     return false;
   }
 
+  Future<bool> _upgradeHomebrew(String brew) async {
+    AppLogger.info('Updating keepalive via Homebrew...');
+    final tapResult = await _runWithTimeout(brew, [
+      'tap',
+      AppConstants.homebrewTapRepo,
+    ]);
+    if (tapResult == null) {
+      AppLogger.warning('brew tap timed out (non-fatal)');
+    } else if (tapResult.exitCode != 0) {
+      AppLogger.warning('brew tap failed (non-fatal): ${tapResult.stderr}');
+    }
+
+    final result = await _runWithTimeout(brew, [
+      'upgrade',
+      AppConstants.homebrewFormula,
+    ]);
+    if (result == null) {
+      throw const DownloadException(
+        'brew upgrade timed out after '
+        '${AppConstants.packageManagerInstallTimeoutSeconds}s',
+      );
+    }
+    if (result.exitCode != 0) {
+      throw DownloadException('brew upgrade failed: ${result.stderr}');
+    }
+
+    final binaryPath = await _findHomebrewBinary(brew);
+    if (binaryPath == null ||
+        !await _adoptBinary(
+          binaryPath,
+          'Homebrew',
+          installSource: CliInstallSource.homebrew,
+          requireMinVersion: true,
+        )) {
+      throw const DownloadException(
+        'Homebrew updated but keepalive was not usable',
+      );
+    }
+    return true;
+  }
+
   Future<ProcessResult?> _runWithTimeout(
     String executable,
     List<String> args,
   ) async {
     try {
-      return await Process.run(executable, args, runInShell: true).timeout(
+      return await _processRunner(executable, args, runInShell: true).timeout(
         const Duration(
           seconds: AppConstants.packageManagerInstallTimeoutSeconds,
         ),
@@ -324,57 +458,152 @@ class CliDownloadService {
   Future<bool> _tryInstallViaScoop() async {
     if (!Platform.isWindows) return false;
     try {
-      final scoopResult = await Process.run(
-        'powershell',
-        ['-Command', 'Get-Command scoop -ErrorAction SilentlyContinue'],
-        runInShell: true,
-      );
-      if (scoopResult.exitCode != 0) {
+      if (!await _isScoopAvailable()) {
         AppLogger.debug('Scoop not found');
         return false;
       }
 
+      if (await _isScoopPackageInstalled()) {
+        final binaryPath = await _findScoopBinary();
+        if (binaryPath != null &&
+            await _adoptBinary(
+              binaryPath,
+              'Scoop',
+              installSource: CliInstallSource.scoop,
+              requireMinVersion: true,
+            )) {
+          return true;
+        }
+        final updated = await _updateScoop();
+        if (updated) return true;
+        return false;
+      }
+
       AppLogger.info('Installing keepalive via Scoop...');
-      final bucketResult = await _runWithTimeout(
-        'scoop',
-        [
-          'bucket',
-          'add',
-          AppConstants.scoopBucketName,
-          AppConstants.scoopBucketUrl,
-        ],
-      );
+      final bucketResult = await _runWithTimeout('scoop', [
+        'bucket',
+        'add',
+        AppConstants.scoopBucketName,
+        AppConstants.scoopBucketUrl,
+      ]);
       if (bucketResult == null) {
         AppLogger.warning('scoop bucket add timed out (non-fatal)');
       } else if (bucketResult.exitCode != 0) {
         AppLogger.warning(
-            'scoop bucket add failed (non-fatal): ${bucketResult.stderr}');
+          'scoop bucket add failed (non-fatal): ${bucketResult.stderr}',
+        );
       }
 
-      final installResult = await _runWithTimeout(
-        'scoop',
-        ['install', AppConstants.scoopPackage],
-      );
+      final installResult = await _runWithTimeout('scoop', [
+        'install',
+        AppConstants.scoopPackage,
+      ]);
       if (installResult == null) {
         AppLogger.warning(
-            'scoop install timed out after ${AppConstants.packageManagerInstallTimeoutSeconds}s, falling back to direct download');
+          'scoop install timed out after ${AppConstants.packageManagerInstallTimeoutSeconds}s, falling back to direct download',
+        );
         return false;
       }
       if (installResult.exitCode == 0) {
-        final binaryPath = await _findBinaryInPath();
+        final binaryPath = await _findScoopBinary();
         if (binaryPath != null &&
-            await _adoptBinary(binaryPath, 'Scoop',
-                requireMinVersion: true)) {
+            await _adoptBinary(
+              binaryPath,
+              'Scoop',
+              installSource: CliInstallSource.scoop,
+              requireMinVersion: true,
+            )) {
           return true;
         }
       } else {
-        AppLogger.warning(
-            'scoop install failed: ${installResult.stderr}');
+        AppLogger.warning('scoop install failed: ${installResult.stderr}');
       }
     } catch (e) {
       AppLogger.warning('Scoop install failed: $e');
     }
     return false;
+  }
+
+  Future<bool> _isScoopAvailable() async {
+    final scoopResult = await _processRunner('powershell', [
+      '-Command',
+      'Get-Command scoop -ErrorAction SilentlyContinue',
+    ], runInShell: true);
+    return scoopResult.exitCode == 0;
+  }
+
+  Future<bool> _isScoopPackageInstalled() async {
+    final result = await _processRunner('scoop', [
+      'prefix',
+      AppConstants.scoopPackage,
+    ], runInShell: true);
+    return result.exitCode == 0;
+  }
+
+  Future<String?> _findScoopBinary() async {
+    try {
+      final prefixResult = await _processRunner('scoop', [
+        'prefix',
+        AppConstants.scoopPackage,
+      ], runInShell: true);
+      if (prefixResult.exitCode == 0) {
+        final prefix = (prefixResult.stdout as String)
+            .trim()
+            .split('\n')
+            .first
+            .trim();
+        final candidate = p.join(prefix, '${AppConstants.cliBinaryName}.exe');
+        if (File(candidate).existsSync()) return candidate;
+      }
+    } catch (e) {
+      AppLogger.debug('scoop prefix failed: $e');
+    }
+    return _findBinaryInPath();
+  }
+
+  Future<bool> _updateScoop() async {
+    AppLogger.info('Updating keepalive via Scoop...');
+    final bucketResult = await _runWithTimeout('scoop', [
+      'bucket',
+      'add',
+      AppConstants.scoopBucketName,
+      AppConstants.scoopBucketUrl,
+    ]);
+    if (bucketResult == null) {
+      AppLogger.warning('scoop bucket add timed out (non-fatal)');
+    } else if (bucketResult.exitCode != 0) {
+      AppLogger.warning(
+        'scoop bucket add failed (non-fatal): ${bucketResult.stderr}',
+      );
+    }
+
+    final result = await _runWithTimeout('scoop', [
+      'update',
+      AppConstants.scoopPackage,
+    ]);
+    if (result == null) {
+      throw const DownloadException(
+        'scoop update timed out after '
+        '${AppConstants.packageManagerInstallTimeoutSeconds}s',
+      );
+    }
+    if (result.exitCode != 0) {
+      throw DownloadException('scoop update failed: ${result.stderr}');
+    }
+
+    final binaryPath = await _findScoopBinary();
+    if (binaryPath == null ||
+        !await _adoptBinary(
+          binaryPath,
+          'Scoop',
+          installSource: CliInstallSource.scoop,
+          requireMinVersion: true,
+        )) {
+      throw const DownloadException(
+        'Scoop updated but keepalive was not usable',
+      );
+    }
+    return true;
   }
 
   Future<void> ensureCliInstalled({
@@ -383,7 +612,12 @@ class CliDownloadService {
     // 1. Prefer the CLI bundled inside the host app — it matches the GUI's
     //    build and avoids stale PATH installs (e.g. an older Homebrew copy).
     final bundled = await _findBundledBinary();
-    if (bundled != null && await _adoptBinary(bundled, 'bundled app resource')) {
+    if (bundled != null &&
+        await _adoptBinary(
+          bundled,
+          'bundled app resource',
+          installSource: CliInstallSource.bundled,
+        )) {
       return;
     }
 
@@ -391,7 +625,11 @@ class CliDownloadService {
     //    to the running Dart entrypoint. Useful during local development.
     final localBinary = await _findLocalBinary();
     if (localBinary != null &&
-        await _adoptBinary(localBinary, 'local filesystem')) {
+        await _adoptBinary(
+          localBinary,
+          'local filesystem',
+          installSource: CliInstallSource.local,
+        )) {
       return;
     }
 
@@ -400,8 +638,8 @@ class CliDownloadService {
     if (installed) {
       final managedPath = await binaryPath;
       final managedVersion = await getInstalledVersion();
-      if (await _verifyBinaryAt(managedPath) &&
-          _meetsMinimum(managedVersion)) {
+      if (await _verifyBinaryAt(managedPath) && _meetsMinimum(managedVersion)) {
+        _installSource = CliInstallSource.appManaged;
         AppLogger.info(
           'Using app-managed CLI: ${AppLogger.scrubPath(managedPath)} ($managedVersion)',
         );
@@ -413,11 +651,38 @@ class CliDownloadService {
       );
     }
 
-    // 4. System PATH (Homebrew, Scoop, manual installs) — only used as
-    //    fallback so a stale system install cannot mask the fixed CLI.
+    // 4. Existing package-manager installs. Tracking this source lets the
+    //    update button keep using the same package manager later.
+    if (PlatformUtils.isMacOS || PlatformUtils.isLinux) {
+      final brewInstalled = await _adoptExistingHomebrewInstall();
+      if (brewInstalled) return;
+    }
+
+    if (PlatformUtils.isWindows &&
+        await _isScoopAvailable() &&
+        await _isScoopPackageInstalled()) {
+      final scoopBinary = await _findScoopBinary();
+      if (scoopBinary != null &&
+          await _adoptBinary(
+            scoopBinary,
+            'Scoop',
+            installSource: CliInstallSource.scoop,
+            requireMinVersion: true,
+          )) {
+        return;
+      }
+    }
+
+    // 5. Generic system PATH (manual installs). Only used as fallback so a
+    //    stale system install cannot mask the fixed CLI.
     final pathBinary = await _findBinaryInPath();
     if (pathBinary != null &&
-        await _adoptBinary(pathBinary, 'PATH', requireMinVersion: true)) {
+        await _adoptBinary(
+          pathBinary,
+          'PATH',
+          installSource: CliInstallSource.path,
+          requireMinVersion: true,
+        )) {
       return;
     }
 
@@ -440,8 +705,7 @@ class CliDownloadService {
       if (path == null || path.isEmpty) return null;
       final file = File(path);
       if (!file.existsSync()) return null;
-      AppLogger.info(
-          'Found bundled keepalive: ${AppLogger.scrubPath(path)}');
+      AppLogger.info('Found bundled keepalive: ${AppLogger.scrubPath(path)}');
       return path;
     } catch (e) {
       AppLogger.debug('Bundled CLI lookup failed: $e');
@@ -454,6 +718,7 @@ class CliDownloadService {
   Future<bool> _adoptBinary(
     String path,
     String source, {
+    required CliInstallSource installSource,
     bool requireMinVersion = false,
   }) async {
     final verified = await _verifyBinaryAt(path);
@@ -476,6 +741,7 @@ class CliDownloadService {
 
     _systemBinaryPath = path;
     _usingSystemBinary = true;
+    _installSource = installSource;
     AppLogger.info(
       'Using keepalive from $source: ${AppLogger.scrubPath(path)} (${version ?? "version unknown"})',
     );
@@ -487,17 +753,20 @@ class CliDownloadService {
 
   @visibleForTesting
   Future<bool> tryAdoptForTest(String path, {bool requireMin = false}) =>
-      _adoptBinary(path, 'test', requireMinVersion: requireMin);
+      _adoptBinary(
+        path,
+        'test',
+        installSource: CliInstallSource.path,
+        requireMinVersion: requireMin,
+      );
 
   Future<bool> _verifyBinaryAt(String path) async {
     final file = File(path);
     if (!file.existsSync()) return false;
     try {
-      final result = await Process.run(
-        path,
-        [AppConstants.cliVersionArg],
-        runInShell: true,
-      );
+      final result = await _processRunner(path, [
+        AppConstants.cliVersionArg,
+      ], runInShell: true);
       return result.exitCode == 0;
     } catch (_) {
       return false;
@@ -507,6 +776,27 @@ class CliDownloadService {
   Future<void> downloadLatest({
     void Function(double progress)? onProgress,
   }) async {
+    await _downloadAndInstall(onProgress: onProgress);
+  }
+
+  Future<void> updateLatest({
+    void Function(double progress)? onProgress,
+  }) async {
+    if (PlatformUtils.isMacOS || PlatformUtils.isLinux) {
+      final brew = await _findHomebrewExecutable();
+      if (brew != null && await _isHomebrewFormulaInstalled(brew)) {
+        await _upgradeHomebrew(brew);
+        return;
+      }
+    }
+
+    if (PlatformUtils.isWindows &&
+        await _isScoopAvailable() &&
+        await _isScoopPackageInstalled()) {
+      await _updateScoop();
+      return;
+    }
+
     await _downloadAndInstall(onProgress: onProgress);
   }
 
@@ -537,7 +827,8 @@ class CliDownloadService {
       if (assetUrl == null) {
         final assetName = _apiService.getAssetNameForCurrentPlatform();
         throw DownloadException(
-            'No binary available for current platform ($assetName)');
+          'No binary available for current platform ($assetName)',
+        );
       }
       await _cacheDownloadUrl(assetUrl);
       return assetUrl;
@@ -569,7 +860,8 @@ class CliDownloadService {
       attempt++;
       try {
         AppLogger.info(
-            'Download attempt $attempt/${AppConstants.downloadMaxRetries}: $url');
+          'Download attempt $attempt/${AppConstants.downloadMaxRetries}: $url',
+        );
         await _dio.download(
           url,
           archivePath,
@@ -616,12 +908,14 @@ class CliDownloadService {
       await Directory(extractDir).create();
 
       _assertSafeArchiveEntries(archivePath, assetName, extractDir);
-      archive_io.extractFileToDisk(archivePath, extractDir);
+      await archive_io.extractFileToDisk(archivePath, extractDir);
 
       final targetPath = await binaryPath;
       final extractedBinary = _findBinaryInDir(extractDir);
       if (extractedBinary == null) {
-        throw DownloadException('Binary not found in extracted archive ($assetName)');
+        throw DownloadException(
+          'Binary not found in extracted archive ($assetName)',
+        );
       }
 
       final targetFile = File(targetPath);
@@ -640,9 +934,13 @@ class CliDownloadService {
 
       final release = await _resolveReleaseTagForVersion();
       await _writeVersionFile(release);
+      _systemBinaryPath = null;
+      _usingSystemBinary = false;
+      _installSource = CliInstallSource.appManaged;
 
       AppLogger.info(
-          'CLI $release installed to ${AppLogger.scrubPath(targetPath)}');
+        'CLI $release installed to ${AppLogger.scrubPath(targetPath)}',
+      );
     } on DownloadException {
       rethrow;
     } catch (e) {
@@ -682,7 +980,9 @@ class CliDownloadService {
       AppConstants.cliReleaseBaseName,
     };
 
-    AppLogger.debug('Searching for binary in $dir (looking for: ${alternateNames.join(', ')})');
+    AppLogger.debug(
+      'Searching for binary in $dir (looking for: ${alternateNames.join(', ')})',
+    );
 
     for (final entity in directory.listSync(recursive: true)) {
       if (entity is File) {
@@ -707,7 +1007,7 @@ class CliDownloadService {
 
   Future<void> _setExecutable(String path) async {
     try {
-      final result = await Process.run('chmod', ['+x', path]);
+      final result = await _processRunner('chmod', ['+x', path]);
       if (result.exitCode != 0) {
         AppLogger.warning('chmod +x failed: ${result.stderr}');
       }
@@ -814,15 +1114,14 @@ class CliDownloadService {
     final bytes = File(archivePath).readAsBytesSync();
     final archive = isZip
         ? archive_io.ZipDecoder().decodeBytes(bytes)
-        : archive_io.TarDecoder()
-            .decodeBytes(const archive_io.GZipDecoder().decodeBytes(bytes));
+        : archive_io.TarDecoder().decodeBytes(
+            const archive_io.GZipDecoder().decodeBytes(bytes),
+          );
     final root = p.canonicalize(extractDir);
     for (final entry in archive.files) {
       final dest = p.canonicalize(p.join(extractDir, entry.name));
       if (dest != root && !p.isWithin(root, dest)) {
-        throw DownloadException(
-          'Unsafe archive entry: ${entry.name}',
-        );
+        throw DownloadException('Unsafe archive entry: ${entry.name}');
       }
     }
   }

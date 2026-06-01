@@ -28,7 +28,8 @@ class CliStatusFooter extends ConsumerWidget {
               message: binaryState.errorMessage!,
               onRetry: () =>
                   ref.read(cliBinaryProvider.notifier).downloadLatest(),
-              onDismiss: () {},
+              onDismiss: () =>
+                  ref.read(cliBinaryProvider.notifier).clearError(),
             ),
           Row(
             children: [
@@ -56,8 +57,11 @@ class CliStatusFooter extends ConsumerWidget {
 
     switch (state.status) {
       case DownloadStatus.installed:
-        icon = const Icon(Icons.check_circle,
-            size: AppTheme.iconSmall, color: AppTheme.activeColor);
+        icon = const Icon(
+          Icons.check_circle,
+          size: AppTheme.iconSmall,
+          color: AppTheme.activeColor,
+        );
         text = 'CLI $version';
         break;
       case DownloadStatus.downloading:
@@ -72,14 +76,19 @@ class CliStatusFooter extends ConsumerWidget {
         text = 'Downloading\u2026';
         break;
       case DownloadStatus.error:
-        icon = const Icon(Icons.error,
-            size: AppTheme.iconSmall, color: AppTheme.errorColor);
+        icon = const Icon(
+          Icons.error,
+          size: AppTheme.iconSmall,
+          color: AppTheme.errorColor,
+        );
         text = 'CLI error';
         break;
       case DownloadStatus.notInstalled:
-        icon = Icon(Icons.cloud_download,
-            size: AppTheme.iconSmall,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.4));
+        icon = Icon(
+          Icons.cloud_download,
+          size: AppTheme.iconSmall,
+          color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+        );
         text = 'CLI not installed';
         break;
     }
@@ -100,12 +109,17 @@ class CliStatusFooter extends ConsumerWidget {
   }
 
   Widget _actionWidget(
-      BuildContext context, DownloadState state, WidgetRef ref, ThemeData theme) {
+    BuildContext context,
+    DownloadState state,
+    WidgetRef ref,
+    ThemeData theme,
+  ) {
     switch (state.status) {
       case DownloadStatus.notInstalled:
       case DownloadStatus.error:
         return TextButton.icon(
-          onPressed: () => ref.read(cliBinaryProvider.notifier).downloadLatest(),
+          onPressed: () =>
+              ref.read(cliBinaryProvider.notifier).downloadLatest(),
           icon: const Icon(Icons.download, size: AppTheme.iconSmall),
           label: Text(
             state.status == DownloadStatus.error ? 'Retry' : 'Download CLI',

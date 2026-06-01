@@ -48,6 +48,15 @@ void main() {
         expect(updated.progress, 0.5);
         expect(updated.installedVersion, isNull);
       });
+
+      test('clears error message with null', () {
+        const original = DownloadState(
+          status: DownloadStatus.error,
+          errorMessage: 'failed',
+        );
+        final updated = original.copyWith(errorMessage: null);
+        expect(updated.errorMessage, isNull);
+      });
     });
 
     group('equality', () {

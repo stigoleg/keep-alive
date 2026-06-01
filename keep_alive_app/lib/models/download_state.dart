@@ -22,24 +22,28 @@ class DownloadState {
     double? progress,
     String? installedVersion,
     String? latestVersion,
-    String? errorMessage,
+    Object? errorMessage = _keepErrorMessage,
   }) {
     return DownloadState(
       status: status ?? this.status,
       progress: progress ?? this.progress,
       installedVersion: installedVersion ?? this.installedVersion,
       latestVersion: latestVersion ?? this.latestVersion,
-      errorMessage: errorMessage ?? this.errorMessage,
+      errorMessage: identical(errorMessage, _keepErrorMessage)
+          ? this.errorMessage
+          : errorMessage as String?,
     );
   }
 
+  static const _keepErrorMessage = Object();
+
   Map<String, dynamic> toJson() => {
-        'status': status.name,
-        'progress': progress,
-        'installedVersion': installedVersion,
-        'latestVersion': latestVersion,
-        'errorMessage': errorMessage,
-      };
+    'status': status.name,
+    'progress': progress,
+    'installedVersion': installedVersion,
+    'latestVersion': latestVersion,
+    'errorMessage': errorMessage,
+  };
 
   factory DownloadState.fromJson(Map<String, dynamic> json) {
     return DownloadState(

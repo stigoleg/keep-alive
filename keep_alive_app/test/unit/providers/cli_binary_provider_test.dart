@@ -41,5 +41,36 @@ void main() {
       expect(state.status, DownloadStatus.error);
       expect(state.errorMessage, isNotNull);
     });
+
+    test('clearError restores installed state when a version is known', () {
+      final notifier = container.read(cliBinaryProvider.notifier);
+      notifier.state = const DownloadState(
+        status: DownloadStatus.error,
+        installedVersion: 'v1.0.0',
+        latestVersion: 'v1.0.1',
+        errorMessage: 'failed',
+      );
+
+      notifier.clearError();
+
+      final state = container.read(cliBinaryProvider);
+      expect(state.status, DownloadStatus.installed);
+      expect(state.errorMessage, isNull);
+      expect(state.installedVersion, 'v1.0.0');
+    });
+
+    test('clearError restores notInstalled state without a version', () {
+      final notifier = container.read(cliBinaryProvider.notifier);
+      notifier.state = const DownloadState(
+        status: DownloadStatus.error,
+        errorMessage: 'failed',
+      );
+
+      notifier.clearError();
+
+      final state = container.read(cliBinaryProvider);
+      expect(state.status, DownloadStatus.notInstalled);
+      expect(state.errorMessage, isNull);
+    });
   });
 }

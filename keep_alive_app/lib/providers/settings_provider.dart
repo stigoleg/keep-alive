@@ -32,12 +32,12 @@ class AppSettingsState {
   });
 
   CliFlags toCliFlags() => CliFlags(
-        durationMinutes: durationMinutes,
-        clockTime: clockTime,
-        batteryThreshold: batteryThresholdEnabled ? batteryThreshold : null,
-        simulateActivity: simulateActivity,
-        enableLogging: enableLogging,
-      );
+    durationMinutes: durationMinutes,
+    clockTime: clockTime,
+    batteryThreshold: batteryThresholdEnabled ? batteryThreshold : null,
+    simulateActivity: simulateActivity,
+    enableLogging: enableLogging,
+  );
 
   AppSettingsState copyWith({
     bool? keepAwake,
@@ -155,7 +155,7 @@ class AppSettingsNotifier extends Notifier<AppSettingsState> {
 
   Future<void> restoreFromDisk() async {
     state = AppSettingsState(
-      keepAwake: await _repository.getKeepAwake(),
+      keepAwake: false,
       simulateActivity: await _repository.getSimulateActivity(),
       enableLogging: await _repository.getEnableLogging(),
       batteryThreshold: await _repository.getBatteryThreshold(),
@@ -227,5 +227,5 @@ class AppSettingsNotifier extends Notifier<AppSettingsState> {
 
 final appSettingsProvider =
     NotifierProvider<AppSettingsNotifier, AppSettingsState>(
-  AppSettingsNotifier.new,
-);
+      AppSettingsNotifier.new,
+    );

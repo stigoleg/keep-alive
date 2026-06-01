@@ -48,10 +48,7 @@ void main() {
 
     test('copyWith updates fields', () {
       const original = AppSettingsState();
-      final updated = original.copyWith(
-        keepAwake: true,
-        batteryThreshold: 50,
-      );
+      final updated = original.copyWith(keepAwake: true, batteryThreshold: 50);
       expect(updated.keepAwake, isTrue);
       expect(updated.batteryThreshold, 50);
       expect(updated.simulateActivity, isFalse);
@@ -88,10 +85,7 @@ void main() {
     });
 
     test('toString contains field values', () {
-      const state = AppSettingsState(
-        keepAwake: true,
-        batteryThreshold: 20,
-      );
+      const state = AppSettingsState(keepAwake: true, batteryThreshold: 20);
       final str = state.toString();
       expect(str, contains('keepAwake: true'));
       expect(str, contains('batteryThreshold: 20'));
@@ -125,7 +119,9 @@ void main() {
     });
 
     test('setSimulateActivity updates state', () async {
-      await container.read(appSettingsProvider.notifier).setSimulateActivity(true);
+      await container
+          .read(appSettingsProvider.notifier)
+          .setSimulateActivity(true);
       expect(container.read(appSettingsProvider).simulateActivity, isTrue);
     });
 
@@ -135,18 +131,26 @@ void main() {
     });
 
     test('setBatteryThreshold updates state with value', () async {
-      await container.read(appSettingsProvider.notifier).setBatteryThreshold(30);
+      await container
+          .read(appSettingsProvider.notifier)
+          .setBatteryThreshold(30);
       expect(container.read(appSettingsProvider).batteryThreshold, 30);
     });
 
     test('setBatteryThreshold updates state with null', () async {
-      await container.read(appSettingsProvider.notifier).setBatteryThreshold(50);
-      await container.read(appSettingsProvider.notifier).setBatteryThreshold(null);
+      await container
+          .read(appSettingsProvider.notifier)
+          .setBatteryThreshold(50);
+      await container
+          .read(appSettingsProvider.notifier)
+          .setBatteryThreshold(null);
       expect(container.read(appSettingsProvider).batteryThreshold, isNull);
     });
 
     test('setDurationMinutes updates state', () async {
-      await container.read(appSettingsProvider.notifier).setDurationMinutes(120);
+      await container
+          .read(appSettingsProvider.notifier)
+          .setDurationMinutes(120);
       expect(container.read(appSettingsProvider).durationMinutes, 120);
     });
 
@@ -169,7 +173,9 @@ void main() {
     });
 
     test('setStartMinimized updates state', () async {
-      await container.read(appSettingsProvider.notifier).setStartMinimized(true);
+      await container
+          .read(appSettingsProvider.notifier)
+          .setStartMinimized(true);
       expect(container.read(appSettingsProvider).startMinimized, isTrue);
     });
 
@@ -187,7 +193,8 @@ void main() {
       await container2.read(appSettingsProvider.notifier).restoreFromDisk();
       final after = container2.read(appSettingsProvider);
 
-      expect(after.keepAwake, before.keepAwake);
+      expect(before.keepAwake, isTrue);
+      expect(after.keepAwake, isFalse);
       expect(after.batteryThreshold, before.batteryThreshold);
       expect(after.durationMinutes, before.durationMinutes);
       expect(after.simulateActivity, before.simulateActivity);
@@ -207,10 +214,26 @@ void main() {
       await container2.read(appSettingsProvider.notifier).restoreFromDisk();
       final state = container2.read(appSettingsProvider);
 
-      expect(state.keepAwake, isTrue);
+      expect(state.keepAwake, isFalse);
       expect(state.enableLogging, isTrue);
       expect(state.batteryThreshold, 40);
       expect(state.durationMinutes, 30);
+
+      container2.dispose();
+    });
+
+    test('restoreFromDisk always starts with keepAwake off', () async {
+      final notifier = container.read(appSettingsProvider.notifier);
+      await notifier.setKeepAwake(true);
+      await notifier.setEnableLogging(true);
+      await notifier.saveToDisk();
+
+      final container2 = ProviderContainer();
+      await container2.read(appSettingsProvider.notifier).restoreFromDisk();
+      final state = container2.read(appSettingsProvider);
+
+      expect(state.keepAwake, isFalse);
+      expect(state.enableLogging, isTrue);
 
       container2.dispose();
     });
@@ -222,8 +245,12 @@ void main() {
       });
 
       await container.read(appSettingsProvider.notifier).setKeepAwake(true);
-      await container.read(appSettingsProvider.notifier).setBatteryThreshold(60);
-      await container.read(appSettingsProvider.notifier).setSimulateActivity(true);
+      await container
+          .read(appSettingsProvider.notifier)
+          .setBatteryThreshold(60);
+      await container
+          .read(appSettingsProvider.notifier)
+          .setSimulateActivity(true);
 
       expect(states.length, 3);
       expect(states[0].keepAwake, isTrue);

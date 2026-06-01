@@ -9,7 +9,6 @@ import 'package:window_manager/window_manager.dart';
 import 'core/constants.dart';
 import 'core/logger.dart';
 import 'models/cli_process_state.dart';
-import 'models/download_state.dart';
 import 'platform/platform_interface.dart';
 import 'providers/cli_binary_provider.dart';
 import 'providers/process_provider.dart';
@@ -201,23 +200,6 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
       _syncMenuBarCountdown();
     });
 
-    final settings = ref.read(appSettingsProvider);
-    if (settings.autoStart && settings.keepAwake) {
-      AppLogger.info('Auto-starting keep-alive session from previous state');
-      final flags = settings.toCliFlags();
-      try {
-        final binaryReady =
-            ref.read(cliBinaryProvider).status == DownloadStatus.installed;
-        if (binaryReady) {
-          unawaited(ref.read(cliProcessProvider.notifier).startSession(flags));
-        } else {
-          AppLogger.warning('Skipping auto-start: CLI binary not installed');
-        }
-      } catch (e) {
-        AppLogger.error('Failed to auto-start session', e);
-      }
-    }
-
     _syncMenuBarCountdown();
 
     AppLogger.info('App initialization complete');
@@ -335,13 +317,16 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
       await ref
           .read(cliProcessProvider.notifier)
           .stopSession()
-          .timeout(const Duration(
-            seconds: AppConstants.quitGracefulTimeoutSeconds,
-          ));
+          .timeout(
+            const Duration(seconds: AppConstants.quitGracefulTimeoutSeconds),
+          );
       stoppedCleanly = true;
       AppLogger.info('CLI process stopped');
     } catch (e) {
-      AppLogger.error('Error stopping CLI on quit (falling through to force-kill)', e);
+      AppLogger.error(
+        'Error stopping CLI on quit (falling through to force-kill)',
+        e,
+      );
     }
 
     if (!stoppedCleanly) {

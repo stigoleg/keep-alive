@@ -20,8 +20,7 @@ final cliDownloadServiceProvider = Provider<CliDownloadService>((ref) {
   );
 });
 
-final cliBinaryProvider =
-    NotifierProvider<CliBinaryNotifier, DownloadState>(
+final cliBinaryProvider = NotifierProvider<CliBinaryNotifier, DownloadState>(
   CliBinaryNotifier.new,
 );
 
@@ -102,7 +101,7 @@ class CliBinaryNotifier extends Notifier<DownloadState> {
         errorMessage: null,
       );
 
-      await _downloadService.downloadLatest(
+      await _downloadService.updateLatest(
         onProgress: (progress) {
           state = state.copyWith(progress: progress);
         },
@@ -135,6 +134,18 @@ class CliBinaryNotifier extends Notifier<DownloadState> {
     } finally {
       _readyCompleter = null;
     }
+  }
+
+  void clearError() {
+    if (state.status != DownloadStatus.error) return;
+    final restoredStatus = state.installedVersion != null
+        ? DownloadStatus.installed
+        : DownloadStatus.notInstalled;
+    state = state.copyWith(
+      status: restoredStatus,
+      progress: 0.0,
+      errorMessage: null,
+    );
   }
 
   Future<bool> checkForUpdate() async {
