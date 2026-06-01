@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -235,75 +236,125 @@ class _ClockPicker extends StatelessWidget {
     final theme = Theme.of(context);
     final use24h = MediaQuery.of(context).alwaysUse24HourFormat;
 
+    final quickPicks = _quickPickTimes(now);
+
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: true,
       builder: (dialogContext) {
-        return Dialog(
-          backgroundColor: theme.colorScheme.surface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-          ),
-          child: SizedBox(
-            width: 280,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(
-                    top: AppTheme.spacing12,
-                    bottom: AppTheme.spacing4,
-                  ),
-                  child: Text('Until time',
-                      style: theme.textTheme.titleMedium),
-                ),
-                SizedBox(
-                  height: 180,
-                  child: CupertinoTheme(
-                    data: CupertinoThemeData(
-                      brightness: theme.brightness,
-                      textTheme: CupertinoTextThemeData(
-                        dateTimePickerTextStyle: TextStyle(
-                          fontSize: 20,
-                          color: theme.colorScheme.onSurface,
+        return StatefulBuilder(
+          builder: (_, setDialogState) {
+            return Dialog(
+              backgroundColor: theme.colorScheme.surface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+              ),
+              child: SizedBox(
+                width: 300,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(
+                        top: AppTheme.spacing12,
+                        bottom: AppTheme.spacing4,
+                      ),
+                      child: Text('Until time',
+                          style: theme.textTheme.titleMedium),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppTheme.spacing12,
+                      ),
+                      child: Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: AppTheme.spacing6,
+                        runSpacing: AppTheme.spacing6,
+                        children: [
+                          for (final pick in quickPicks)
+                            _QuickPickChip(
+                              label: pick.label,
+                              onTap: () {
+                                setDialogState(() {
+                                  selected = pick.time;
+                                });
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: AppTheme.spacing4),
+                    // The Cupertino picker delegates scrolling to
+                    // ListWheelScrollView, which on Flutter desktop only
+                    // accepts touch/trackpad as drag devices by default.
+                    // We add mouse so the user can click-and-drag the wheel
+                    // like on iOS, not just tap step-by-step.
+                    SizedBox(
+                      height: 220,
+                      child: ScrollConfiguration(
+                        behavior: ScrollConfiguration.of(dialogContext)
+                            .copyWith(
+                          dragDevices: const {
+                            PointerDeviceKind.touch,
+                            PointerDeviceKind.mouse,
+                            PointerDeviceKind.trackpad,
+                            PointerDeviceKind.stylus,
+                            PointerDeviceKind.invertedStylus,
+                          },
+                          physics: const BouncingScrollPhysics(),
+                        ),
+                        child: CupertinoTheme(
+                          data: CupertinoThemeData(
+                            brightness: theme.brightness,
+                            textTheme: CupertinoTextThemeData(
+                              dateTimePickerTextStyle: TextStyle(
+                                fontSize: 22,
+                                color: theme.colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
+                          child: CupertinoDatePicker(
+                            key: ValueKey(
+                              'time-${selected.hour}-${selected.minute}',
+                            ),
+                            mode: CupertinoDatePickerMode.time,
+                            use24hFormat: use24h,
+                            minuteInterval: 1,
+                            initialDateTime: selected,
+                            onDateTimeChanged: (dt) => selected = dt,
+                          ),
                         ),
                       ),
                     ),
-                    child: CupertinoDatePicker(
-                      mode: CupertinoDatePickerMode.time,
-                      use24hFormat: use24h,
-                      initialDateTime: initial,
-                      onDateTimeChanged: (dt) => selected = dt,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppTheme.spacing8,
+                        AppTheme.spacing4,
+                        AppTheme.spacing8,
+                        AppTheme.spacing8,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () =>
+                                Navigator.of(dialogContext).pop(false),
+                            child: const Text('Cancel'),
+                          ),
+                          const SizedBox(width: AppTheme.spacing4),
+                          FilledButton(
+                            onPressed: () =>
+                                Navigator.of(dialogContext).pop(true),
+                            child: const Text('Done'),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppTheme.spacing8,
-                    AppTheme.spacing4,
-                    AppTheme.spacing8,
-                    AppTheme.spacing8,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () =>
-                            Navigator.of(dialogContext).pop(false),
-                        child: const Text('Cancel'),
-                      ),
-                      const SizedBox(width: AppTheme.spacing4),
-                      FilledButton(
-                        onPressed: () =>
-                            Navigator.of(dialogContext).pop(true),
-                        child: const Text('Done'),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
@@ -323,5 +374,71 @@ class _ClockPicker extends StatelessWidget {
     }
 
     onChanged(date);
+  }
+
+  /// Common end-time shortcuts. Times within the same day are shown as a
+  /// clock label; relative offsets (+30m, +1h, +2h) cover the cases where
+  /// the user doesn't care about a specific clock value.
+  List<_QuickPick> _quickPickTimes(DateTime now) {
+    DateTime atHour(int hour) =>
+        DateTime(now.year, now.month, now.day, hour);
+    final picks = <_QuickPick>[
+      _QuickPick('+30m', now.add(const Duration(minutes: 30))),
+      _QuickPick('+1h', now.add(const Duration(hours: 1))),
+      _QuickPick('+2h', now.add(const Duration(hours: 2))),
+    ];
+    for (final hour in const [12, 17, 18, 22]) {
+      final candidate = atHour(hour);
+      if (candidate.isAfter(now)) {
+        picks.add(_QuickPick(_formatHour(hour), candidate));
+      }
+    }
+    return picks;
+  }
+
+  String _formatHour(int hour) {
+    if (hour == 0) return '12 AM';
+    if (hour == 12) return '12 PM';
+    if (hour < 12) return '$hour AM';
+    return '${hour - 12} PM';
+  }
+}
+
+class _QuickPick {
+  final String label;
+  final DateTime time;
+  const _QuickPick(this.label, this.time);
+}
+
+class _QuickPickChip extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _QuickPickChip({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.spacing10,
+            vertical: AppTheme.spacing4,
+          ),
+          child: Text(
+            label,
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: theme.colorScheme.onSurface,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
