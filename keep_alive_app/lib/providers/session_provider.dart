@@ -13,6 +13,7 @@ import 'settings_provider.dart';
 /// Coalescing window for rapid setting-driven CLI restarts (e.g. battery slider
 /// drag fires 60 Hz). Picked to feel instant while collapsing into one restart.
 const Duration _restartCoalesceWindow = Duration(milliseconds: 350);
+const int _batteryThresholdSafetyMargin = 2;
 
 final sessionProvider = Provider<SessionOrchestrator>((ref) {
   final orchestrator = SessionOrchestrator(ref);
@@ -175,14 +176,20 @@ class SessionOrchestrator {
     final settings = _ref.read(appSettingsProvider);
     if (!settings.batteryThresholdEnabled) return settings;
 
-    final currentBattery = _ref
-        .read(batteryStateProvider)
-        .valueOrNull
-        ?.percentage;
-    if (currentBattery == null) return settings;
-
-    final maxThreshold = currentBattery.floor() - 1;
+    final batteryInfo =
+        _ref.read(batteryStateProvider).valueOrNull ??
+        await _ref.read(batteryMonitorProvider).getCurrentBattery();
     final notifier = _ref.read(appSettingsProvider.notifier);
+    if (!batteryInfo.isPresent) {
+      AppLogger.warning(
+        'Disabling battery threshold because battery status is unavailable',
+      );
+      await notifier.setBatteryThresholdEnabled(false);
+      return _ref.read(appSettingsProvider);
+    }
+
+    final maxThreshold =
+        batteryInfo.percentage.floor() - _batteryThresholdSafetyMargin;
     if (maxThreshold < 1) {
       AppLogger.warning(
         'Disabling battery threshold because current battery is too low',

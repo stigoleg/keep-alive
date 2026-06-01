@@ -3,10 +3,13 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keep_alive_app/core/exceptions.dart';
+import 'package:keep_alive_app/models/battery_info.dart';
 import 'package:keep_alive_app/models/cli_flags.dart';
+import 'package:keep_alive_app/providers/battery_provider.dart';
 import 'package:keep_alive_app/providers/process_provider.dart';
 import 'package:keep_alive_app/providers/session_provider.dart';
 import 'package:keep_alive_app/providers/settings_provider.dart';
+import 'package:keep_alive_app/services/battery_monitor.dart';
 import 'package:keep_alive_app/services/process_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -58,6 +61,21 @@ class _RecordingProcessManager extends ProcessManager {
   }
 }
 
+class _FakeBatteryMonitor extends BatteryMonitor {
+  _FakeBatteryMonitor(this.info);
+
+  BatteryInfo info;
+
+  @override
+  Future<BatteryInfo> getCurrentBattery() async => info;
+
+  @override
+  void startPolling() {}
+
+  @override
+  void stopPolling() {}
+}
+
 class _Call {
   final String method;
   final CliFlags? flags;
@@ -80,6 +98,9 @@ void main() {
       container = ProviderContainer(
         overrides: [
           processManagerProvider.overrideWithValue(processManager),
+          batteryMonitorProvider.overrideWithValue(
+            _FakeBatteryMonitor(const BatteryInfo(percentage: 80.0)),
+          ),
         ],
       );
     });
@@ -202,7 +223,9 @@ void main() {
         await orchestrator.toggleKeepAwake(true);
         processManager.calls.clear();
 
-        await container.read(appSettingsProvider.notifier).setBatteryThreshold(30);
+        await container
+            .read(appSettingsProvider.notifier)
+            .setBatteryThreshold(30);
         await orchestrator.applySettingsAndRestart();
 
         expect(processManager.calls.length, 2);
@@ -239,8 +262,12 @@ void main() {
         }
         await Future.wait(futures);
 
-        final stops = processManager.calls.where((c) => c.method == 'stop').length;
-        final starts = processManager.calls.where((c) => c.method == 'start').length;
+        final stops = processManager.calls
+            .where((c) => c.method == 'stop')
+            .length;
+        final starts = processManager.calls
+            .where((c) => c.method == 'start')
+            .length;
         expect(stops, 1, reason: 'debounce should collapse to one stop');
         expect(starts, 1, reason: 'debounce should collapse to one start');
       });
@@ -260,6 +287,67 @@ void main() {
         expect(processManager.calls.length, 2);
         expect(processManager.calls[0].method, 'stop');
         expect(processManager.calls[1].method, 'start');
+      });
+
+      test('clamps stale battery threshold before starting', () async {
+        final monitor = _FakeBatteryMonitor(
+          const BatteryInfo(percentage: 56.0),
+        );
+        final localContainer = ProviderContainer(
+          overrides: [
+            processManagerProvider.overrideWithValue(processManager),
+            batteryMonitorProvider.overrideWithValue(monitor),
+          ],
+        );
+        addTearDown(localContainer.dispose);
+
+        final orchestrator = localContainer.read(sessionProvider);
+        await localContainer
+            .read(appSettingsProvider.notifier)
+            .setKeepAwake(true);
+        await localContainer
+            .read(appSettingsProvider.notifier)
+            .setBatteryThresholdEnabled(true);
+        await localContainer
+            .read(appSettingsProvider.notifier)
+            .setBatteryThreshold(55);
+
+        await orchestrator.applySettingsAndRestart();
+
+        expect(processManager.calls.single.flags?.batteryThreshold, 54);
+        expect(localContainer.read(appSettingsProvider).batteryThreshold, 54);
+      });
+
+      test('disables battery threshold when battery is unavailable', () async {
+        final monitor = _FakeBatteryMonitor(
+          const BatteryInfo(percentage: 100.0, isPresent: false),
+        );
+        final localContainer = ProviderContainer(
+          overrides: [
+            processManagerProvider.overrideWithValue(processManager),
+            batteryMonitorProvider.overrideWithValue(monitor),
+          ],
+        );
+        addTearDown(localContainer.dispose);
+
+        final orchestrator = localContainer.read(sessionProvider);
+        await localContainer
+            .read(appSettingsProvider.notifier)
+            .setKeepAwake(true);
+        await localContainer
+            .read(appSettingsProvider.notifier)
+            .setBatteryThresholdEnabled(true);
+        await localContainer
+            .read(appSettingsProvider.notifier)
+            .setBatteryThreshold(55);
+
+        await orchestrator.applySettingsAndRestart();
+
+        expect(processManager.calls.single.flags?.batteryThreshold, isNull);
+        expect(
+          localContainer.read(appSettingsProvider).batteryThresholdEnabled,
+          isFalse,
+        );
       });
     });
   });
