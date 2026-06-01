@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keep_alive_app/core/exceptions.dart';
-import 'package:keep_alive_app/models/github_release.dart';
 import 'package:keep_alive_app/services/github_api_service.dart';
 
 import 'test_utils.dart';
@@ -35,63 +34,30 @@ void main() {
       });
     });
 
-    group('findPlatformAssetUrl', () {
-      List<ReleaseAsset> allPlatformAssets() => const [
-            ReleaseAsset(
-              name: 'keep-alive_Darwin_arm64.tar.gz',
-              downloadUrl: 'https://example.com/keep-alive_Darwin_arm64.tar.gz',
-              size: 100,
-            ),
-            ReleaseAsset(
-              name: 'keep-alive_Darwin_x86_64.tar.gz',
-              downloadUrl: 'https://example.com/keep-alive_Darwin_x86_64.tar.gz',
-              size: 100,
-            ),
-            ReleaseAsset(
-              name: 'keep-alive_Linux_arm64.tar.gz',
-              downloadUrl: 'https://example.com/keep-alive_Linux_arm64.tar.gz',
-              size: 100,
-            ),
-            ReleaseAsset(
-              name: 'keep-alive_Linux_x86_64.tar.gz',
-              downloadUrl: 'https://example.com/keep-alive_Linux_x86_64.tar.gz',
-              size: 100,
-            ),
-            ReleaseAsset(
-              name: 'keep-alive_Windows_x86_64.zip',
-              downloadUrl: 'https://example.com/keep-alive_Windows_x86_64.zip',
-              size: 100,
-            ),
-          ];
-
-      test('finds matching asset in release', () {
-        final dio = Dio()..httpClientAdapter = MockHttpAdapter((_) => responseBodyFromJson('{}'));
+    group('latestDownloadUrl', () {
+      test('builds the GitHub /releases/latest/download URL for an asset', () {
+        final dio = Dio()
+          ..httpClientAdapter =
+              MockHttpAdapter((_) => responseBodyFromJson('{}'));
         final service = GitHubApiService(dio: dio);
-        final release = GitHubRelease(
-          tagName: 'v1.5.3',
-          assets: allPlatformAssets(),
+        final url =
+            service.latestDownloadUrl('keep-alive_Darwin_arm64.tar.gz');
+        expect(
+          url,
+          'https://github.com/stigoleg/keep-alive/releases/latest/download/'
+          'keep-alive_Darwin_arm64.tar.gz',
         );
-        final url = service.findPlatformAssetUrl(release);
-        if (url != null) {
-          expect(url, contains('example.com'));
-        }
       });
 
-      test('returns null when no matching asset', () {
-        final dio = Dio()..httpClientAdapter = MockHttpAdapter((_) => responseBodyFromJson('{}'));
+      test('latestChecksumsUrl points at the same prefix', () {
+        final dio = Dio()
+          ..httpClientAdapter =
+              MockHttpAdapter((_) => responseBodyFromJson('{}'));
         final service = GitHubApiService(dio: dio);
-        const release = GitHubRelease(
-          tagName: 'v1.0.0',
-          assets: [
-            ReleaseAsset(
-              name: 'linux-amd64.deb',
-              downloadUrl: 'https://example.com/linux-amd64.deb',
-              size: 1000,
-            ),
-          ],
+        expect(
+          service.latestChecksumsUrl(),
+          endsWith('/releases/latest/download/checksums.txt'),
         );
-        final url = service.findPlatformAssetUrl(release);
-        expect(url, isNull);
       });
     });
 

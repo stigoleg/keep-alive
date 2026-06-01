@@ -62,28 +62,13 @@ class GitHubApiService {
     return '${AppConstants.cliReleaseBaseName}_${osName}_$arch.$ext';
   }
 
-  String? findPlatformAssetUrl(GitHubRelease release) {
-    final assetName = getAssetNameForCurrentPlatform();
-    for (final asset in release.assets) {
-      if (asset.name == assetName) {
-        return asset.downloadUrl;
-      }
-    }
-    return null;
-  }
+  /// Returns the stable redirect URL GitHub serves for the most-recently
+  /// published asset whose name matches [assetName]. Hitting this URL avoids
+  /// embedding a release tag in either the GUI or the on-disk cache.
+  String latestDownloadUrl(String assetName) =>
+      '${AppConstants.releasesLatestDownloadUrl}/$assetName';
 
-  /// Locates the GoReleaser-published `*_checksums.txt` (case-insensitive) so
-  /// the downloader can verify the SHA256 of the platform archive before
-  /// extracting it. Returns null when no checksum asset is present so the
-  /// caller can decide to fail-closed or proceed (we proceed with a warning
-  /// today — see [CliDownloadService]).
-  String? findChecksumAssetUrl(GitHubRelease release) {
-    for (final asset in release.assets) {
-      final lower = asset.name.toLowerCase();
-      if (lower.endsWith('checksums.txt') || lower == 'sha256sums.txt') {
-        return asset.downloadUrl;
-      }
-    }
-    return null;
-  }
+  /// Returns the redirect URL for the latest release's checksum file.
+  String latestChecksumsUrl() =>
+      '${AppConstants.releasesLatestDownloadUrl}/${AppConstants.cliChecksumsFileName}';
 }

@@ -199,33 +199,28 @@ void main() {
       expect(await service.binaryPath, bundledPath);
     });
 
-    test('rejects stale PATH binary below minimum version', () async {
+    test('rejects PATH binary that fails --version verification', () async {
       if (Platform.isWindows) return;
       final service = buildService();
 
-      // Stale binary lives on PATH below the required minimum. The adopt
-      // step must refuse it so a downgraded Homebrew install cannot mask the
-      // fixed bundled CLI.
-      const staleVersion = 'Keep-Alive Version: 1.5.2';
-      final stalePath = '${tempDir.path}/stale_keepalive';
-      await _createMockBinary(stalePath, '$staleVersion\n');
+      // A "binary" that exits non-zero on --version must not be adopted —
+      // verification (not a hardcoded minimum) is the only adoption gate.
+      final brokenPath = '${tempDir.path}/broken_keepalive';
+      await File(brokenPath).writeAsString('#!/bin/sh\nexit 1\n');
+      await Process.run('chmod', ['+x', brokenPath]);
 
-      final ok = await service.tryAdoptForTest(stalePath, requireMin: true);
-      expect(
-        ok,
-        isFalse,
-        reason: 'CLI below ${AppConstants.minimumCliVersion} must be rejected',
-      );
+      final ok = await service.tryAdoptForTest(brokenPath);
+      expect(ok, isFalse, reason: 'Unverifiable CLI must be rejected');
       expect(service.isUsingSystemBinary, isFalse);
     });
 
-    test('accepts PATH binary that meets minimum version', () async {
+    test('accepts any PATH binary that responds to --version', () async {
       if (Platform.isWindows) return;
       final service = buildService();
       final goodPath = '${tempDir.path}/good_keepalive';
       await _createMockBinary(goodPath, 'Keep-Alive Version: 1.5.4\n');
 
-      final ok = await service.tryAdoptForTest(goodPath, requireMin: true);
+      final ok = await service.tryAdoptForTest(goodPath);
       expect(ok, isTrue);
       expect(service.isUsingSystemBinary, isTrue);
       expect(await service.binaryPath, goodPath);
@@ -243,44 +238,77 @@ void main() {
       if (tempDir.existsSync()) await tempDir.delete(recursive: true);
     });
 
-    test('installs binary from downloaded archive', () async {
+    test('installs binary from /releases/latest/download/ redirect',
+        () async {
       final apiDio = Dio();
       final assetName = GitHubApiService(
         dio: apiDio,
       ).getAssetNameForCurrentPlatform();
       final archiveBytes = _archiveWithBinary(assetName);
-      final releaseJson = jsonEncode({
-        'tag_name': 'v9.9.9',
-        'assets': [
-          {
-            'name': assetName,
-            'browser_download_url': 'https://example.com/$assetName',
-            'size': archiveBytes.length,
-          },
-        ],
-      });
       final dio = Dio()
         ..httpClientAdapter = MockHttpAdapter((options) {
           final uri = options.uri.toString();
-          if (uri.endsWith('/latest')) {
-            return responseBodyFromJson(releaseJson);
+          // Specific-suffix matches first so the shared /latest/download/
+          // prefix does not bleed across handlers.
+          if (uri.endsWith('checksums.txt')) {
+            return ResponseBody.fromString('', 404);
           }
-          if (uri == 'https://example.com/$assetName') {
+          if (uri.endsWith(assetName)) {
+            expect(
+              uri,
+              contains('/releases/latest/download/'),
+              reason: 'CLI must download via the stable redirect prefix',
+            );
             return ResponseBody.fromBytes(archiveBytes, 200);
           }
           return ResponseBody.fromBytes(utf8.encode('not found'), 404);
         });
+
+      // Stub anything that would let updateLatest discover Homebrew or
+      // Scoop on the host machine, so the test exercises only the direct
+      // /releases/latest/download/ path. We must also intercept calls that
+      // come from the hardcoded `/opt/homebrew/bin/brew` fallback path
+      // (the lookup tries File.existsSync() on those, which we cannot
+      // mock — so instead we stub the subsequent invocations).
+      Future<ProcessResult> downloadOnlyRunner(
+        String executable,
+        List<String> arguments, {
+        bool runInShell = false,
+      }) async {
+        if ((executable == 'which' || executable == 'where') &&
+            arguments.contains('brew')) {
+          return ProcessResult(0, 1, '', '');
+        }
+        if (executable == 'powershell') {
+          return ProcessResult(0, 1, '', '');
+        }
+        final isBrew =
+            executable.endsWith('/brew') || executable == 'brew';
+        if (isBrew) {
+          // Pretend keepalive is not installed via Homebrew so the update
+          // flow keeps walking and lands on the direct download path.
+          return ProcessResult(0, 1, '', '');
+        }
+        return _testProcessRunner(
+          executable,
+          arguments,
+          runInShell: runInShell,
+        );
+      }
+
       final service = CliDownloadService(
         apiService: GitHubApiService(dio: dio),
         dio: dio,
         appSupportDir: tempDir.path,
-        processRunner: _testProcessRunner,
+        processRunner: downloadOnlyRunner,
       );
 
       await service.updateLatest();
 
       final binaryPath = await service.binaryPath;
       expect(File(binaryPath).existsSync(), isTrue);
+      // Version file is now sourced from the binary's --version output, not
+      // a GitHub tag. The mock binary echoes "Keep-Alive Version: 9.9.9".
       expect(await service.getInstalledVersion(), 'v9.9.9');
       expect(service.installSource, CliInstallSource.appManaged);
     });
@@ -504,7 +532,11 @@ Future<ProcessResult> _testProcessRunner(
   List<String> arguments, {
   bool runInShell = false,
 }) async {
-  if (executable == 'chmod') {
+  // Real exec for chmod (used to mark the extracted binary executable) and
+  // for the binary itself (used by _parseVersionFromBinary). Everything
+  // else stays mocked so unrelated `which`/`brew` lookups don't accidentally
+  // hit the host system.
+  if (executable == 'chmod' || File(executable).existsSync()) {
     return Process.run(executable, arguments, runInShell: runInShell);
   }
   return ProcessResult(0, 1, '', 'unexpected command');

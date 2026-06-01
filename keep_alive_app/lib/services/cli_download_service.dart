@@ -38,7 +38,6 @@ class CliDownloadService {
 
   String? _binaryPath;
   String? _versionFilePath;
-  String? _urlCachePath;
   bool _usingSystemBinary = false;
   String? _systemBinaryPath;
   CliInstallSource? _installSource;
@@ -94,13 +93,6 @@ class CliDownloadService {
     final dir = await _appSupportDir;
     _versionFilePath = '${dir.path}/.version';
     return _versionFilePath!;
-  }
-
-  Future<String> get _cachedUrlFilePath async {
-    if (_urlCachePath != null) return _urlCachePath!;
-    final dir = await _appSupportDir;
-    _urlCachePath = '${dir.path}/${AppConstants.downloadUrlCacheFile}';
-    return _urlCachePath!;
   }
 
   Future<bool> isBinaryInstalled() async {
@@ -315,9 +307,7 @@ class CliDownloadService {
     return _findBinaryInPath();
   }
 
-  Future<bool> _adoptExistingHomebrewInstall({
-    bool requireMinVersion = true,
-  }) async {
+  Future<bool> _adoptExistingHomebrewInstall() async {
     final brew = await _findHomebrewExecutable();
     if (brew == null) {
       AppLogger.debug('Homebrew not found');
@@ -332,7 +322,6 @@ class CliDownloadService {
         binaryPath,
         'Homebrew',
         installSource: CliInstallSource.homebrew,
-        requireMinVersion: requireMinVersion,
       );
     } catch (e) {
       AppLogger.warning('Homebrew detection failed: $e');
@@ -386,7 +375,6 @@ class CliDownloadService {
               binaryPath,
               'Homebrew',
               installSource: CliInstallSource.homebrew,
-              requireMinVersion: true,
             )) {
           return true;
         }
@@ -443,7 +431,6 @@ class CliDownloadService {
       binaryPath,
       'Homebrew',
       installSource: CliInstallSource.homebrew,
-      requireMinVersion: true,
     )) {
       throw const DownloadException(
         'Homebrew updated but keepalive was not usable',
@@ -482,7 +469,6 @@ class CliDownloadService {
               binaryPath,
               'Scoop',
               installSource: CliInstallSource.scoop,
-              requireMinVersion: true,
             )) {
           return true;
         }
@@ -523,7 +509,6 @@ class CliDownloadService {
               binaryPath,
               'Scoop',
               installSource: CliInstallSource.scoop,
-              requireMinVersion: true,
             )) {
           return true;
         }
@@ -619,7 +604,6 @@ class CliDownloadService {
       binaryPath,
       'Scoop',
       installSource: CliInstallSource.scoop,
-      requireMinVersion: true,
     )) {
       throw const DownloadException(
         'Scoop updated but keepalive was not usable',
@@ -660,7 +644,7 @@ class CliDownloadService {
     if (installed) {
       final managedPath = await binaryPath;
       final managedVersion = await getInstalledVersion();
-      if (await _verifyBinaryAt(managedPath) && _meetsMinimum(managedVersion)) {
+      if (await _verifyBinaryAt(managedPath)) {
         _installSource = CliInstallSource.appManaged;
         AppLogger.info(
           'Using app-managed CLI: ${AppLogger.scrubPath(managedPath)} ($managedVersion)',
@@ -669,7 +653,7 @@ class CliDownloadService {
       }
       AppLogger.warning(
         'App-managed CLI at ${AppLogger.scrubPath(managedPath)} '
-        'failed verification or below minimum ${AppConstants.minimumCliVersion}, re-downloading',
+        'failed verification, re-downloading',
       );
     }
 
@@ -689,7 +673,6 @@ class CliDownloadService {
             scoopBinary,
             'Scoop',
             installSource: CliInstallSource.scoop,
-            requireMinVersion: true,
           )) {
         return;
       }
@@ -703,7 +686,6 @@ class CliDownloadService {
           pathBinary,
           'PATH',
           installSource: CliInstallSource.path,
-          requireMinVersion: true,
         )) {
       return;
     }
@@ -735,13 +717,13 @@ class CliDownloadService {
     }
   }
 
-  /// Verifies [path], parses its version, optionally enforces the minimum
-  /// supported version, and records it as the active system binary on success.
+  /// Verifies [path] and, on success, records it as the active CLI. There
+  /// is no minimum-version check; the GUI trusts whichever source last
+  /// installed the CLI to publish a working build.
   Future<bool> _adoptBinary(
     String path,
     String source, {
     required CliInstallSource installSource,
-    bool requireMinVersion = false,
   }) async {
     final verified = await _verifyBinaryAt(path);
     if (!verified) {
@@ -752,15 +734,6 @@ class CliDownloadService {
     }
 
     final version = await _parseVersionFromBinary(path);
-    if (requireMinVersion && !_meetsMinimum(version)) {
-      AppLogger.warning(
-        'Ignoring $source keepalive at ${AppLogger.scrubPath(path)}: '
-        'version ${version ?? "unknown"} is older than required '
-        '${AppConstants.minimumCliVersion}',
-      );
-      return false;
-    }
-
     _systemBinaryPath = path;
     _usingSystemBinary = true;
     _installSource = installSource;
@@ -769,9 +742,6 @@ class CliDownloadService {
     );
     return true;
   }
-
-  bool _meetsMinimum(String? version) =>
-      VersionUtils.meetsMinimum(version, AppConstants.minimumCliVersion);
 
   /// Returns the version of the currently active CLI binary, looking first
   /// at any adopted system binary (e.g. bundled, Homebrew) and falling back
@@ -808,12 +778,11 @@ class CliDownloadService {
   }
 
   @visibleForTesting
-  Future<bool> tryAdoptForTest(String path, {bool requireMin = false}) =>
+  Future<bool> tryAdoptForTest(String path) =>
       _adoptBinary(
         path,
         'test',
         installSource: CliInstallSource.path,
-        requireMinVersion: requireMin,
       );
 
   Future<bool> _verifyBinaryAt(String path) async {
@@ -856,54 +825,11 @@ class CliDownloadService {
     await _downloadAndInstall(onProgress: onProgress);
   }
 
-  Future<String?> _getCachedDownloadUrl() async {
-    final path = await _cachedUrlFilePath;
-    final file = File(path);
-    if (!file.existsSync()) return null;
-    try {
-      final url = file.readAsStringSync().trim();
-      if (url.isNotEmpty) return url;
-    } catch (_) {}
-    return null;
-  }
-
-  Future<void> _cacheDownloadUrl(String url) async {
-    try {
-      final path = await _cachedUrlFilePath;
-      await File(path).writeAsString(url);
-    } catch (e) {
-      AppLogger.warning('Failed to cache download URL: $e');
-    }
-  }
-
-  Future<String> _resolveAssetUrl() async {
-    try {
-      final release = await _apiService.getLatestRelease();
-      final assetUrl = _apiService.findPlatformAssetUrl(release);
-      if (assetUrl == null) {
-        final assetName = _apiService.getAssetNameForCurrentPlatform();
-        throw DownloadException(
-          'No binary available for current platform ($assetName)',
-        );
-      }
-      await _cacheDownloadUrl(assetUrl);
-      return assetUrl;
-    } on DownloadException {
-      rethrow;
-    } catch (e) {
-      final cached = await _getCachedDownloadUrl();
-      if (cached != null) {
-        AppLogger.warning(
-          'Failed to fetch latest release ($e), using cached download URL',
-        );
-        return cached;
-      }
-      throw DownloadException(
-        'Failed to resolve download URL and no cached URL available: $e',
-        underlying: e,
-      );
-    }
-  }
+  /// Builds the predictable GitHub redirect URL for the platform asset.
+  /// No API call, no on-disk URL cache, no embedded version number — the
+  /// `/releases/latest/download/` path always serves the latest release.
+  String _resolveAssetUrl(String assetName) =>
+      _apiService.latestDownloadUrl(assetName);
 
   Future<void> _downloadWithRetry(
     String url,
@@ -948,8 +874,11 @@ class CliDownloadService {
   Future<void> _downloadAndInstall({
     void Function(double progress)? onProgress,
   }) async {
-    final assetUrl = await _resolveAssetUrl();
     final assetName = _apiService.getAssetNameForCurrentPlatform();
+    final assetUrl = _resolveAssetUrl(assetName);
+
+    // Snapshot the active version so we can refuse a downgrade after extract.
+    final currentVersion = await _currentActiveVersion();
 
     final tempDir = await Directory.systemTemp.createTemp('keepalive_dl_');
     final archivePath = '${tempDir.path}/$assetName';
@@ -974,6 +903,11 @@ class CliDownloadService {
         );
       }
 
+      // Refuse to overwrite the app-managed binary with an older download.
+      // The redirect URL should always serve the latest, but a CDN cache
+      // hiccup or a manually-edited mirror could still land us older bits.
+      await _assertNotDowngrade(extractedBinary, currentVersion, 'GitHub');
+
       final targetFile = File(targetPath);
       final targetParent = targetFile.parent;
       if (!targetParent.existsSync()) {
@@ -988,14 +922,15 @@ class CliDownloadService {
         await _setExecutable(targetPath);
       }
 
-      final release = await _resolveReleaseTagForVersion();
-      await _writeVersionFile(release);
+      final installedVersion =
+          await _parseVersionFromBinary(targetPath) ?? 'unknown';
+      await _writeVersionFile(installedVersion);
       _systemBinaryPath = null;
       _usingSystemBinary = false;
       _installSource = CliInstallSource.appManaged;
 
       AppLogger.info(
-        'CLI $release installed to ${AppLogger.scrubPath(targetPath)}',
+        'CLI $installedVersion installed to ${AppLogger.scrubPath(targetPath)}',
       );
     } on DownloadException {
       rethrow;
@@ -1007,15 +942,6 @@ class CliDownloadService {
       } catch (e) {
         AppLogger.warning('Failed to clean up temp dir: $e');
       }
-    }
-  }
-
-  Future<String> _resolveReleaseTagForVersion() async {
-    try {
-      final release = await _apiService.getLatestRelease();
-      return release.tagName;
-    } catch (_) {
-      return 'unknown';
     }
   }
 
@@ -1077,31 +1003,16 @@ class CliDownloadService {
     await File(vPath).writeAsString('$version\n');
   }
 
-  /// Fetches the GoReleaser-published checksums file for the current release
-  /// and verifies the SHA256 of the downloaded archive against it. Missing
-  /// checksums file is treated as a warning, not a hard failure, to keep
-  /// install flowing when the release pipeline lags behind the API; a
-  /// mismatch always fails closed.
+  /// Fetches the GoReleaser-published checksums file from the same
+  /// /releases/latest/download/ prefix as the archive itself and verifies
+  /// the SHA256 of the downloaded archive against it. Missing checksums
+  /// file is treated as a warning, not a hard failure (some release
+  /// pipelines omit it); a mismatch always fails closed.
   Future<void> _verifyArchiveChecksum(
     String archivePath,
     String assetName,
   ) async {
-    String? checksumUrl;
-    try {
-      final release = await _apiService.getLatestRelease();
-      checksumUrl = _apiService.findChecksumAssetUrl(release);
-    } catch (e) {
-      AppLogger.warning(
-        'Could not look up release checksums asset ($e); skipping verify',
-      );
-      return;
-    }
-    if (checksumUrl == null) {
-      AppLogger.warning(
-        'Release has no checksums.txt asset; skipping integrity check',
-      );
-      return;
-    }
+    final checksumUrl = _apiService.latestChecksumsUrl();
 
     String body;
     try {

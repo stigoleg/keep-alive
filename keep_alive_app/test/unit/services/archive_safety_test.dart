@@ -127,31 +127,12 @@ CliDownloadService _serviceFor({
   required List<int> assetBytes,
   required String checksumBody,
 }) {
-  final releaseJson = '''
-{
-  "tag_name": "v1.6.0",
-  "assets": [
-    {
-      "name": "$assetName",
-      "browser_download_url": "https://example.test/$assetName",
-      "size": ${assetBytes.length}
-    },
-    {
-      "name": "keep-alive_1.6.0_checksums.txt",
-      "browser_download_url": "https://example.test/checksums.txt",
-      "size": ${checksumBody.length}
-    }
-  ]
-}
-''';
-
   Dio buildDio() {
     final dio = Dio();
     dio.httpClientAdapter = _DispatchAdapter((options) {
       final url = options.uri.toString();
-      if (url.contains('/releases/latest')) {
-        return responseBodyFromJson(releaseJson);
-      }
+      // Specific-suffix matches first so the /releases/latest/download/
+      // prefix on both URLs doesn't trip the order.
       if (url.endsWith('checksums.txt')) {
         return _plainTextBody(checksumBody);
       }

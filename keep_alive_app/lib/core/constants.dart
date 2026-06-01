@@ -17,13 +17,16 @@ class AppConstants {
   static const String cliVersionArg = '--version';
   static const String cliLogArg = '--log';
 
-  /// Minimum CLI version the GUI accepts from external installs.
-  /// v1.5.4 is required because v1.5.3 still depended on the `--headless`
-  /// flag (removed in commit 0eb6faf, replaced by stdin-TTY auto-detection);
-  /// when launched as a Flutter subprocess v1.5.3 silently exits code 1.
-  /// Bumping this back below v1.5.4 is unsafe until package managers also
-  /// catch up.
-  static const String minimumCliVersion = 'v1.5.4';
+  /// Stable URL prefix that GitHub redirects to the assets of the most
+  /// recent release. Concatenate `/<asset-name>` to download a specific
+  /// asset, or `/checksums.txt` for the GoReleaser checksum file. Using
+  /// this prefix means the GUI never embeds a CLI version number.
+  static const String releasesLatestDownloadUrl =
+      '$githubUrl/releases/latest/download';
+
+  /// Filename of the GoReleaser-published SHA256 checksum file, served
+  /// from [releasesLatestDownloadUrl].
+  static const String cliChecksumsFileName = 'checksums.txt';
 
   static const Duration batteryPollInterval = Duration(seconds: 30);
   static const Duration updateCheckInterval = Duration(hours: 24);
@@ -70,7 +73,6 @@ class AppConstants {
   static const int packageManagerInstallTimeoutSeconds = 120;
   static const int settingsFlushDebounceMs = 250;
 
-  static const String downloadUrlCacheFile = '.download_url_cache';
   static const String offlineMode = 'KeepAlive running in offline mode';
 
   /// Name of the file in app support that records the running CLI's PID,
