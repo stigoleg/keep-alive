@@ -46,11 +46,24 @@ case "${ARCHS}" in
     *) GOARCH="$(uname -m | sed 's/aarch64/arm64/;s/x86_64/amd64/')" ;;
 esac
 
-echo "Building keepalive CLI (${GOARCH}) into ${DEST}"
+# Derive the version from git so the bundled CLI matches the
+# `-X main.version=...` ldflag GoReleaser would inject for a real
+# release. `git describe --tags` yields the nearest tag plus a commit
+# distance suffix for dirty / unreleased trees (e.g. v1.5.3-5-gabc1234).
+# Strip a leading `v` to match the "1.5.3" form GoReleaser publishes.
+CLI_VERSION="$(cd "${REPO_ROOT}" && git describe --tags --always --dirty 2>/dev/null || true)"
+CLI_VERSION="${CLI_VERSION#v}"
+if [ -z "${CLI_VERSION}" ]; then
+    CLI_VERSION="dev"
+fi
+
+echo "Building keepalive CLI (${GOARCH}, version=${CLI_VERSION}) into ${DEST}"
 (
     cd "${REPO_ROOT}"
     CGO_ENABLED=1 GOOS=darwin GOARCH="${GOARCH}" \
-        "${GO_BIN}" build -trimpath -o "${DEST}" ./cmd/keepalive
+        "${GO_BIN}" build -trimpath \
+            -ldflags "-s -w -X main.version=${CLI_VERSION}" \
+            -o "${DEST}" ./cmd/keepalive
 )
 chmod +x "${DEST}"
 

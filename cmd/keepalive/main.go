@@ -22,9 +22,15 @@ import (
 )
 
 const (
-	appVersion      = "1.5.4"
 	shutdownTimeout = 5 * time.Second
 )
+
+// version is injected at build time by GoReleaser via
+// `-ldflags "-X main.version=<tag>"`. Local `go build` invocations leave
+// it as "dev"; release builds carry the actual tag (e.g. "1.5.3"). We do
+// not bake a version literal into the source — that's what made the
+// binary report v1.5.4 even when no such release existed.
+var version = "dev"
 
 var (
 	cleanupOnce sync.Once
@@ -33,7 +39,7 @@ var (
 )
 
 func main() {
-	cfg, err := config.ParseFlags(appVersion)
+	cfg, err := config.ParseFlags(version)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return
@@ -42,7 +48,7 @@ func main() {
 		os.Exit(1)
 	}
 	if cfg.ShowVersion {
-		fmt.Printf("Keep-Alive Version: %s\n", appVersion)
+		fmt.Printf("Keep-Alive Version: %s\n", version)
 		return
 	}
 
@@ -124,7 +130,7 @@ func main() {
 		model = ui.InitialModel()
 		model.SimulateActivity = cfg.SimulateActivity
 	}
-	model.SetVersion(appVersion)
+	model.SetVersion(version)
 
 	// Check for missing dependencies and store in model for TUI display
 	depMessage := platform.GetDependencyMessage()
