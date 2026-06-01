@@ -2,19 +2,29 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:archive/archive_io.dart' as archive_io;
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../core/constants.dart';
 import '../core/exceptions.dart';
 import '../core/logger.dart';
+import '../platform/platform_interface.dart';
 import '../utils/platform_utils.dart';
+import '../utils/version_utils.dart';
 import 'github_api_service.dart';
+
+/// Resolves a platform-provided bundled-CLI path. Defaults to the host
+/// platform channel; tests inject a custom lookup.
+typedef BundledCliLookup = Future<String?> Function();
 
 class CliDownloadService {
   final GitHubApiService _apiService;
   final Dio _dio;
   final String? _appSupportDirOverride;
+  final BundledCliLookup _bundledCliLookup;
 
   String? _binaryPath;
   String? _versionFilePath;
@@ -26,7 +36,13 @@ class CliDownloadService {
     required this._apiService,
     required this._dio,
     String? appSupportDir,
-  }) : _appSupportDirOverride = appSupportDir;
+    BundledCliLookup? bundledCliLookup,
+  })  : _appSupportDirOverride = appSupportDir,
+        _bundledCliLookup =
+            bundledCliLookup ?? _defaultBundledCliLookup;
+
+  static Future<String?> _defaultBundledCliLookup() =>
+      KeepAlivePlatform.instance.getBundledCliPath();
 
   bool get isUsingSystemBinary => _usingSystemBinary;
 
@@ -245,15 +261,10 @@ class CliDownloadService {
       );
       if (brewListResult.exitCode == 0) {
         final pathBinary = await _findBinaryInPath();
-        if (pathBinary != null) {
-          final verified = await _verifyBinaryAt(pathBinary);
-          if (verified) {
-            _systemBinaryPath = pathBinary;
-            _usingSystemBinary = true;
-            AppLogger.info(
-                'keepalive already installed via Homebrew: ${AppLogger.scrubPath(pathBinary)}');
-            return true;
-          }
+        if (pathBinary != null &&
+            await _adoptBinary(pathBinary, 'Homebrew',
+                requireMinVersion: true)) {
+          return true;
         }
       }
 
@@ -280,11 +291,9 @@ class CliDownloadService {
       }
       if (installResult.exitCode == 0) {
         final binaryPath = await _findBinaryInPath();
-        if (binaryPath != null) {
-          _systemBinaryPath = binaryPath;
-          _usingSystemBinary = true;
-          AppLogger.info(
-              'keepalive installed via Homebrew: ${AppLogger.scrubPath(binaryPath)}');
+        if (binaryPath != null &&
+            await _adoptBinary(binaryPath, 'Homebrew',
+                requireMinVersion: true)) {
           return true;
         }
       } else {
@@ -353,11 +362,9 @@ class CliDownloadService {
       }
       if (installResult.exitCode == 0) {
         final binaryPath = await _findBinaryInPath();
-        if (binaryPath != null) {
-          _systemBinaryPath = binaryPath;
-          _usingSystemBinary = true;
-          AppLogger.info(
-              'keepalive installed via Scoop: ${AppLogger.scrubPath(binaryPath)}');
+        if (binaryPath != null &&
+            await _adoptBinary(binaryPath, 'Scoop',
+                requireMinVersion: true)) {
           return true;
         }
       } else {
@@ -373,48 +380,45 @@ class CliDownloadService {
   Future<void> ensureCliInstalled({
     void Function(double progress)? onProgress,
   }) async {
-    final pathBinary = await _findBinaryInPath();
-    if (pathBinary != null) {
-      final verified = await _verifyBinaryAt(pathBinary);
-      if (verified) {
-        _systemBinaryPath = pathBinary;
-        _usingSystemBinary = true;
-        AppLogger.info(
-            'Using keepalive from PATH: ${AppLogger.scrubPath(pathBinary)}');
-        return;
-      }
-      AppLogger.warning(
-        'keepalive found in PATH at ${AppLogger.scrubPath(pathBinary)} but verification failed',
-      );
+    // 1. Prefer the CLI bundled inside the host app — it matches the GUI's
+    //    build and avoids stale PATH installs (e.g. an older Homebrew copy).
+    final bundled = await _findBundledBinary();
+    if (bundled != null && await _adoptBinary(bundled, 'bundled app resource')) {
+      return;
     }
 
+    // 2. Explicit dev override: KEEPALIVE_HOME or a sibling `keepalive` next
+    //    to the running Dart entrypoint. Useful during local development.
     final localBinary = await _findLocalBinary();
-    if (localBinary != null) {
-      final verified = await _verifyBinaryAt(localBinary);
-      if (verified) {
-        _systemBinaryPath = localBinary;
-        _usingSystemBinary = true;
+    if (localBinary != null &&
+        await _adoptBinary(localBinary, 'local filesystem')) {
+      return;
+    }
+
+    // 3. App-managed binary previously downloaded into Application Support.
+    final installed = await isBinaryInstalled();
+    if (installed) {
+      final managedPath = await binaryPath;
+      final managedVersion = await getInstalledVersion();
+      if (await _verifyBinaryAt(managedPath) &&
+          _meetsMinimum(managedVersion)) {
         AppLogger.info(
-            'Using keepalive from local filesystem: ${AppLogger.scrubPath(localBinary)}');
+          'Using app-managed CLI: ${AppLogger.scrubPath(managedPath)} ($managedVersion)',
+        );
         return;
       }
       AppLogger.warning(
-        'keepalive found locally at ${AppLogger.scrubPath(localBinary)} but verification failed',
+        'App-managed CLI at ${AppLogger.scrubPath(managedPath)} '
+        'failed verification or below minimum ${AppConstants.minimumCliVersion}, re-downloading',
       );
     }
 
-    final installed = await isBinaryInstalled();
-    final version = await getInstalledVersion();
-
-    if (installed && version != null) {
-      final binaryOk = await verifyBinary();
-      if (binaryOk) {
-        AppLogger.info('CLI binary already installed: $version');
-        return;
-      }
-      AppLogger.warning(
-        'Installed binary failed verification, re-downloading',
-      );
+    // 4. System PATH (Homebrew, Scoop, manual installs) — only used as
+    //    fallback so a stale system install cannot mask the fixed CLI.
+    final pathBinary = await _findBinaryInPath();
+    if (pathBinary != null &&
+        await _adoptBinary(pathBinary, 'PATH', requireMinVersion: true)) {
+      return;
     }
 
     if (PlatformUtils.isMacOS || PlatformUtils.isLinux) {
@@ -429,6 +433,61 @@ class CliDownloadService {
 
     await _downloadAndInstall(onProgress: onProgress);
   }
+
+  Future<String?> _findBundledBinary() async {
+    try {
+      final path = await _bundledCliLookup();
+      if (path == null || path.isEmpty) return null;
+      final file = File(path);
+      if (!file.existsSync()) return null;
+      AppLogger.info(
+          'Found bundled keepalive: ${AppLogger.scrubPath(path)}');
+      return path;
+    } catch (e) {
+      AppLogger.debug('Bundled CLI lookup failed: $e');
+      return null;
+    }
+  }
+
+  /// Verifies [path], parses its version, optionally enforces the minimum
+  /// supported version, and records it as the active system binary on success.
+  Future<bool> _adoptBinary(
+    String path,
+    String source, {
+    bool requireMinVersion = false,
+  }) async {
+    final verified = await _verifyBinaryAt(path);
+    if (!verified) {
+      AppLogger.warning(
+        'keepalive from $source at ${AppLogger.scrubPath(path)} failed verification',
+      );
+      return false;
+    }
+
+    final version = await _parseVersionFromBinary(path);
+    if (requireMinVersion && !_meetsMinimum(version)) {
+      AppLogger.warning(
+        'Ignoring $source keepalive at ${AppLogger.scrubPath(path)}: '
+        'version ${version ?? "unknown"} is older than required '
+        '${AppConstants.minimumCliVersion}',
+      );
+      return false;
+    }
+
+    _systemBinaryPath = path;
+    _usingSystemBinary = true;
+    AppLogger.info(
+      'Using keepalive from $source: ${AppLogger.scrubPath(path)} (${version ?? "version unknown"})',
+    );
+    return true;
+  }
+
+  bool _meetsMinimum(String? version) =>
+      VersionUtils.meetsMinimum(version, AppConstants.minimumCliVersion);
+
+  @visibleForTesting
+  Future<bool> tryAdoptForTest(String path, {bool requireMin = false}) =>
+      _adoptBinary(path, 'test', requireMinVersion: requireMin);
 
   Future<bool> _verifyBinaryAt(String path) async {
     final file = File(path);
@@ -550,10 +609,13 @@ class CliDownloadService {
     try {
       await _downloadWithRetry(assetUrl, archivePath, onProgress);
 
+      await _verifyArchiveChecksum(archivePath, assetName);
+
       AppLogger.info('Extracting $assetName');
       final extractDir = '${tempDir.path}/extract';
       await Directory(extractDir).create();
 
+      _assertSafeArchiveEntries(archivePath, assetName, extractDir);
       archive_io.extractFileToDisk(archivePath, extractDir);
 
       final targetPath = await binaryPath;
@@ -657,5 +719,111 @@ class CliDownloadService {
   Future<void> _writeVersionFile(String version) async {
     final vPath = await versionFilePath;
     await File(vPath).writeAsString('$version\n');
+  }
+
+  /// Fetches the GoReleaser-published checksums file for the current release
+  /// and verifies the SHA256 of the downloaded archive against it. Missing
+  /// checksums file is treated as a warning, not a hard failure, to keep
+  /// install flowing when the release pipeline lags behind the API; a
+  /// mismatch always fails closed.
+  Future<void> _verifyArchiveChecksum(
+    String archivePath,
+    String assetName,
+  ) async {
+    String? checksumUrl;
+    try {
+      final release = await _apiService.getLatestRelease();
+      checksumUrl = _apiService.findChecksumAssetUrl(release);
+    } catch (e) {
+      AppLogger.warning(
+        'Could not look up release checksums asset ($e); skipping verify',
+      );
+      return;
+    }
+    if (checksumUrl == null) {
+      AppLogger.warning(
+        'Release has no checksums.txt asset; skipping integrity check',
+      );
+      return;
+    }
+
+    String body;
+    try {
+      final response = await _dio.get<String>(
+        checksumUrl,
+        options: Options(
+          responseType: ResponseType.plain,
+          headers: const {'Accept': 'text/plain'},
+        ),
+      );
+      body = response.data ?? '';
+    } catch (e) {
+      AppLogger.warning(
+        'Failed to fetch checksums.txt ($e); skipping integrity check',
+      );
+      return;
+    }
+
+    final expected = _parseChecksumFor(body, assetName);
+    if (expected == null) {
+      AppLogger.warning(
+        'checksums.txt does not contain an entry for $assetName; skipping',
+      );
+      return;
+    }
+
+    final bytes = await File(archivePath).readAsBytes();
+    final actual = sha256.convert(bytes).toString();
+    if (actual.toLowerCase() != expected.toLowerCase()) {
+      throw DownloadException(
+        'Checksum mismatch for $assetName '
+        '(expected $expected, actual $actual)',
+      );
+    }
+    AppLogger.info('Verified SHA256 for $assetName');
+  }
+
+  static String? _parseChecksumFor(String body, String assetName) {
+    for (final raw in body.split('\n')) {
+      final line = raw.trim();
+      if (line.isEmpty || line.startsWith('#')) continue;
+      // GoReleaser default format: `<hex>  <filename>`. We accept any
+      // whitespace separator (`  `, single space, tab).
+      final parts = line.split(RegExp(r'\s+'));
+      if (parts.length < 2) continue;
+      final hash = parts.first.trim();
+      final name = parts.skip(1).join(' ').trim();
+      if (name == assetName ||
+          name == './$assetName' ||
+          name == '*$assetName') {
+        return hash;
+      }
+    }
+    return null;
+  }
+
+  /// Pre-scans the archive entries and rejects any whose extracted path
+  /// would escape [extractDir] (zip-slip / tarbomb). Runs before extraction
+  /// so a malicious archive never touches disk.
+  void _assertSafeArchiveEntries(
+    String archivePath,
+    String assetName,
+    String extractDir,
+  ) {
+    final isZip = assetName.toLowerCase().endsWith('.zip');
+    final bytes = File(archivePath).readAsBytesSync();
+    final archive = isZip
+        ? archive_io.ZipDecoder().decodeBytes(bytes)
+        : archive_io.TarDecoder()
+            .decodeBytes(const archive_io.GZipDecoder().decodeBytes(bytes));
+    final root = p.canonicalize(extractDir);
+    for (final entry in archive.files) {
+      final dest = p.canonicalize(p.join(extractDir, entry.name));
+      if (dest != root && !p.isWithin(root, dest)) {
+        throw DownloadException(
+          'Unsafe archive entry: ${entry.name}',
+        );
+      }
+    }
   }
 }

@@ -175,9 +175,29 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
             handleGetBatteryInfo(result: result)
         case "getAppSupportDir":
             handleGetAppSupportDir(result: result)
+        case "getBundledCliPath":
+            handleGetBundledCliPath(result: result)
         default:
             result(FlutterMethodNotImplemented)
         }
+    }
+
+    // MARK: - Bundled CLI Path
+
+    private func handleGetBundledCliPath(result: @escaping FlutterResult) {
+        let resourceURL = Bundle.main.resourceURL?.appendingPathComponent("keepalive")
+        guard let path = resourceURL?.path else {
+            result(nil)
+            return
+        }
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue,
+              fm.isExecutableFile(atPath: path) else {
+            result(nil)
+            return
+        }
+        result(path)
     }
 
     // MARK: - Auto Start

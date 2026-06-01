@@ -49,6 +49,12 @@ class _FakePlatform extends KeepAlivePlatform {
   Future<String> getAppSupportDir() async => '/fake';
 
   @override
+  Future<String?> getBundledCliPath() async => null;
+
+  @override
+  Future<bool> ensureActivitySimulationPermission() async => true;
+
+  @override
   Future<BatteryInfo> getBatteryInfo() => handler();
 }
 

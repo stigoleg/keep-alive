@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/logger.dart';
 import '../../models/download_state.dart';
+import '../../platform/platform_interface.dart';
 import '../../providers/cli_binary_provider.dart';
 import '../../providers/session_provider.dart';
 import '../../providers/settings_provider.dart';
@@ -49,6 +51,17 @@ class ToggleSection extends ConsumerWidget {
               description: 'Mimic user input to appear active',
               value: settings.simulateActivity,
               onChanged: (value) async {
+                if (value) {
+                  final granted = await KeepAlivePlatform.instance
+                      .ensureActivitySimulationPermission();
+                  if (!granted) {
+                    AppLogger.warning(
+                      'Activity simulation permission not granted; '
+                      'Teams/Slack may still show as away. Grant Accessibility '
+                      'to KeepAlive and retry.',
+                    );
+                  }
+                }
                 await ref
                     .read(appSettingsProvider.notifier)
                     .setSimulateActivity(value);

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keep_alive_app/core/exceptions.dart';
@@ -221,6 +223,43 @@ void main() {
         }
 
         expect(container.read(appSettingsProvider).keepAwake, isFalse);
+      });
+
+      test('rapid calls coalesce into a single restart', () async {
+        final orchestrator = container.read(sessionProvider);
+        processManager.setSuccess();
+        await orchestrator.toggleKeepAwake(true);
+        processManager.calls.clear();
+
+        // Ten rapid calls in <100 ms — must produce exactly one stop+start
+        // pair once the 350 ms debounce flushes.
+        final futures = <Future<void>>[];
+        for (var i = 0; i < 10; i++) {
+          futures.add(orchestrator.applySettingsAndRestart());
+        }
+        await Future.wait(futures);
+
+        final stops = processManager.calls.where((c) => c.method == 'stop').length;
+        final starts = processManager.calls.where((c) => c.method == 'start').length;
+        expect(stops, 1, reason: 'debounce should collapse to one stop');
+        expect(starts, 1, reason: 'debounce should collapse to one start');
+      });
+
+      test('flushPendingRestart fires immediately', () async {
+        final orchestrator = container.read(sessionProvider);
+        processManager.setSuccess();
+        await orchestrator.toggleKeepAwake(true);
+        processManager.calls.clear();
+
+        // Fire-and-forget so the debounce is pending.
+        unawaited(orchestrator.applySettingsAndRestart());
+        // Without flush, no call has happened yet (still inside debounce).
+        expect(processManager.calls, isEmpty);
+
+        await orchestrator.flushPendingRestart();
+        expect(processManager.calls.length, 2);
+        expect(processManager.calls[0].method, 'stop');
+        expect(processManager.calls[1].method, 'start');
       });
     });
   });

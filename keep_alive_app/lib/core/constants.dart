@@ -17,6 +17,11 @@ class AppConstants {
   static const String cliVersionArg = '--version';
   static const String cliLogArg = '--log';
 
+  /// Minimum CLI version the GUI accepts. Older binaries on PATH (e.g. a stale
+  /// Homebrew install) emit `--active` but lack the fixed activity-simulation
+  /// path, so they are rejected in favour of the app-bundled CLI.
+  static const String minimumCliVersion = 'v1.5.4';
+
   static const Duration batteryPollInterval = Duration(seconds: 30);
   static const Duration updateCheckInterval = Duration(hours: 24);
 
@@ -35,6 +40,13 @@ class AppConstants {
   static const String methodHidePopover = 'hidePopover';
   static const String methodGetAppSupportDir = 'getAppSupportDir';
   static const String methodGetBatteryInfo = 'getBatteryInfo';
+  static const String methodGetBundledCliPath = 'getBundledCliPath';
+  static const String methodEnsureActivitySimulationPermission =
+      'ensureActivitySimulationPermission';
+  static const String methodAssignProcessToJobObject =
+      'assignProcessToJobObject';
+  static const String methodActivateExistingInstance =
+      'activateExistingInstance';
   static const String methodOnTrayEvent = 'onTrayEvent';
 
   // Tray events sent from native to Dart
@@ -57,6 +69,18 @@ class AppConstants {
 
   static const String downloadUrlCacheFile = '.download_url_cache';
   static const String offlineMode = 'KeepAlive running in offline mode';
+
+  /// Name of the file in app support that records the running CLI's PID,
+  /// used by the stale-process sweeper on startup and by force-kill on quit.
+  static const String cliPidFile = 'keepalive.pid';
+
+  /// Name of the file in app support that records the Flutter app's PID,
+  /// used by the single-instance lock.
+  static const String appInstanceLockFile = 'keepalive_app.pid';
+
+  /// Hard ceiling on how long the quit path will wait for a graceful CLI
+  /// stop before force-killing via the PID file.
+  static const int quitGracefulTimeoutSeconds = 3;
 
   static const String homebrewTapRepo = 'stigoleg/homebrew-tap';
   static const String homebrewFormula = 'keepalive';

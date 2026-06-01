@@ -51,9 +51,18 @@ class BatterySection extends ConsumerWidget {
                 value: threshold,
                 maxValue: maxThreshold,
                 label: 'Threshold:',
-                onChanged: (value) async {
+                onChanged: (value) {
                   final safeValue = _clampThreshold(value, maxThreshold);
-                  await ref
+                  // Persist the visible value as the user drags, but defer
+                  // the CLI restart until the drag ends so we do not churn
+                  // a process per pixel.
+                  ref
+                      .read(appSettingsProvider.notifier)
+                      .setBatteryThreshold(safeValue);
+                },
+                onChangeEnd: (value) {
+                  final safeValue = _clampThreshold(value, maxThreshold);
+                  ref
                       .read(appSettingsProvider.notifier)
                       .setBatteryThreshold(safeValue);
                   ref.read(sessionProvider).applySettingsAndRestart();

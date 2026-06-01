@@ -71,4 +71,19 @@ class GitHubApiService {
     }
     return null;
   }
+
+  /// Locates the GoReleaser-published `*_checksums.txt` (case-insensitive) so
+  /// the downloader can verify the SHA256 of the platform archive before
+  /// extracting it. Returns null when no checksum asset is present so the
+  /// caller can decide to fail-closed or proceed (we proceed with a warning
+  /// today — see [CliDownloadService]).
+  String? findChecksumAssetUrl(GitHubRelease release) {
+    for (final asset in release.assets) {
+      final lower = asset.name.toLowerCase();
+      if (lower.endsWith('checksums.txt') || lower == 'sha256sums.txt') {
+        return asset.downloadUrl;
+      }
+    }
+    return null;
+  }
 }

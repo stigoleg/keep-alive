@@ -121,6 +121,34 @@ class KeepAlivePlatformWindows extends KeepAlivePlatform {
   }
 
   @override
+  Future<String?> getBundledCliPath() async => null;
+
+  @override
+  Future<bool> ensureActivitySimulationPermission() async => true;
+
+  @override
+  Future<void> assignProcessToJobObject(int pid) async {
+    try {
+      await _channel.invokeMethod(
+        AppConstants.methodAssignProcessToJobObject,
+        {'pid': pid},
+      );
+    } on MissingPluginException {
+      // Older builds of the host without the Job Object channel — fall back
+      // silently; the stale-process sweeper still catches orphans next launch.
+    }
+  }
+
+  @override
+  Future<void> activateExistingInstance() async {
+    try {
+      await _channel.invokeMethod(AppConstants.methodActivateExistingInstance);
+    } on MissingPluginException {
+      // Native side not present; nothing we can do from Dart.
+    }
+  }
+
+  @override
   Future<String> getAppSupportDir() async {
     final result = await _channel.invokeMethod<String>(
       AppConstants.methodGetAppSupportDir,

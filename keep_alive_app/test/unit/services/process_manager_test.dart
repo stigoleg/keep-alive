@@ -63,7 +63,7 @@ void main() {
   });
 
   tearDown(() async {
-    processManager.dispose();
+    await processManager.dispose();
     if (tempDir.existsSync()) {
       await tempDir.delete(recursive: true);
     }
@@ -83,6 +83,20 @@ void main() {
 
         await processManager.start(const CliFlags());
         expect(processManager.pid, firstPid);
+      });
+
+      test('serializes concurrent start calls to a single spawn', () async {
+        // Issue 50 starts in parallel — even though each await is async, the
+        // Lock must serialize them so the second-onwards observe _hasProcess
+        // and return without spawning a second process.
+        final futures = List.generate(
+          50,
+          (_) => processManager.start(const CliFlags()),
+        );
+        await Future.wait(futures);
+
+        expect(processManager.isRunning, isTrue);
+        expect(processManager.pid, isNotNull);
       });
 
       test('throws CliProcessException for missing binary', () async {
@@ -162,7 +176,7 @@ void main() {
         await processManager.start(const CliFlags());
         expect(processManager.isRunning, isTrue);
 
-        processManager.dispose();
+        await processManager.dispose();
 
         expect(processManager.isRunning, isFalse);
         expect(processManager.pid, isNull);

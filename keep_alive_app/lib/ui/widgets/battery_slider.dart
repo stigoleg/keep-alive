@@ -6,6 +6,7 @@ import '../../utils/format_utils.dart';
 class BatterySlider extends StatelessWidget {
   final int value;
   final ValueChanged<int> onChanged;
+  final ValueChanged<int>? onChangeEnd;
   final String? label;
   final bool disabled;
   final int maxValue;
@@ -14,6 +15,7 @@ class BatterySlider extends StatelessWidget {
     super.key,
     required this.value,
     required this.onChanged,
+    this.onChangeEnd,
     this.label,
     this.disabled = false,
     this.maxValue = 100,
@@ -57,6 +59,9 @@ class BatterySlider extends StatelessWidget {
                       ? theme.colorScheme.error
                       : theme.colorScheme.primary,
                   onChanged: disabled ? null : (v) => onChanged(v.round()),
+                  onChangeEnd: disabled || onChangeEnd == null
+                      ? null
+                      : (v) => onChangeEnd!(v.round()),
                 ),
               ),
             ),

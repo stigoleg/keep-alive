@@ -47,6 +47,10 @@ class FlutterWindow : public Win32Window {
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
   void HandleGetBatteryInfo(
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
+  void HandleAssignProcessToJobObject(const flutter::EncodableMap& args,
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
+
+  void EnsureJobObject();
 
   void CreateTrayIcon();
   void RemoveTrayIcon();
@@ -63,6 +67,11 @@ class FlutterWindow : public Win32Window {
   flutter::DartProject project_;
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> platform_channel_;
+
+  // Job Object that owns spawned CLI children. Created lazily on the first
+  // assignProcessToJobObject call and configured with KILL_ON_JOB_CLOSE so
+  // the OS terminates the CLI if this process dies for any reason.
+  HANDLE job_object_ = nullptr;
 
   static constexpr UINT WM_TRAY_ICON = WM_APP + 1;
   static constexpr UINT TRAY_ICON_ID = 1;

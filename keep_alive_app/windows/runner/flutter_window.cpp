@@ -69,6 +69,13 @@ void FlutterWindow::OnDestroy() {
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
+  if (job_object_ != nullptr) {
+    // Closing the last handle to a Job Object configured with
+    // KILL_ON_JOB_CLOSE will terminate every assigned child immediately,
+    // which is exactly what we want on shutdown.
+    CloseHandle(job_object_);
+    job_object_ = nullptr;
+  }
 
   Win32Window::OnDestroy();
 }
@@ -174,9 +181,75 @@ void FlutterWindow::HandleMethodCall(
     HandleSetStatusBarTitle(result);
   } else if (method == "getBatteryInfo") {
     HandleGetBatteryInfo(result);
+  } else if (method == "assignProcessToJobObject") {
+    HandleAssignProcessToJobObject(args ? *args : flutter::EncodableMap{}, result);
+  } else if (method == "activateExistingInstance") {
+    // No-op: a second-launched process invoking this on its own channel
+    // cannot reach the running instance. Accept gracefully so Dart does not
+    // observe MissingPluginException.
+    result->Success();
   } else {
     result->NotImplemented();
   }
+}
+
+void FlutterWindow::EnsureJobObject() {
+  if (job_object_ != nullptr) return;
+  job_object_ = CreateJobObject(nullptr, nullptr);
+  if (job_object_ == nullptr) return;
+  JOBOBJECT_EXTENDED_LIMIT_INFORMATION info = {};
+  info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+  if (!SetInformationJobObject(job_object_,
+                               JobObjectExtendedLimitInformation,
+                               &info,
+                               sizeof(info))) {
+    CloseHandle(job_object_);
+    job_object_ = nullptr;
+  }
+}
+
+void FlutterWindow::HandleAssignProcessToJobObject(
+    const flutter::EncodableMap& args,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result) {
+  auto it = args.find(flutter::EncodableValue("pid"));
+  if (it == args.end()) {
+    result->Error("INVALID_ARG", "Missing 'pid' argument");
+    return;
+  }
+  int32_t pid = 0;
+  if (auto* v32 = std::get_if<int32_t>(&it->second)) {
+    pid = *v32;
+  } else if (auto* v64 = std::get_if<int64_t>(&it->second)) {
+    pid = static_cast<int32_t>(*v64);
+  } else {
+    result->Error("INVALID_ARG", "'pid' must be an integer");
+    return;
+  }
+  EnsureJobObject();
+  if (job_object_ == nullptr) {
+    result->Error("JOB_OBJECT_UNAVAILABLE", "Failed to create Job Object");
+    return;
+  }
+  HANDLE proc = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE,
+                            FALSE,
+                            static_cast<DWORD>(pid));
+  if (proc == nullptr) {
+    result->Error("OPEN_PROCESS_FAILED",
+                  "OpenProcess failed for pid " + std::to_string(pid));
+    return;
+  }
+  BOOL ok = AssignProcessToJobObject(job_object_, proc);
+  CloseHandle(proc);
+  if (!ok) {
+    DWORD err = GetLastError();
+    // ERROR_ACCESS_DENIED (5) is expected when the child was started in a
+    // job that disallows breakaway; we treat it as non-fatal because the
+    // stale-process sweeper still catches orphans on next launch.
+    result->Error("ASSIGN_FAILED",
+                  "AssignProcessToJobObject failed (" + std::to_string(err) + ")");
+    return;
+  }
+  result->Success();
 }
 
 void FlutterWindow::HandleSetStatusBarTitle(

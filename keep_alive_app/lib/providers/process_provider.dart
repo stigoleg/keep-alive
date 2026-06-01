@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:synchronized/synchronized.dart';
 
 import '../core/exceptions.dart';
 import '../core/logger.dart';
@@ -20,6 +21,7 @@ final cliProcessProvider =
 
 class CliProcessNotifier extends Notifier<CliProcessState> {
   late final ProcessManager _processManager;
+  final Lock _lock = Lock();
   StreamSubscription<String>? _stdoutSub;
   StreamSubscription<String>? _stderrSub;
   StreamSubscription<CliProcessException>? _crashSub;
@@ -56,26 +58,27 @@ class CliProcessNotifier extends Notifier<CliProcessState> {
       }
     });
 
-    ref.onDispose(() {
-      _stdoutSub?.cancel();
-      _stderrSub?.cancel();
-      _crashSub?.cancel();
-      _exitSub?.cancel();
-      _processManager.dispose();
+    ref.onDispose(() async {
+      await _stdoutSub?.cancel();
+      await _stderrSub?.cancel();
+      await _crashSub?.cancel();
+      await _exitSub?.cancel();
+      await _processManager.dispose();
     });
 
     return const CliProcessState();
   }
 
-  Future<void> startSession(CliFlags flags) async {
+  Future<void> startSession(CliFlags flags) =>
+      _lock.synchronized(() => _startSessionLocked(flags));
+
+  Future<void> _startSessionLocked(CliFlags flags) async {
     if (state.isRunning) {
       AppLogger.warning('Session already running, stopping first');
-      await stopSession();
+      await _stopSessionLocked();
     }
 
-    state = state.copyWith(
-      status: CliProcessStatus.starting,
-    );
+    state = state.copyWith(status: CliProcessStatus.starting);
 
     try {
       await _processManager.start(flags);
@@ -95,7 +98,9 @@ class CliProcessNotifier extends Notifier<CliProcessState> {
     }
   }
 
-  Future<void> stopSession() async {
+  Future<void> stopSession() => _lock.synchronized(_stopSessionLocked);
+
+  Future<void> _stopSessionLocked() async {
     final currentStatus = state.status;
     if (currentStatus == CliProcessStatus.idle ||
         currentStatus == CliProcessStatus.stopping) {
@@ -121,12 +126,13 @@ class CliProcessNotifier extends Notifier<CliProcessState> {
     }
   }
 
-  Future<void> restartSession(CliFlags flags) async {
-    if (state.isRunning) {
-      await stopSession();
-    }
-    await startSession(flags);
-  }
+  Future<void> restartSession(CliFlags flags) =>
+      _lock.synchronized(() async {
+        if (state.isRunning) {
+          await _stopSessionLocked();
+        }
+        await _startSessionLocked(flags);
+      });
 
   void clearError() {
     if (state.status == CliProcessStatus.error) {

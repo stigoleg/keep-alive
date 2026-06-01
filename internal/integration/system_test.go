@@ -135,7 +135,13 @@ func assertSystemNormal(t *testing.T) {
 		cmd := exec.Command("pmset", "-g", "assertions")
 		output, err := cmd.Output()
 		require.NoError(t, err)
-		assert.NotContains(t, string(output), "keepalive")
+		// Only fail if a still-listed assertion is owned by a keepalive
+		// process — i.e. `pid N(keepalive):`. WindowServer also records a
+		// short-lived `UserIsActive` tickle whose attribution string contains
+		// `process:keepalive` after we post CGEvents; that entry lingers in
+		// pmset for up to 10 minutes even after our process exits, and is not
+		// a leak we can clean up.
+		assert.NotRegexp(t, `pid \d+\(keepalive\)`, string(output))
 	case "windows":
 		cmd := exec.Command("powercfg", "/requests")
 		output, err := cmd.Output()

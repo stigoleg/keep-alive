@@ -122,6 +122,35 @@ class KeepAlivePlatformMacOS extends KeepAlivePlatform {
   }
 
   @override
+  Future<String?> getBundledCliPath() async {
+    try {
+      final result = await _channel.invokeMethod<String>(
+        AppConstants.methodGetBundledCliPath,
+      );
+      if (result == null || result.isEmpty) return null;
+      return result;
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
+  @override
+  Future<bool> ensureActivitySimulationPermission() async {
+    try {
+      final result = await _channel.invokeMethod<bool>(
+        AppConstants.methodEnsureActivitySimulationPermission,
+      );
+      return result ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  @override
   Future<String> getAppSupportDir() async {
     final result = await _channel.invokeMethod<String>(
       AppConstants.methodGetAppSupportDir,

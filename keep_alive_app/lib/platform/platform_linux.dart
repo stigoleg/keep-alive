@@ -121,6 +121,12 @@ class KeepAlivePlatformLinux extends KeepAlivePlatform {
   }
 
   @override
+  Future<String?> getBundledCliPath() async => null;
+
+  @override
+  Future<bool> ensureActivitySimulationPermission() async => true;
+
+  @override
   Future<String> getAppSupportDir() async {
     final result = await _channel.invokeMethod<String>(
       AppConstants.methodGetAppSupportDir,

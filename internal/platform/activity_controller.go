@@ -110,9 +110,21 @@ func (ac *ActivityController) MaybeJitter(getIdle IdleDetector, execute JitterEx
 	// Execute jitter.
 	points := ac.patternGen.GenerateRoundJitterPoints()
 	sessionDuration := ac.patternGen.JitterSessionDuration()
+	idleBefore := idle
 	execute(points, sessionDuration)
 	atomic.StoreInt64(&ac.lastJitterNS, nowNS)
 
-	log.Printf("%s: idle detected (%v); jittered round mouse pattern (%v)", ac.platformName, idle, sessionDuration)
+	// Re-read idle so we can see whether the synthetic events actually reset
+	// the counter Teams/Slack use. If idleAfter is consistently near zero, the
+	// fix is working; if it stays high, CGEventPost is being dropped (missing
+	// Accessibility) or hitting the wrong CGEventSourceStateID.
+	idleAfter, idleAfterErr := getIdle()
+	if idleAfterErr == nil {
+		log.Printf("%s: idle detected (%v); jittered round mouse pattern (%v); idle %v → %v (Δ=%v)",
+			ac.platformName, idleBefore, sessionDuration, idleBefore, idleAfter, idleBefore-idleAfter)
+	} else {
+		log.Printf("%s: idle detected (%v); jittered round mouse pattern (%v); idle recheck failed: %v",
+			ac.platformName, idleBefore, sessionDuration, idleAfterErr)
+	}
 	return true
 }

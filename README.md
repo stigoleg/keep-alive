@@ -115,7 +115,8 @@ Keep-Alive uses platform-specific APIs and techniques to prevent your system fro
 
 ### macOS
 - Uses the `caffeinate` command with multiple flags (`-s`, `-d`, `-m`, `-i`).
-- **Active Status**: Optionally performs a visible random round mouse pattern every 30 seconds after 2 minutes of user inactivity (lasting about 0.5s ± 0.1s), then returns to the original position.
+- **Active Status**: Optionally performs a visible random round mouse pattern every 30 seconds after 2 minutes of user inactivity (lasting about 0.5s ± 0.1s), then returns to the original position. Synthetic events are posted via CoreGraphics from an explicit `kCGEventSourceStateHIDSystemState` source so they reset the combined-session idle counter that Microsoft Teams and Slack (Electron) read.
+- **Accessibility permission required for `--active`**: macOS gates `CGEventPost` behind System Settings → Privacy & Security → Accessibility. The first time `--active` runs, the OS prompts; grant access to the Keep-Alive app (and to the bundled `keepalive` binary when run standalone). Without the permission, the CLI logs an actionable warning and falls back to `caffeinate -u -t 30` per jitter cycle, which keeps the system "user-active" via IOPMAssertion but may not reset every chat app's idle status.
 
 ### Windows
 - Utilizes the Windows `SetThreadExecutionState` API.

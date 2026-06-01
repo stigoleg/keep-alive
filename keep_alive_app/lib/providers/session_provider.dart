@@ -1,20 +1,40 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/logger.dart';
 import '../models/cli_flags.dart';
+import '../platform/platform_interface.dart';
 import 'battery_provider.dart';
 import 'cli_binary_provider.dart';
 import 'process_provider.dart';
 import 'settings_provider.dart';
 
+/// Coalescing window for rapid setting-driven CLI restarts (e.g. battery slider
+/// drag fires 60 Hz). Picked to feel instant while collapsing into one restart.
+const Duration _restartCoalesceWindow = Duration(milliseconds: 350);
+
 final sessionProvider = Provider<SessionOrchestrator>((ref) {
-  return SessionOrchestrator(ref);
+  final orchestrator = SessionOrchestrator(ref);
+  ref.onDispose(orchestrator.dispose);
+  return orchestrator;
 });
 
 class SessionOrchestrator {
   final Ref _ref;
+  Timer? _restartDebounce;
+  Completer<void>? _pendingCompleter;
 
   SessionOrchestrator(this._ref);
+
+  void dispose() {
+    _restartDebounce?.cancel();
+    _restartDebounce = null;
+    if (_pendingCompleter?.isCompleted == false) {
+      _pendingCompleter?.complete();
+    }
+    _pendingCompleter = null;
+  }
 
   Future<void> toggleKeepAwake(bool active) async {
     await _ref.read(appSettingsProvider.notifier).setKeepAwake(active);
@@ -32,6 +52,9 @@ class SessionOrchestrator {
       }
 
       final settings = await _settingsForCli();
+      if (settings.simulateActivity) {
+        await _ensureActivityPermission();
+      }
       final flags = settings.toCliFlags();
       AppLogger.info('Starting keep-alive session with flags: $flags');
       try {
@@ -67,11 +90,55 @@ class SessionOrchestrator {
     }
   }
 
-  Future<void> applySettingsAndRestart() async {
+  /// Schedules a CLI restart that reflects the latest settings. Rapid calls
+  /// coalesce into a single restart after [_restartCoalesceWindow], so
+  /// dragging a slider or flipping a chain of toggles does not churn the CLI.
+  /// All callers awaiting concurrently receive the same future, which
+  /// completes once the eventual restart finishes.
+  Future<void> applySettingsAndRestart() {
+    _restartDebounce?.cancel();
+    _pendingCompleter ??= Completer<void>();
+    final completer = _pendingCompleter!;
+    _restartDebounce = Timer(_restartCoalesceWindow, () {
+      _restartDebounce = null;
+      _pendingCompleter = null;
+      _flushRestart().then(
+        (_) {
+          if (!completer.isCompleted) completer.complete();
+        },
+        onError: (Object e, StackTrace s) {
+          if (!completer.isCompleted) completer.completeError(e, s);
+        },
+      );
+    });
+    return completer.future;
+  }
+
+  /// Fires any pending debounced restart immediately. Used by tests and by
+  /// the quit path so it does not race with an in-flight debounce.
+  Future<void> flushPendingRestart() async {
+    if (_restartDebounce == null) return;
+    _restartDebounce!.cancel();
+    _restartDebounce = null;
+    final completer = _pendingCompleter;
+    _pendingCompleter = null;
+    try {
+      await _flushRestart();
+      if (completer?.isCompleted == false) completer!.complete();
+    } catch (e, s) {
+      if (completer?.isCompleted == false) completer!.completeError(e, s);
+      rethrow;
+    }
+  }
+
+  Future<void> _flushRestart() async {
     var settings = _ref.read(appSettingsProvider);
     if (!settings.keepAwake) return;
 
     settings = await _settingsForCli();
+    if (settings.simulateActivity) {
+      await _ensureActivityPermission();
+    }
     final flags = settings.toCliFlags();
     final processState = _ref.read(cliProcessProvider);
 
@@ -90,6 +157,17 @@ class SessionOrchestrator {
         await _ref.read(appSettingsProvider.notifier).setKeepAwake(false);
         rethrow;
       }
+    }
+  }
+
+  Future<void> _ensureActivityPermission() async {
+    final granted = await KeepAlivePlatform.instance
+        .ensureActivitySimulationPermission();
+    if (!granted) {
+      AppLogger.warning(
+        'Activity simulation permission not granted before session start; '
+        'CLI will fall back to caffeinate -u for chat-app activity.',
+      );
     }
   }
 

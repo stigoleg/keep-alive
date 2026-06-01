@@ -13,7 +13,10 @@ import 'models/download_state.dart';
 import 'platform/platform_interface.dart';
 import 'providers/cli_binary_provider.dart';
 import 'providers/process_provider.dart';
+import 'providers/session_provider.dart';
 import 'providers/settings_provider.dart';
+import 'services/process_manager.dart';
+import 'services/stale_cli_sweeper.dart';
 import 'ui/theme/linux_theme.dart';
 import 'ui/theme/macos_theme.dart';
 import 'ui/theme/windows_theme.dart';
@@ -151,6 +154,12 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
       await _configureMainWindow();
     } catch (e) {
       AppLogger.error('Failed to configure main window', e);
+    }
+
+    try {
+      await StaleCliSweeper.sweep();
+    } catch (e) {
+      AppLogger.warning('Stale CLI sweep failed (non-fatal): $e');
     }
 
     try {
@@ -306,17 +315,42 @@ class _KeepAliveAppState extends ConsumerState<KeepAliveApp>
     await _platform.hidePopover();
 
     try {
+      ref.read(sessionProvider).dispose();
+    } catch (e) {
+      AppLogger.debug('SessionOrchestrator dispose during quit: $e');
+    }
+
+    try {
       await ref.read(appSettingsProvider.notifier).saveToDisk();
       AppLogger.info('Settings saved');
     } catch (e) {
       AppLogger.error('Failed to save settings on quit', e);
     }
 
+    // Bounded stop: if the CLI doesn't acknowledge SIGTERM in time we
+    // fall through to a force-kill via the persisted PID file rather than
+    // leaving an orphan behind when we exit(0) below.
+    var stoppedCleanly = false;
     try {
-      await ref.read(cliProcessProvider.notifier).stopSession();
+      await ref
+          .read(cliProcessProvider.notifier)
+          .stopSession()
+          .timeout(const Duration(
+            seconds: AppConstants.quitGracefulTimeoutSeconds,
+          ));
+      stoppedCleanly = true;
       AppLogger.info('CLI process stopped');
     } catch (e) {
-      AppLogger.error('Error stopping CLI on quit', e);
+      AppLogger.error('Error stopping CLI on quit (falling through to force-kill)', e);
+    }
+
+    if (!stoppedCleanly) {
+      try {
+        final killed = await ProcessManager.forceKillFromPidFile();
+        AppLogger.info('Force-kill from pid file: $killed');
+      } catch (e) {
+        AppLogger.warning('Force-kill from pid file failed: $e');
+      }
     }
 
     _trayManager.dispose();

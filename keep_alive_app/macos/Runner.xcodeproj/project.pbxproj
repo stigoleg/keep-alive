@@ -245,6 +245,7 @@
 				33CC110E2044A8840003C045 /* Bundle Framework */,
 				3399D490228B24CF009A79C7 /* ShellScript */,
 				A3A1164DD6FA17C31D8CB77A /* [CP] Embed Pods Frameworks */,
+				CAFE100001000000000000A1 /* Bundle keepalive CLI */,
 			);
 			buildRules = (
 			);
@@ -432,6 +433,25 @@
 			shellPath = /bin/sh;
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-frameworks.sh\"\n";
 			showEnvVarsInLog = 0;
+		};
+		CAFE100001000000000000A1 /* Bundle keepalive CLI */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle keepalive CLI";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/bundle_keepalive_cli.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

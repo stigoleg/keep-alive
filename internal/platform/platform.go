@@ -4,9 +4,9 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
-	"math"
 	"math/rand"
 	"os/exec"
 	"regexp"
@@ -26,43 +26,15 @@ type darwinCapabilities struct {
 	pmsetAvailable      bool
 }
 
-// getIdleTime returns the system idle time on macOS
+// getIdleTime returns the system idle time on macOS.
+//
+// We always go through CoreGraphics because coreGraphicsIdleTime queries both
+// the HID and combined-session state counters and returns the larger of the
+// two — the combined-session counter is what Chromium/Electron (Teams, Slack)
+// use to decide whether the user is away. The old `ioreg` fast path only saw
+// HIDIdleTime and would underreport when only the combined counter advanced.
 func getIdleTime() (time.Duration, error) {
-	idle, err := getIdleTimeIOReg()
-	if err == nil {
-		return idle, nil
-	}
-
-	return getIdleTimeCoreGraphics()
-}
-
-func getIdleTimeCoreGraphics() (time.Duration, error) {
 	return coreGraphicsIdleTime()
-}
-
-func getIdleTimeIOReg() (time.Duration, error) {
-	out, err := exec.Command("ioreg", "-c", "IOHIDSystem").Output()
-	if err != nil {
-		return 0, err
-	}
-
-	// Extract HIDIdleTime value (in nanoseconds, decimal or hex)
-	re := regexp.MustCompile(`"HIDIdleTime"\s*=\s*(0x[0-9a-fA-F]+|\d+)`)
-	matches := re.FindSubmatch(out)
-	if len(matches) < 2 {
-		return 0, fmt.Errorf("HIDIdleTime not found in ioreg output")
-	}
-
-	idleValue := string(matches[1])
-	nanos, err := strconv.ParseUint(idleValue, 0, 64)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse HIDIdleTime %q: %v", idleValue, err)
-	}
-	if nanos > math.MaxInt64 {
-		nanos = math.MaxInt64
-	}
-
-	return time.Duration(int64(nanos)), nil
 }
 
 func parseDarwinBatteryPercentage(output string) (int, error) {
@@ -116,6 +88,21 @@ type darwinKeepAlive struct {
 
 	// last time we warned about jitter failure, unix nanos
 	lastJitterWarnNS int64
+
+	// postAccessChecked is set once we've called CGRequestPostEventAccess to
+	// trigger the system Accessibility prompt. We only want to prompt once
+	// per session — subsequent checks use CGPreflightPostEventAccess.
+	postAccessChecked atomic.Bool
+
+	// postAccessGranted is the cached result of the latest Accessibility
+	// check. False means CGEventPost will silently no-op and we should fall
+	// back to caffeinate -u for chat-app activity.
+	postAccessGranted atomic.Bool
+
+	// lastPostAccessRecheckNS is the last time we re-queried Accessibility
+	// when the cached state was "denied", so users can grant permission while
+	// the CLI is running without restarting it.
+	lastPostAccessRecheckNS int64
 
 	// random source for jitter
 	rnd *rand.Rand
@@ -256,14 +243,69 @@ func (k *darwinKeepAlive) simulateChatAppActivity() {
 		return
 	}
 
+	k.refreshPostEventAccess()
+
 	k.activityCtrl.MaybeJitter(
 		getIdleTime,
 		func(points []MousePoint, sessionDuration time.Duration) {
 			if err := k.jitterMouseRoundPattern(sessionDuration); err != nil {
 				k.warnJitterFailureOnce(err)
+				if errors.Is(err, errCoreGraphicsPostFailed) {
+					k.runCaffeinateUserActive()
+				}
 			}
 		},
 	)
+}
+
+// refreshPostEventAccess checks (and on first call, requests) Accessibility
+// permission. CGEventPost silently no-ops without it, so without this gate
+// we'd jitter blindly and Teams/Slack would still go away.
+func (k *darwinKeepAlive) refreshPostEventAccess() {
+	if !k.postAccessChecked.Load() {
+		granted := coreGraphicsRequestPostAccess()
+		k.postAccessGranted.Store(granted)
+		k.postAccessChecked.Store(true)
+		if !granted {
+			log.Printf("darwin: Accessibility not granted; CGEventPost will no-op. " +
+				"Grant the Keep-Alive app (and the bundled keepalive binary) under " +
+				"System Settings → Privacy & Security → Accessibility. " +
+				"Falling back to `caffeinate -u` for chat-app activity.")
+		}
+		return
+	}
+
+	if k.postAccessGranted.Load() {
+		return
+	}
+
+	nowNS := time.Now().UnixNano()
+	last := atomic.LoadInt64(&k.lastPostAccessRecheckNS)
+	if last != 0 && time.Duration(nowNS-last) < time.Minute {
+		return
+	}
+	atomic.StoreInt64(&k.lastPostAccessRecheckNS, nowNS)
+	if coreGraphicsPreflightPostAccess() {
+		k.postAccessGranted.Store(true)
+		log.Printf("darwin: Accessibility now granted; resuming CoreGraphics activity simulation")
+	}
+}
+
+// runCaffeinateUserActive fires a short-lived `caffeinate -u -t 30` so the
+// system registers a UserIsActive IOPMAssertion. This is the belt to the
+// CGEventPost suspenders — IOPMAssertion does not require Accessibility and
+// touches the HID-side IOKit state, which on many setups is enough to keep
+// Teams/Slack out of Away even when synthetic mouse events are blocked.
+func (k *darwinKeepAlive) runCaffeinateUserActive() {
+	if k.ctx == nil {
+		return
+	}
+	cmd := exec.CommandContext(k.ctx, "caffeinate", "-u", "-t", "30")
+	if err := cmd.Start(); err != nil {
+		log.Printf("darwin: caffeinate -u fallback failed to start: %v", err)
+		return
+	}
+	go func() { _ = cmd.Wait() }()
 }
 
 func (k *darwinKeepAlive) warnJitterFailureOnce(err error) {
@@ -279,6 +321,10 @@ func (k *darwinKeepAlive) warnJitterFailureOnce(err error) {
 
 // jitterMouseRoundPattern applies a small random round pattern and returns to origin.
 func (k *darwinKeepAlive) jitterMouseRoundPattern(sessionDuration time.Duration) error {
+	if k.postAccessChecked.Load() && !k.postAccessGranted.Load() {
+		return errCoreGraphicsPostFailed
+	}
+
 	points := k.patternGen.GenerateRoundJitterPoints()
 	if len(points) == 0 {
 		return nil

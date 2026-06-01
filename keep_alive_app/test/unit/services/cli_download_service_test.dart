@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:keep_alive_app/core/constants.dart';
 import 'package:keep_alive_app/core/exceptions.dart';
 import 'package:keep_alive_app/services/cli_download_service.dart';
 import 'package:keep_alive_app/services/github_api_service.dart';
@@ -148,6 +149,78 @@ void main() {
         expect(path, endsWith('.version'));
         expect(path, contains(tempDir.path));
       });
+    });
+  });
+
+  group('CliDownloadService.ensureCliInstalled', () {
+    late Directory tempDir;
+    late Directory bundledDir;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('keepalive_resolve_');
+      bundledDir = await Directory.systemTemp.createTemp('keepalive_bundled_');
+    });
+
+    tearDown(() async {
+      if (tempDir.existsSync()) await tempDir.delete(recursive: true);
+      if (bundledDir.existsSync()) await bundledDir.delete(recursive: true);
+    });
+
+    CliDownloadService buildService({String? bundledPath}) {
+      final dio = Dio()
+        ..httpClientAdapter = MockHttpAdapter(
+          (_) => responseBodyFromJson('{}'),
+        );
+      return CliDownloadService(
+        apiService: GitHubApiService(dio: dio),
+        dio: dio,
+        appSupportDir: tempDir.path,
+        bundledCliLookup: () async => bundledPath,
+      );
+    }
+
+    test('prefers bundled CLI over installed binary', () async {
+      if (Platform.isWindows) return;
+      final bundledPath = '${bundledDir.path}/keepalive';
+      await _createMockBinary(bundledPath, 'Keep-Alive Version: 1.5.4\n');
+
+      final managedPath = '${tempDir.path}/keepalive';
+      await _createMockBinary(managedPath, 'Keep-Alive Version: 1.5.4\n');
+
+      final service = buildService(bundledPath: bundledPath);
+      await service.ensureCliInstalled();
+
+      expect(service.isUsingSystemBinary, isTrue);
+      expect(await service.binaryPath, bundledPath);
+    });
+
+    test('rejects stale PATH binary below minimum version', () async {
+      if (Platform.isWindows) return;
+      final service = buildService();
+
+      // Stale binary 1.5.3 lives on PATH; min required is 1.5.4. The adopt
+      // step must refuse it so a downgraded Homebrew install cannot mask the
+      // fixed bundled CLI.
+      const staleVersion = 'Keep-Alive Version: 1.5.3';
+      final stalePath = '${tempDir.path}/stale_keepalive';
+      await _createMockBinary(stalePath, '$staleVersion\n');
+
+      final ok = await service.tryAdoptForTest(stalePath, requireMin: true);
+      expect(ok, isFalse,
+          reason: 'CLI below ${AppConstants.minimumCliVersion} must be rejected');
+      expect(service.isUsingSystemBinary, isFalse);
+    });
+
+    test('accepts PATH binary that meets minimum version', () async {
+      if (Platform.isWindows) return;
+      final service = buildService();
+      final goodPath = '${tempDir.path}/good_keepalive';
+      await _createMockBinary(goodPath, 'Keep-Alive Version: 1.5.4\n');
+
+      final ok = await service.tryAdoptForTest(goodPath, requireMin: true);
+      expect(ok, isTrue);
+      expect(service.isUsingSystemBinary, isTrue);
+      expect(await service.binaryPath, goodPath);
     });
   });
 
