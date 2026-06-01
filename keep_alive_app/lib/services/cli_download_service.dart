@@ -758,11 +758,14 @@ class CliDownloadService {
     return null;
   }
 
-  /// Refuses to adopt [candidatePath] if its version is older than (or equal
-  /// to) [currentVersion]. A null [currentVersion] means we have no active
-  /// CLI yet and any minimum-meeting install is allowed. Throws so the
-  /// caller can surface a clear "already up to date" message and leave the
-  /// existing adopted binary untouched.
+  /// Refuses to adopt [candidatePath] when its version is older than (or
+  /// equal to) [currentVersion]. A null [currentVersion] means we have no
+  /// active CLI yet and any install is allowed. Throws either:
+  /// - a friendly "Already on the latest version" message when the
+  ///   candidate matches what we already have (so the Update button has a
+  ///   clear UX, rather than silently doing nothing); or
+  /// - a "Refusing to downgrade" message when the candidate is strictly
+  ///   older — that's a real problem the user should see.
   Future<void> _assertNotDowngrade(
     String candidatePath,
     String? currentVersion,
@@ -771,6 +774,12 @@ class CliDownloadService {
     if (currentVersion == null) return;
     final newVersion = await _parseVersionFromBinary(candidatePath);
     if (VersionUtils.isStrictlyGreater(newVersion, currentVersion)) return;
+
+    if (newVersion != null && newVersion == currentVersion) {
+      throw DownloadException(
+        'Already on the latest version ($currentVersion).',
+      );
+    }
     throw DownloadException(
       'Already at $currentVersion; $source has '
       '${newVersion ?? "unknown"}. Refusing to downgrade.',

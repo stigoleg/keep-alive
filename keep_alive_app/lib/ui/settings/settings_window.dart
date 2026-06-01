@@ -216,12 +216,8 @@ class _UpdatesSection extends StatelessWidget {
   Widget _actionButton(BuildContext context, ThemeData theme) {
     return switch (binaryState.status) {
       DownloadStatus.installed => TextButton(
-        onPressed: () async {
-          final notifier = ref.read(cliBinaryProvider.notifier);
-          if (await notifier.checkForUpdate()) {
-            if (context.mounted) notifier.downloadLatest();
-          }
-        },
+        onPressed: () =>
+            ref.read(cliBinaryProvider.notifier).downloadLatest(),
         style: TextButton.styleFrom(
           padding: const EdgeInsets.symmetric(
             horizontal: AppTheme.spacing10,
@@ -230,7 +226,7 @@ class _UpdatesSection extends StatelessWidget {
           minimumSize: Size.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
-        child: const Text('Check'),
+        child: const Text('Update'),
       ),
       DownloadStatus.notInstalled || DownloadStatus.error => TextButton(
         onPressed: () => ref.read(cliBinaryProvider.notifier).downloadLatest(),

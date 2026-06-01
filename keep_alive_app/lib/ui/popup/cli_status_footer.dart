@@ -141,22 +141,11 @@ class CliStatusFooter extends ConsumerWidget {
         );
       case DownloadStatus.installed:
         return TextButton.icon(
-          onPressed: () async {
-            final hasUpdate = await ref
-                .read(cliBinaryProvider.notifier)
-                .checkForUpdate();
-            if (hasUpdate) {
-              if (context.mounted) {
-                ref.read(cliBinaryProvider.notifier).downloadLatest();
-              }
-            }
-          },
+          onPressed: () =>
+              ref.read(cliBinaryProvider.notifier).downloadLatest(),
           icon: const Icon(Icons.refresh, size: AppTheme.iconSmall),
           label: Text(
-            state.latestVersion != null &&
-                    state.latestVersion != state.installedVersion
-                ? 'Update'
-                : 'Check for updates',
+            'Update',
             style: theme.textTheme.labelMedium,
           ),
           style: TextButton.styleFrom(
