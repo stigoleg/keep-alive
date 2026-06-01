@@ -776,7 +776,7 @@ class CliDownloadService {
     if (VersionUtils.isStrictlyGreater(newVersion, currentVersion)) return;
 
     if (newVersion != null && newVersion == currentVersion) {
-      throw DownloadException(
+      throw AlreadyUpToDateException(
         'Already on the latest version ($currentVersion).',
       );
     }

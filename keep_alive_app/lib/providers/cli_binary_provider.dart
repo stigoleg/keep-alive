@@ -99,6 +99,7 @@ class CliBinaryNotifier extends Notifier<DownloadState> {
         status: DownloadStatus.downloading,
         progress: 0.0,
         errorMessage: null,
+        infoMessage: null,
       );
 
       await _downloadService.updateLatest(
@@ -117,11 +118,26 @@ class CliBinaryNotifier extends Notifier<DownloadState> {
       AppLogger.info('CLI updated to $version');
       prevCompleter?.complete();
       _readyCompleter?.complete();
+    } on AlreadyUpToDateException catch (e) {
+      // Not a failure — the user clicked Update while already on the latest
+      // version. Surface as info, not as a SEVERE error.
+      AppLogger.info(e.message);
+      final version = await _downloadService.getInstalledVersion();
+      state = state.copyWith(
+        status: DownloadStatus.installed,
+        progress: 0.0,
+        installedVersion: version ?? state.installedVersion,
+        latestVersion: version ?? state.latestVersion,
+        errorMessage: null,
+        infoMessage: e.message,
+      );
+      _readyCompleter?.complete();
     } on DownloadException catch (e) {
       AppLogger.error('Failed to download latest CLI (DownloadException)', e);
       state = state.copyWith(
         status: DownloadStatus.error,
         errorMessage: e.message,
+        infoMessage: null,
       );
       _readyCompleter?.complete();
     } catch (e) {
@@ -129,11 +145,17 @@ class CliBinaryNotifier extends Notifier<DownloadState> {
       state = state.copyWith(
         status: DownloadStatus.error,
         errorMessage: e.toString(),
+        infoMessage: null,
       );
       _readyCompleter?.complete();
     } finally {
       _readyCompleter = null;
     }
+  }
+
+  void clearInfo() {
+    if (state.infoMessage == null) return;
+    state = state.copyWith(infoMessage: null);
   }
 
   void clearError() {

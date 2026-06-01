@@ -204,6 +204,10 @@ class _UpdatesSection extends StatelessWidget {
   }
 
   String get _subtitle {
+    if (binaryState.infoMessage != null &&
+        binaryState.status == DownloadStatus.installed) {
+      return binaryState.infoMessage!;
+    }
     return switch (binaryState.status) {
       DownloadStatus.installed =>
         '${binaryState.installedVersion ?? 'unknown'} installed',

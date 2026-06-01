@@ -5,6 +5,7 @@ import '../../models/download_state.dart';
 import '../../providers/cli_binary_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/error_banner.dart';
+import '../widgets/info_banner.dart';
 
 class CliStatusFooter extends ConsumerWidget {
   const CliStatusFooter({super.key});
@@ -30,6 +31,12 @@ class CliStatusFooter extends ConsumerWidget {
                   ref.read(cliBinaryProvider.notifier).downloadLatest(),
               onDismiss: () =>
                   ref.read(cliBinaryProvider.notifier).clearError(),
+            ),
+          if (binaryState.infoMessage != null)
+            InfoBanner(
+              message: binaryState.infoMessage!,
+              onDismiss: () =>
+                  ref.read(cliBinaryProvider.notifier).clearInfo(),
             ),
           Row(
             children: [

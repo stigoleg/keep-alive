@@ -7,12 +7,17 @@ class DownloadState {
   final String? latestVersion;
   final String? errorMessage;
 
+  /// Transient non-error notice, e.g. "Already on the latest version (vX)".
+  /// Shown in an info banner; safe to dismiss without retry.
+  final String? infoMessage;
+
   const DownloadState({
     this.status = DownloadStatus.notInstalled,
     this.progress = 0.0,
     this.installedVersion,
     this.latestVersion,
     this.errorMessage,
+    this.infoMessage,
   });
 
   bool get isDownloading => status == DownloadStatus.downloading;
@@ -23,6 +28,7 @@ class DownloadState {
     String? installedVersion,
     String? latestVersion,
     Object? errorMessage = _keepErrorMessage,
+    Object? infoMessage = _keepInfoMessage,
   }) {
     return DownloadState(
       status: status ?? this.status,
@@ -32,10 +38,14 @@ class DownloadState {
       errorMessage: identical(errorMessage, _keepErrorMessage)
           ? this.errorMessage
           : errorMessage as String?,
+      infoMessage: identical(infoMessage, _keepInfoMessage)
+          ? this.infoMessage
+          : infoMessage as String?,
     );
   }
 
   static const _keepErrorMessage = Object();
+  static const _keepInfoMessage = Object();
 
   Map<String, dynamic> toJson() => {
     'status': status.name,
@@ -43,6 +53,7 @@ class DownloadState {
     'installedVersion': installedVersion,
     'latestVersion': latestVersion,
     'errorMessage': errorMessage,
+    'infoMessage': infoMessage,
   };
 
   factory DownloadState.fromJson(Map<String, dynamic> json) {
@@ -55,6 +66,7 @@ class DownloadState {
       installedVersion: json['installedVersion'] as String?,
       latestVersion: json['latestVersion'] as String?,
       errorMessage: json['errorMessage'] as String?,
+      infoMessage: json['infoMessage'] as String?,
     );
   }
 
@@ -66,7 +78,8 @@ class DownloadState {
           progress == other.progress &&
           installedVersion == other.installedVersion &&
           latestVersion == other.latestVersion &&
-          errorMessage == other.errorMessage;
+          errorMessage == other.errorMessage &&
+          infoMessage == other.infoMessage;
 
   @override
   int get hashCode =>
@@ -74,7 +87,8 @@ class DownloadState {
       progress.hashCode ^
       installedVersion.hashCode ^
       latestVersion.hashCode ^
-      errorMessage.hashCode;
+      errorMessage.hashCode ^
+      infoMessage.hashCode;
 
   @override
   String toString() =>
