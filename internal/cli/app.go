@@ -26,6 +26,7 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
 	"github.com/stigoleg/keep-alive/v2/internal/proc"
 	"github.com/stigoleg/keep-alive/v2/internal/schedule"
+	"github.com/stigoleg/keep-alive/v2/internal/service"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
 	"github.com/stigoleg/keep-alive/v2/internal/util"
 )
@@ -45,6 +46,9 @@ type App struct {
 	Processes proc.Lister
 	// Notifier reports a service that cannot start; nil means notify.New().
 	Notifier notify.Notifier
+	// ServiceManager and ResolveExecutable back `keepalive service`.
+	ServiceManager    func() (service.Manager, error)
+	ResolveExecutable func() (path, warning string, err error)
 
 	// logSetup is logging.Setup; tests replace it.
 	logSetup func(logging.Options) (string, func() error, error)
@@ -96,6 +100,8 @@ func NewApp(version string) *App {
 		Battery:           platform.GetBatteryStatus,
 		DefaultConfigPath: config.DefaultPath,
 		Processes:         session.SystemProcesses(),
+		ServiceManager:    service.New,
+		ResolveExecutable: service.ResolveExecutable,
 	}
 }
 

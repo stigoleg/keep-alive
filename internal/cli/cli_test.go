@@ -14,6 +14,7 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
 	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/proc"
+	"github.com/stigoleg/keep-alive/v2/internal/service"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
 )
 
@@ -69,6 +70,9 @@ func newTestApp(t *testing.T) *testApp {
 			return platform.BatteryStatus{Percentage: 80, Available: true}, nil
 		},
 		DefaultConfigPath: func() (string, error) { return ta.configPath, nil },
+		// Never touch the real login service from tests.
+		ServiceManager:    func() (service.Manager, error) { return nil, errors.New("no service manager in tests") },
+		ResolveExecutable: func() (string, string, error) { return "", "", errors.New("no executable in tests") },
 		Processes: fakeProcs{
 			alive: map[int]bool{12: true, 34: true, 56: true},
 			named: map[string][]proc.Process{"zoom": {{PID: 77, Name: "zoom.us"}}},
@@ -490,9 +494,6 @@ func TestStubsExit1(t *testing.T) {
 	for _, args := range [][]string{
 		{"doctor"},
 		{"doctor", "--probe", "--json"},
-		{"service", "install", "-d", "2h"},
-		{"service", "uninstall"},
-		{"service", "status"},
 	} {
 		ta := newTestApp(t)
 		if code := ta.run(args...); code != ExitFailure {

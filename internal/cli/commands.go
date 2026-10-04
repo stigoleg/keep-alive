@@ -171,30 +171,6 @@ func (a *App) runCommand() *cobra.Command {
 	return cmd
 }
 
-func (a *App) serviceCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "service",
-		Short: "Install keepalive as a background service",
-		Args:  cobra.NoArgs,
-	}
-	var sf sessionFlags
-	install := stubCommand("install", "Install and start the background service", "5", nil)
-	addSessionFlags(install.Flags(), &sf)
-	install.RunE = func(*cobra.Command, []string) error { return notImplemented("service install", "phase 5") }
-	cmd.AddCommand(
-		install,
-		&cobra.Command{
-			Use: "uninstall", Short: "Stop and remove the background service", Args: cobra.NoArgs,
-			RunE: func(*cobra.Command, []string) error { return notImplemented("service uninstall", "phase 5") },
-		},
-		&cobra.Command{
-			Use: "status", Short: "Show the background service state", Args: cobra.NoArgs,
-			RunE: func(*cobra.Command, []string) error { return notImplemented("service status", "phase 5") },
-		},
-	)
-	return cmd
-}
-
 func (a *App) configCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
