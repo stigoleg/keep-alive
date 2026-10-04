@@ -7,10 +7,12 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.3
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/mattn/go-isatty v0.0.20
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
+	golang.org/x/sys v0.39.0
 )
 
 require (
@@ -36,6 +38,5 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
 )
