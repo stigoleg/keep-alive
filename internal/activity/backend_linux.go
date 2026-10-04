@@ -19,9 +19,15 @@ import (
 // cmdTimeout bounds every helper process (xdotool, ydotool, xprintidle).
 const cmdTimeout = 3 * time.Second
 
-const uinputPermissionHint = `give your user access to /dev/uinput: run "sudo usermod -aG input $USER", ` +
-	`add the udev rule KERNEL=="uinput", MODE="0660", GROUP="input" to /etc/udev/rules.d/60-uinput.rules, ` +
-	`then reboot or log out and back in`
+// uinputPermissionHint grants /dev/uinput to whoever is logged in at the
+// seat (systemd's uaccess tag) rather than to a group: the "input" group
+// can also read every keyboard, so any program the user runs could log
+// keystrokes.
+const uinputPermissionHint = `give your login session access to /dev/uinput: ` +
+	`echo 'KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/60-keepalive-uinput.rules, ` +
+	`then sudo udevadm control --reload && sudo udevadm trigger ` +
+	`(or log out and back in, or sudo modprobe -r uinput && sudo modprobe uinput). ` +
+	`Adding yourself to the "input" group also works, but then every program you run can read your keyboard`
 
 // xwaylandNote warns that apps under XWayland may keep counting idle time:
 // XWayland only sees input while one of its windows has the pointer.
