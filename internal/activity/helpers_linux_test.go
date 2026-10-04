@@ -322,3 +322,50 @@ func TestXprintidleRunsUnderTheBackendContext(t *testing.T) {
 		t.Fatal("xprintidle did not run under the backend's context")
 	}
 }
+
+type namedIdle string
+
+func (n namedIdle) Name() string               { return string(n) }
+func (namedIdle) Idle() (time.Duration, error) { return time.Minute, nil }
+
+func TestPickIdleNeverGatesOnXWayland(t *testing.T) {
+	mutter, xp, kde := namedIdle("mutter"), namedIdle("xprintidle"), namedIdle("kde")
+	names := func(ss []IdleSource) []string {
+		var out []string
+		for _, s := range ss {
+			out = append(out, s.Name())
+		}
+		return out
+	}
+	tests := []struct {
+		name            string
+		env             linuxEnv
+		mutter, xp, kde IdleSource
+		gate, xwayland  IdleSource
+		sources         []string
+	}{
+		{"GNOME Wayland with XWayland", linuxEnv{display: ":0", wayland: "wayland-0", desktop: "GNOME"}, mutter, xp, nil, mutter, xp, []string{"mutter", "xprintidle"}},
+		{"KDE Wayland with XWayland", linuxEnv{display: ":1", wayland: "wayland-0", desktop: "KDE"}, nil, xp, nil, nil, xp, []string{"xprintidle"}},
+		{"sway without XWayland", linuxEnv{wayland: "wayland-1", desktop: "SWAY"}, nil, nil, nil, nil, nil, nil},
+		{"GNOME on X11", linuxEnv{display: ":0", desktop: "GNOME"}, mutter, xp, nil, mutter, nil, []string{"mutter", "xprintidle"}},
+		{"plain X11", linuxEnv{display: ":0", desktop: "XFCE"}, nil, xp, nil, xp, nil, []string{"xprintidle"}},
+		{"KDE X11 without xprintidle", linuxEnv{display: ":0", desktop: "KDE"}, nil, nil, kde, kde, nil, []string{"kde"}},
+	}
+	for _, tt := range tests {
+		got := pickIdle(tt.env, tt.mutter, tt.xp, tt.kde)
+		if got.gate != tt.gate || got.xwayland != tt.xwayland || !reflect.DeepEqual(names(got.sources), tt.sources) {
+			t.Errorf("%s: gate %v, xwayland %v, sources %v; want %v, %v, %v", tt.name, got.gate, got.xwayland, names(got.sources), tt.gate, tt.xwayland, tt.sources)
+		}
+	}
+}
+
+func TestXWaylandNoteOnlyOnWaylandWithXWayland(t *testing.T) {
+	if n := desktopNotes(linuxEnv{display: ":0", wayland: "wayland-0"}); len(n) != 1 || !strings.Contains(n[0], "--ozone-platform=wayland") {
+		t.Fatalf("Wayland with XWayland: %v", n)
+	}
+	for _, env := range []linuxEnv{{display: ":0"}, {wayland: "wayland-0"}} {
+		if n := desktopNotes(env); len(n) != 0 {
+			t.Fatalf("%+v: %v", env, n)
+		}
+	}
+}

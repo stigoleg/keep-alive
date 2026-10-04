@@ -54,6 +54,32 @@ func TestProbeExplainsIneffectiveBurst(t *testing.T) {
 	}
 }
 
+func TestProbeNotesACounterThatMissedTheBurst(t *testing.T) {
+	for _, follows := range []bool{false, true} {
+		m := newMachine()
+		m.xwFollows = follows
+		m.clk.Advance(5 * time.Minute)
+		b := probeBackend(m)
+		b.sources = append(b.sources, fakeXWayland{m})
+		b.secondary, b.secondaryNote = fakeXWayland{m}, testXWaylandNote
+		res := probe(context.Background(), b, false, seeded(1), noSleep)
+		if !res.Effective || len(res.Sources) != 2 {
+			t.Fatalf("probe = %+v", res)
+		}
+		xw := res.Sources[1]
+		if xw.Source != "xprintidle (XWayland)" || xw.Before != 5*time.Minute {
+			t.Fatalf("XWayland reading = %+v", xw)
+		}
+		want := testXWaylandNote
+		if follows {
+			want = ""
+		}
+		if xw.Note != want || res.Sources[0].Note != "" {
+			t.Fatalf("follows=%v: notes %q / %q, want %q on XWayland only", follows, res.Sources[0].Note, xw.Note, want)
+		}
+	}
+}
+
 func TestProbeWithoutInjector(t *testing.T) {
 	m := newMachine()
 	m.openErr = &Unavailable{Reason: "no backend", Hint: "install one"}

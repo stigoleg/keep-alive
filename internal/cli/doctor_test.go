@@ -229,3 +229,73 @@ func TestDoctorProbe(t *testing.T) {
 		}
 	}
 }
+
+const xwaylandNote = "Apps running under XWayland (some Slack/Teams builds) may not see this activity; start them with --ozone-platform=wayland"
+
+// waylandLinux is GNOME on Wayland with XWayland and a running instance
+// whose bursts did not reach XWayland.
+func waylandLinux(gate string) doctorFacts {
+	f := brokenLinux()
+	f.ConfigErr = nil
+	f.Activity = activity.Diagnostics{
+		Injectors:   []activity.InjectorCheck{{Name: "uinput", Available: true}},
+		Idle:        []activity.IdleCheck{{Name: "xprintidle (XWayland)", Idle: 3 * time.Second}},
+		Gate:        gate,
+		Verifier:    gate,
+		Environment: []string{"display server: Wayland (with XWayland)", "desktop: KDE"},
+		Notes:       []string{"XWayland: " + xwaylandNote},
+	}
+	snap := session.Snapshot{
+		Running: true, StartedAt: doctorNow.Add(-time.Hour), Mode: session.ModeIndefinite, Active: true, InWindow: true,
+		Activity: activity.Status{State: activity.StateSimulating, Method: "uinput", Hint: xwaylandNote},
+	}
+	f.InstanceErr = nil
+	f.Instance = &ipc.Status{PID: 77, Version: "2.0.0", Origin: "terminal", Snapshot: output.NewJSONSnapshot(snap)}
+	f.InstanceTime = doctorNow
+	return f
+}
+
+func TestDoctorShowsXWaylandWarnings(t *testing.T) {
+	var buf bytes.Buffer
+	renderDoctor(&buf, buildDoctor(waylandLinux("")), false, false)
+	out := buf.String()
+	for _, want := range []string{
+		"warn XWayland",
+		xwaylandNote,
+		"warn idle time",
+		"activity is simulated on a fixed schedule",
+		"xprintidle (XWayland) 3s",
+		"warn instance",
+		"fix: " + xwaylandNote,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor output lacks %q:\n%s", want, out)
+		}
+	}
+
+	buf.Reset()
+	f := waylandLinux("Mutter IdleMonitor")
+	f.Activity.Idle = append([]activity.IdleCheck{{Name: "Mutter IdleMonitor", Idle: 3 * time.Second}}, f.Activity.Idle...)
+	renderDoctor(&buf, buildDoctor(f), false, false)
+	if out := buf.String(); !strings.Contains(out, "ok   idle time") || !strings.Contains(out, "checked against Mutter IdleMonitor") {
+		t.Errorf("GNOME Wayland idle row:\n%s", out)
+	}
+}
+
+func TestDoctorProbeShowsReadingNote(t *testing.T) {
+	r := &doctorReport{}
+	probeSection(r, activity.ProbeResult{
+		Method: "uinput", Verifier: "Mutter IdleMonitor", Effective: true, Burst: time.Second,
+		Sources: []activity.ProbeReading{
+			{Source: "Mutter IdleMonitor", Before: 5 * time.Minute, After: 200 * time.Millisecond},
+			{Source: "xprintidle (XWayland)", Before: 5 * time.Minute, After: 5 * time.Minute, Note: xwaylandNote},
+		},
+	})
+	var buf bytes.Buffer
+	renderDoctor(&buf, *r, false, false)
+	out := buf.String()
+	if !strings.Contains(out, "warn xprintidle (XWayland)") || !strings.Contains(out, "fix: "+xwaylandNote) ||
+		!strings.Contains(out, "ok   verdict") {
+		t.Fatalf("probe section:\n%s", out)
+	}
+}

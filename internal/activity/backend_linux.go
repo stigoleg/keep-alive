@@ -23,6 +23,11 @@ const uinputPermissionHint = `give your user access to /dev/uinput: run "sudo us
 	`add the udev rule KERNEL=="uinput", MODE="0660", GROUP="input" to /etc/udev/rules.d/60-uinput.rules, ` +
 	`then reboot or log out and back in`
 
+// xwaylandNote warns that apps under XWayland may keep counting idle time:
+// XWayland only sees input while one of its windows has the pointer.
+const xwaylandNote = "Apps running under XWayland (some Slack/Teams builds) may not see this activity; " +
+	"start them with --ozone-platform=wayland"
+
 // linuxEnv is the slice of the environment that picks backends.
 type linuxEnv struct {
 	display, wayland, desktop string
@@ -63,9 +68,10 @@ func newBackend(ctx context.Context, keys bool) *backend {
 			}
 		}
 	}
-	b.sources = idleSources(ctx, env, sess, exec.LookPath)
-	if len(b.sources) > 0 {
-		b.idle = b.sources[0]
+	idle := idleSources(ctx, env, sess, exec.LookPath)
+	b.idle, b.sources = idle.gate, idle.sources
+	if idle.xwayland != nil {
+		b.secondary, b.secondaryNote = idle.xwayland, xwaylandNote
 	}
 	b.lock = newLinuxLock(ctx, sys, sess)
 	switch b.lock.(type) {
@@ -77,7 +83,16 @@ func newBackend(ctx context.Context, keys bool) *backend {
 	b.open = func() (Injector, error) { return openLinux(ctx, env, keys) }
 	b.candidates = func() []Injector { return linuxCandidates(ctx, env, keys) }
 	b.env = env.describe()
+	b.notes = desktopNotes(env)
 	return b
+}
+
+// desktopNotes warns about XWayland on a Wayland session that runs it.
+func desktopNotes(env linuxEnv) []string {
+	if env.wayland != "" && env.display != "" {
+		return []string{"XWayland: " + xwaylandNote}
+	}
+	return nil
 }
 
 // describe is the desktop as doctor shows it.

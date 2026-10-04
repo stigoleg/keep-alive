@@ -48,6 +48,11 @@ type controllerDeps struct {
 	sleep sleepFunc
 	// noIdleHint explains how to get an idle source on this desktop.
 	noIdleHint string
+	// secondary is read around every burst for information only (XWayland
+	// on a Wayland session); nil when there is none. After it misses two
+	// bursts in a row that verify saw, simulating reports secondaryHint.
+	secondary     IdleSource
+	secondaryHint string
 }
 
 // controller is the OS-independent state machine behind the Simulator: it
@@ -66,6 +71,8 @@ type controller struct {
 	lastBurst time.Time // end of the last burst since arming
 	nextBurst time.Time
 	misses    int
+	secMisses int    // bursts in a row the secondary counter missed
+	secWarned bool   // secondaryHint is shown from now on
 	lastErr   error  // error of the last fixed-schedule burst
 	status    Status // last published
 	armedSt   Status // status between bursts while armed
@@ -206,6 +213,7 @@ func (c *controller) burst(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
+	secBefore, secOK := c.readSecondary()
 	err := c.play(ctx)
 	if ctx.Err() != nil {
 		return
@@ -223,7 +231,13 @@ func (c *controller) burst(ctx context.Context) {
 		idle, err = c.deps.verify.Idle()
 		effective = err == nil && idle < effectiveIdle
 	}
+	if effective && secOK {
+		c.checkSecondary(secBefore)
+	}
 	st := Status{State: StateSimulating, Method: c.inj.Name(), LastBurst: end, Idle: idle}
+	if c.secWarned {
+		st.Hint = c.deps.secondaryHint
+	}
 	if effective {
 		c.misses = 0
 	} else {
@@ -246,6 +260,35 @@ func (c *controller) burst(ctx context.Context) {
 	}
 	c.armedSt = st
 	c.publish(st)
+}
+
+func (c *controller) readSecondary() (time.Duration, bool) {
+	if c.deps.secondary == nil {
+		return 0, false
+	}
+	d, err := c.deps.secondary.Idle()
+	return d, err == nil
+}
+
+// checkSecondary compares the secondary counter after a burst that reset
+// the verified one. Input still works, so the state stays simulating; after
+// two misses in a row the hint is shown for the rest of the run.
+func (c *controller) checkSecondary(before time.Duration) {
+	if before < effectiveIdle {
+		return // not idle before the burst: nothing to compare
+	}
+	after, err := c.deps.secondary.Idle()
+	switch {
+	case err != nil:
+	case after < effectiveIdle:
+		c.secMisses = 0
+	default:
+		c.secMisses++
+		if c.secMisses >= ineffectiveLimit && !c.secWarned {
+			c.secWarned = true
+			slog.Warn("activity: simulated input does not reach "+c.deps.secondary.Name(), "idle_after", after)
+		}
+	}
 }
 
 // fixedStep bursts every Interval without idle information.

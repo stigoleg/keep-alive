@@ -18,7 +18,12 @@ type backend struct {
 	verify IdleSource
 	// sources is every idle source that could be read, for Probe.
 	sources []IdleSource
-	lock    LockSource
+	// secondary is a counter some apps read that bursts may not reach
+	// (XWayland's on a Wayland session). It never gates or verifies; when it
+	// misses bursts that verify saw, secondaryNote is shown.
+	secondary     IdleSource
+	secondaryNote string
+	lock          LockSource
 	// open picks the input backend.
 	open func() (Injector, error)
 	// noIdleHint explains how to get idle-aware simulation.
@@ -30,6 +35,8 @@ type backend struct {
 	lockName string
 	// env describes the desktop for Diagnose.
 	env []string
+	// notes warn about the desktop for Diagnose, as "name: text".
+	notes []string
 	// release frees OS resources (D-Bus connections).
 	release func()
 }
@@ -57,14 +64,16 @@ func (simulator) Run(ctx context.Context, cfg Config, report func(Status)) error
 	b := newBackend(ctx, cfg.Keys)
 	defer b.Close()
 	c := newController(cfg, controllerDeps{
-		clock:      clock.Real(),
-		idle:       b.idle,
-		verify:     b.verify,
-		lock:       b.lock,
-		open:       b.open,
-		rnd:        newRand(),
-		sleep:      realSleep,
-		noIdleHint: b.noIdleHint,
+		clock:         clock.Real(),
+		idle:          b.idle,
+		verify:        b.verify,
+		lock:          b.lock,
+		open:          b.open,
+		rnd:           newRand(),
+		sleep:         realSleep,
+		noIdleHint:    b.noIdleHint,
+		secondary:     b.secondary,
+		secondaryHint: b.secondaryNote,
 	}, report)
 	return c.run(ctx)
 }
@@ -98,6 +107,9 @@ type ProbeReading struct {
 	Source        string
 	Before, After time.Duration
 	Err           string
+	// Note is set when this counter missed a burst the verifier saw and
+	// that matters, e.g. for apps running under XWayland.
+	Note string
 }
 
 // Probe reads every idle source, plays one burst (the pointer visibly
@@ -168,6 +180,14 @@ func probe(ctx context.Context, b *backend, keys bool, r *rand.Rand, sleep sleep
 		res.Effective = err == nil && d < effectiveIdle
 		if !res.Effective && res.Reason == "" {
 			res.Reason, res.Hint = inj.Diagnose()
+		}
+	}
+	if res.Effective && b.secondary != nil {
+		for i := range res.Sources {
+			rd := &res.Sources[i]
+			if rd.Source == b.secondary.Name() && rd.Err == "" && rd.Before >= effectiveIdle && rd.After >= effectiveIdle {
+				rd.Note = b.secondaryNote
+			}
 		}
 	}
 	return res

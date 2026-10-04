@@ -13,33 +13,66 @@ import (
 	"github.com/godbus/dbus/v5"
 )
 
-// idleSources returns every idle source that answers, best first: Mutter's
-// IdleMonitor, xprintidle on X11, KDE's ScreenSaver on X11, and xprintidle
-// under XWayland as a last resort (it only sees input sent to X11 clients).
-func idleSources(ctx context.Context, env linuxEnv, sess *dbus.Conn, lookPath func(string) (string, error)) []IdleSource {
-	var candidates []IdleSource
+// linuxIdle is what the desktop tells about idle time.
+type linuxIdle struct {
+	// gate decides when to simulate and verifies bursts; nil means a fixed
+	// schedule.
+	gate IdleSource
+	// xwayland is XWayland's counter on a Wayland session, read for
+	// information only.
+	xwayland IdleSource
+	// sources is every source that answered, for Probe and Diagnose.
+	sources []IdleSource
+}
+
+// idleSources reads the idle counters this desktop offers: Mutter's
+// IdleMonitor, xprintidle (X11 or XWayland) and KDE's ScreenSaver on X11.
+func idleSources(ctx context.Context, env linuxEnv, sess *dbus.Conn, lookPath func(string) (string, error)) linuxIdle {
+	var mutter, xp, kde IdleSource
 	if hasOwner(ctx, sess, "org.gnome.Mutter.IdleMonitor") {
-		candidates = append(candidates, mutterIdle{ctx, sess})
+		mutter = mutterIdle{ctx, sess}
 	}
-	_, xerr := lookPath("xprintidle")
-	if env.x11() && xerr == nil {
-		candidates = append(candidates, xprintidle{ctx: ctx, run: runCmd})
+	if _, err := lookPath("xprintidle"); err == nil && env.display != "" {
+		xp = xprintidle{ctx: ctx, run: runCmd, xwayland: env.wayland != ""}
 	}
 	if env.x11() && env.kde() && hasOwner(ctx, sess, "org.freedesktop.ScreenSaver") {
-		candidates = append(candidates, kdeIdle{ctx, sess})
+		kde = kdeIdle{ctx, sess}
 	}
-	if env.display != "" && env.wayland != "" && xerr == nil {
-		candidates = append(candidates, xprintidle{ctx: ctx, run: runCmd, xwayland: true})
+	return pickIdle(env, answering(mutter), answering(xp), answering(kde))
+}
+
+// answering returns s if it can be read, else nil.
+func answering(s IdleSource) IdleSource {
+	if s == nil {
+		return nil
 	}
-	var out []IdleSource
-	for _, s := range candidates {
-		if _, err := s.Idle(); err != nil {
-			slog.Debug("activity: idle source unusable", "source", s.Name(), "err", err)
-			continue
+	if _, err := s.Idle(); err != nil {
+		slog.Debug("activity: idle source unusable", "source", s.Name(), "err", err)
+		return nil
+	}
+	return s
+}
+
+// pickIdle chooses among the sources that answered (nil when absent). On
+// Wayland only Mutter is trusted: XWayland's counter moves only when an X11
+// client gets input, so it never gates or verifies, and without Mutter
+// (KDE, wlroots) there is no trustworthy source at all. On X11 the order
+// is Mutter, xprintidle, KDE.
+func pickIdle(env linuxEnv, mutter, xprintidle, kde IdleSource) linuxIdle {
+	var li linuxIdle
+	for _, s := range []IdleSource{mutter, xprintidle, kde} {
+		if s != nil {
+			li.sources = append(li.sources, s)
 		}
-		out = append(out, s)
 	}
-	return out
+	if env.wayland != "" {
+		li.gate, li.xwayland = mutter, xprintidle
+		return li
+	}
+	if len(li.sources) > 0 {
+		li.gate = li.sources[0]
+	}
+	return li
 }
 
 // mutterIdle is GNOME's idle monitor: GetIdletime returns uint64

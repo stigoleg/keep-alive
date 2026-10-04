@@ -34,11 +34,15 @@ type machine struct {
 	opens     int
 	openErr   error
 	idleReads int
+	// xwLast is the last input a second counter (XWayland) saw; xwFollows
+	// makes injected input reach it.
+	xwLast    time.Time
+	xwFollows bool
 }
 
 func newMachine() *machine {
 	clk := clock.NewFake(time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC))
-	return &machine{clk: clk, lastInput: clk.Now()}
+	return &machine{clk: clk, lastInput: clk.Now(), xwLast: clk.Now()}
 }
 
 func (m *machine) userInput() {
@@ -70,6 +74,17 @@ func (f fakeIdle) Idle() (time.Duration, error) {
 		return 0, f.m.idleErr
 	}
 	return max(f.m.clk.Now().Sub(f.m.lastInput), 0), nil
+}
+
+// fakeXWayland is a second idle counter that only sees injected input when
+// xwFollows is set.
+type fakeXWayland struct{ m *machine }
+
+func (fakeXWayland) Name() string { return "xprintidle (XWayland)" }
+func (f fakeXWayland) Idle() (time.Duration, error) {
+	f.m.mu.Lock()
+	defer f.m.mu.Unlock()
+	return max(f.m.clk.Now().Sub(f.m.xwLast), 0), nil
 }
 
 type fakeLock struct{ m *machine }
@@ -112,6 +127,9 @@ func (f fakeInjector) Play(ctx context.Context, ox, oy float64, p Path) error {
 		// The OS accounts for injected events a little after they are
 		// posted, so the idle counter lags our own clock.
 		f.m.lastInput = f.m.clk.Now().Add(100 * time.Millisecond)
+		if f.m.xwFollows {
+			f.m.xwLast = f.m.lastInput
+		}
 	}
 	return nil
 }
@@ -568,5 +586,50 @@ func TestControllerNeverBurstsAfterCancel(t *testing.T) {
 				t.Fatalf("%d bursts after the context was cancelled", n)
 			}
 		})
+	}
+}
+
+const testXWaylandNote = "Apps running under XWayland may not see this activity"
+
+func TestControllerWarnsOnceWhenXWaylandMissesTwoBursts(t *testing.T) {
+	h := newHarness(t, testCfg, func(m *machine, d *controllerDeps) {
+		d.secondary = fakeXWayland{m}
+		d.secondaryHint = testXWaylandNote
+	})
+	h.runFor(2*time.Minute + 2*time.Second)
+	if st := h.last(); st.State != StateSimulating || st.Hint != "" {
+		t.Fatalf("after one burst XWayland missed: %+v", st)
+	}
+	h.runFor(41 * time.Second)
+	if n := h.m.burstCount(); n != 2 {
+		t.Fatalf("bursts = %d, want 2", n)
+	}
+	if st := h.last(); st.State != StateSimulating || st.Hint != testXWaylandNote {
+		t.Fatalf("after two bursts XWayland missed: %+v, want simulating with the XWayland hint", st)
+	}
+	// The hint stays, so the change is reported (and printed) once.
+	h.m.set(func(m *machine) { m.xwFollows = true })
+	h.runFor(3 * time.Minute)
+	for _, st := range h.statuses[len(h.statuses)-5:] {
+		if st.State != StateSimulating || st.Hint != testXWaylandNote {
+			t.Fatalf("hint dropped later: %+v", st)
+		}
+	}
+}
+
+func TestControllerNoXWaylandHintWhenItFollows(t *testing.T) {
+	h := newHarness(t, testCfg, func(m *machine, d *controllerDeps) {
+		m.xwFollows = true
+		d.secondary = fakeXWayland{m}
+		d.secondaryHint = testXWaylandNote
+	})
+	h.runFor(10 * time.Minute)
+	if h.m.burstCount() < 10 {
+		t.Fatalf("only %d bursts", h.m.burstCount())
+	}
+	for _, st := range h.statuses {
+		if st.Hint != "" {
+			t.Fatalf("hint %q although XWayland saw every burst", st.Hint)
+		}
 	}
 }

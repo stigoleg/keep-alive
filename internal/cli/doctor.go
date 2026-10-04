@@ -261,14 +261,20 @@ func activitySection(s *doctorSection, d activity.Diagnostics) {
 	if len(unused) > 0 {
 		s.add("not needed", checkOK, "not available here: "+strings.Join(unused, "; "), "")
 	}
-	if len(d.Idle) == 0 {
-		s.add("idle time", checkWarn, "no idle source; activity is simulated on a fixed schedule",
+	var parts []string
+	for _, i := range d.Idle {
+		parts = append(parts, fmt.Sprintf("%s %s", i.Name, output.FormatDuration(i.Idle.Truncate(time.Second))))
+	}
+	if d.Gate == "" {
+		// Counters that answer but cannot be trusted (XWayland on Wayland)
+		// are listed for information.
+		detail := "no idle source; activity is simulated on a fixed schedule"
+		if len(parts) > 0 {
+			detail += " (read for information only: " + strings.Join(parts, ", ") + ")"
+		}
+		s.add("idle time", checkWarn, detail,
 			orDefault(d.NoIdleHint, "simulation still works, but also while you use the computer"))
 	} else {
-		var parts []string
-		for _, i := range d.Idle {
-			parts = append(parts, fmt.Sprintf("%s %s", i.Name, output.FormatDuration(i.Idle.Truncate(time.Second))))
-		}
 		detail := "idle: " + strings.Join(parts, ", ")
 		if d.Verifier != "" {
 			detail += "; bursts are checked against " + d.Verifier + " (what Teams/Slack read)"
@@ -296,6 +302,13 @@ func activitySection(s *doctorSection, d activity.Diagnostics) {
 		}
 		s.add(name, checkOK, value, "")
 	}
+	for _, n := range d.Notes {
+		name, value, ok := strings.Cut(n, ": ")
+		if !ok {
+			name, value = "note", n
+		}
+		s.add(name, checkWarn, value, "")
+	}
 }
 
 func instanceCheck(s *doctorSection, st ipc.Status, now time.Time) {
@@ -317,6 +330,11 @@ func instanceCheck(s *doctorSection, st ipc.Status, now time.Time) {
 	}
 	if snap.Activity.State == string(activity.StateDegraded) {
 		s.add("instance", checkWarn, detail, orDefault(snap.Activity.Hint, "see the activity section above"))
+		return
+	}
+	if snap.Activity.State == string(activity.StateSimulating) && snap.Activity.Hint != "" {
+		// Input works, but not for everything (e.g. apps under XWayland).
+		s.add("instance", checkWarn, detail, snap.Activity.Hint)
 		return
 	}
 	s.add("instance", checkOK, detail, "")
@@ -493,7 +511,11 @@ func probeSection(r *doctorReport, p activity.ProbeResult) {
 			s.add(rd.Source, checkWarn, rd.Err, "")
 			continue
 		}
-		s.add(rd.Source, checkOK, fmt.Sprintf("%s → %s", probeDuration(rd.Before), probeDuration(rd.After)), "")
+		status := checkOK
+		if rd.Note != "" {
+			status = checkWarn
+		}
+		s.add(rd.Source, status, fmt.Sprintf("%s → %s", probeDuration(rd.Before), probeDuration(rd.After)), rd.Note)
 	}
 	switch {
 	case p.Verifier == "":
