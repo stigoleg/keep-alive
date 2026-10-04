@@ -1,0 +1,20 @@
+╭──────────────────────────────────────────────╮
+│ keepalive                    [ACTION NEEDED] │
+│                                              │
+│ █▀█   █ █ █▀█                                │
+│ █ █ ▀ ▀▀█ █▀█                                │
+│ ▀▀▀ ▀   ▀ ▀▀▀   running                      │
+│ ──────────────────────────────────────────── │
+│                                              │
+│ ACTIVITY  ▲ not working                      │
+│ ╭──────────────────────────────────────────╮ │
+│ │ Accessibility permission is missing      │ │
+│ │                                          │ │
+│ │ Fix  Grant Accessibility to "Ghostty" in │ │
+│ │      System Settings → Privacy &         │ │
+│ │      Security → Accessibility            │ │
+│ │ keepalive checks again every 60 s        │ │
+│ ╰──────────────────────────────────────────╯ │
+│ HOLDING   system + display awake             │
+╰──────────────────────────────────────────────╯
+ [a] activity off  [s] stop  [?] help  [q] quit

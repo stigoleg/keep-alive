@@ -1,0 +1,6 @@
+10:02:11 keeping system and display awake for 2h0m (until 12:02), stopping at 20% battery, simulating activity
+10:03:11 warning: battery status unavailable: no battery
+10:04:11 active: waiting for idle (needs 2m0s)
+10:05:11 outside work hours until Mon 08:00
+10:07:11 active: simulating input via CoreGraphics mouse events
+12:02:11 stopped: duration reached

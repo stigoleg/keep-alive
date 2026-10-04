@@ -1,0 +1,9 @@
+# Installed by "keepalive service install"; remove with "keepalive service uninstall".
+[Desktop Entry]
+Type=Application
+Name=keepalive
+Comment=Keeps the computer awake
+Exec=env KEEPALIVE_ORIGIN=service "/Users/Jane Doe/bin/keep&alive" --plain --schedule "Mon-Fri 08:00-16:00" --active --while "a\\"b'c\\\\d\\$e%%f<g>"
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

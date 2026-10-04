@@ -1,0 +1,24 @@
+keepalive
+  ✓ version        2.0.0 (darwin/arm64, cgo on)
+  ✓ config         /Users/jane/.config/keepalive/config.toml
+  ✓ log            off (turn on with --log); file: /Users/jane/Library/Caches/keepalive/keepalive.log
+
+Sleep prevention
+  ✓ IOPMAssertion  IOKit power assertions
+
+Activity simulation
+  ✓ CoreGraphics   Accessibility granted to "Ghostty"
+  ✓ idle time      idle: HIDSystemState 3s, CombinedSessionState 3s; bursts are checked against CombinedSessionState (what Teams/Slack read)
+  ✓ screen lock    session dictionary, polled every 2 s (unlocked now)
+
+Battery
+  ✓ battery        76%
+
+Notifications
+  ✓ notifications  Notification Center via osascript; they show up as "Script Editor" in System Settings → Notifications
+
+Background service
+  ✓ launchd        running (pid 812); /Users/jane/Library/LaunchAgents/io.github.stigoleg.keepalive.plist
+
+Running instance
+  ✓ instance       running since 08:00 (service, pid 812), active: simulating input via CoreGraphics

@@ -1,0 +1,14 @@
+# Installed by "keepalive service install"; remove with "keepalive service uninstall".
+[Unit]
+Description=keepalive
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart="/Users/Jane Doe/bin/keep&alive" --plain --schedule "Mon-Fri 08:00-16:00" --active --while "a\"b'c\\d$$e%%f<g>"
+Restart=on-failure
+RestartSec=5
+Environment=KEEPALIVE_ORIGIN=service
+
+[Install]
+WantedBy=graphical-session.target

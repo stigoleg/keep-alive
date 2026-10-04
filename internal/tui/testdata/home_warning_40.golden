@@ -1,0 +1,27 @@
+ keepalive                       v2.0.0
+
+ KEEP THIS COMPUTER AWAKE
+ ❯ Until I stop it                     
+   For a duration…                   2h
+   Until a time…                  17:00
+   During work hours…  Mon–Fri 08:00–1…
+
+ OPTIONS
+ ◉ Simulate activity                [a]
+ ◉ Keep display on                  [d]
+ ○ Stop at battery    now 76%       [b]
+ ○ Tap Shift too                    [k]
+
+ ╭────────────────────────────────────╮
+ │ ! Activity simulation won't work:  │
+ │   Accessibility is off for         │
+ │   "Ghostty", so activity can't     │
+ │   move the pointer                 │
+ │                                    │
+ │ Fix  System Settings → Privacy &   │
+ │      Security → Accessibility →    │
+ │      Ghostty                       │
+ ╰────────────────────────────────────╯
+
+ [↑↓] move  [⏎] start  [?] help
+ [q] quit

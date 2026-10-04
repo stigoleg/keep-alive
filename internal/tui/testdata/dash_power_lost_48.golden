@@ -1,0 +1,22 @@
+╭──────────────────────────────────────────────╮
+│ keepalive                    [ACTION NEEDED] │
+│                                              │
+│ █▀█   █ █ █▀█                                │
+│ █ █ ▀ ▀▀█ █▀█                                │
+│ ▀▀▀ ▀   ▀ ▀▀▀   running                      │
+│ ──────────────────────────────────────────── │
+│                                              │
+│ ACTIVITY  ○ waiting for idle 5s / 2m         │
+│           ▁▄▁▆▁▁█▁▄▁▁▆                       │
+│ HOLDING   ▲ lost                             │
+│ ╭──────────────────────────────────────────╮ │
+│ │ The sleep prevention was lost, so this   │ │
+│ │ computer may sleep.                      │ │
+│ │                                          │ │
+│ │ Fix  if it keeps happening, run          │ │
+│ │      "keepalive doctor"                  │ │
+│ │ keepalive retries on its own, every 30 s │ │
+│ │ at most                                  │ │
+│ ╰──────────────────────────────────────────╯ │
+╰──────────────────────────────────────────────╯
+ [a] activity off  [s] stop  [?] help  [q] quit

@@ -1,0 +1,12 @@
+ keepalive         [PAUSED] battery low
+
+ Resumes when charging
+ ──────────────────────────────────────
+
+ ACTIVITY  on · paused
+ BATTERY   ━━━━━━━━━━━━━━━━━━━─ 97%
+       … paused — resumes when charging
+ HOLDING   nothing while paused
+
+ [a] activity  [s] stop  [?] help
+ [q] quit

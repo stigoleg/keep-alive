@@ -1,0 +1,4 @@
+# Test fixtures are compared byte for byte on every OS: never convert their
+# line endings (Windows checkouts would otherwise get CRLF).
+**/testdata/** -text
+*.golden -text

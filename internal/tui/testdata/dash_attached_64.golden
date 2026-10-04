@@ -1,0 +1,15 @@
+╭──────────────────────────────────────────────────────────────╮
+│ keepalive                                            [AWAKE] │
+│ attached · service pid 812                                   │
+│                                                              │
+│ ▀█    ▀█  ▀▀█                                                │
+│  █  ▀  █  █▀▀                                                │
+│ ▀▀▀ ▀ ▀▀▀ ▀▀▀   left · until 17:00                           │
+│ ━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────────── │
+│                                                              │
+│ ACTIVITY  ◉ simulating   ▁▄▁▆▁▁█▁▄▁▁▆                12s ago │
+│ HOLDING   system + display awake                             │
+│                                                              │
+│ Stop the running keepalive?                                  │
+╰──────────────────────────────────────────────────────────────╯
+ [y] stop it  [n] keep it running

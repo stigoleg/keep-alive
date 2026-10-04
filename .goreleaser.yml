@@ -1,96 +1,281 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+#
+# Releases run locally on the maintainer's Mac (make release, see
+# RELEASING.md): the Developer ID lives in the login keychain. CI only runs
+# `goreleaser release --snapshot` with KEEPALIVE_SIGN=0 to validate this file.
+version: 2
+
+project_name: keepalive
+
 before:
   hooks:
-    - go mod tidy
+    - go mod tidy -diff
     - go run ./cmd/gen-docs
+    - ./scripts/check-manpages.sh
 
 builds:
-  - env:
-      - CGO_ENABLED=0
-    goos:
-      - linux
-      - windows
-      - darwin
-    goarch:
-      - amd64
-      - arm64
-    ignore:
-      - goos: windows
-        goarch: arm64
+  # macOS needs cgo: IOKit power assertions and CoreGraphics input. Apple
+  # clang cross-compiles both arches; the universal binary below merges them.
+  # Without an explicit deployment target clang stamps the host's macOS
+  # version as the minimum.
+  - id: darwin
     main: ./cmd/keepalive
     binary: keepalive
-    ldflags:
-      - -s -w -X main.version={{.Version}}
-    mod_timestamp: '{{ .CommitTimestamp }}'
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    env:
+      - CGO_ENABLED=1
+      - MACOSX_DEPLOYMENT_TARGET=13.0
+      - CGO_CFLAGS=-O2 -g -mmacosx-version-min=13.0
+      - CGO_LDFLAGS=-mmacosx-version-min=13.0
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+  - id: linux
+    main: ./cmd/keepalive
+    binary: keepalive
+    goos: [linux]
+    goarch: [amd64, arm64, "386", arm]
+    goarm: ["7"]
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+  - id: windows
+    main: ./cmd/keepalive
+    binary: keepalive
+    goos: [windows]
+    goarch: [amd64, arm64]
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+  # GUI-subsystem twin for the login service (Task Scheduler): no console
+  # window flashes at logon. service install picks it when it sits next to
+  # keepalive.exe.
+  - id: windows-gui
+    main: ./cmd/keepalive
+    binary: keepalivew
+    goos: [windows]
+    goarch: [amd64, arm64]
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: ["-s -w -H windowsgui -X main.version={{ .Version }}"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+universal_binaries:
+  - id: darwin
+    ids: [darwin]
+    name_template: keepalive
+    replace: true
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    hooks:
+      post:
+        # Developer ID signature with a fixed identifier; notarization only
+        # with KEEPALIVE_NOTARIZE=1. See the script for its environment.
+        - cmd: ./scripts/macos-sign.sh "{{ .Path }}"
+          output: true
 
 archives:
-  - format: tar.gz
-    name_template: >-
-      {{ .ProjectName }}_
-      {{- title .Os }}_
-      {{- if eq .Arch "amd64" }}x86_64
-      {{- else }}{{ .Arch }}{{ end }}
-      {{- if .Arm }}v{{ .Arm }}{{ end }}
-    files:
-      - docs/completions/**
-      - man/keepalive.1
+  - id: default
+    formats: [tar.gz]
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_
+      {{- if eq .Arch "all" }}universal{{ else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    # Windows archives also carry keepalivew.exe.
+    allow_different_binary_count: true
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+      - man/*.1
+      - docs/completions/*
 
-checksum: {}
+nfpms:
+  - id: linux
+    ids: [linux]
+    package_name: keepalive
+    formats: [deb, rpm, apk]
+    vendor: Stig-Ole Gundersen
+    homepage: https://github.com/stigoleg/keep-alive
+    maintainer: Stig-Ole Gundersen <stigoleg@users.noreply.github.com>
+    # The first line is the package summary.
+    description: |-
+      Keeps the computer awake and Teams/Slack Active
+      keepalive keeps the computer awake for a duration, until a time, during
+      work hours or while a process runs. With --active it simulates activity
+      so Teams and Slack keep showing you as Active.
+    license: MIT
+    section: utils
+    priority: optional
+    bindir: /usr/bin
+    mtime: "{{ .CommitDate }}"
+    contents:
+      - src: man/*.1
+        dst: /usr/share/man/man1/
+        file_info: { mode: 0644 }
+      - src: docs/completions/keepalive.bash
+        dst: /usr/share/bash-completion/completions/keepalive
+        file_info: { mode: 0644 }
+      - src: docs/completions/_keepalive
+        dst: /usr/share/zsh/vendor-completions/_keepalive
+        packager: deb
+        file_info: { mode: 0644 }
+      - src: docs/completions/_keepalive
+        dst: /usr/share/zsh/site-functions/_keepalive
+        packager: rpm
+        file_info: { mode: 0644 }
+      - src: docs/completions/_keepalive
+        dst: /usr/share/zsh/site-functions/_keepalive
+        packager: apk
+        file_info: { mode: 0644 }
+      - src: docs/completions/keepalive.fish
+        dst: /usr/share/fish/vendor_completions.d/keepalive.fish
+        file_info: { mode: 0644 }
+      # /dev/uinput for the active seat's user, so --active works on Wayland.
+      - src: packaging/linux/60-keepalive-uinput.rules
+        dst: /usr/lib/udev/rules.d/60-keepalive-uinput.rules
+        file_info: { mode: 0644 }
+      - src: packaging/linux/keepalive-uinput.conf
+        dst: /usr/lib/modules-load.d/keepalive-uinput.conf
+        file_info: { mode: 0644 }
+      - src: LICENSE
+        dst: /usr/share/doc/keepalive/copyright
+        packager: deb
+        file_info: { mode: 0644 }
+      - src: LICENSE
+        dst: /usr/share/licenses/keepalive/LICENSE
+        packager: rpm
+        file_info: { mode: 0644 }
+      - src: LICENSE
+        dst: /usr/share/licenses/keepalive/LICENSE
+        packager: apk
+        file_info: { mode: 0644 }
+    scripts:
+      postinstall: packaging/linux/postinstall.sh
+      postremove: packaging/linux/postremove.sh
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  # scripts/release.sh builds a preview of a tagged release with
+  # KEEPALIVE_RELEASE_PREVIEW=1, so the preview's file names are the release's.
+  version_template: >-
+    {{ if isEnvSet "KEEPALIVE_RELEASE_PREVIEW" }}{{ .Version }}
+    {{- else }}{{ .Version }}-SNAPSHOT-{{ .ShortCommit }}{{ end }}
 
 changelog:
+  use: git
   sort: asc
+  abbrev: 7
   filters:
     exclude:
-      - '^docs:'
-      - '^test:'
-      - '^ci:'
-      - '^chore:'
+      # The Flutter GUI was built and removed again between 1.5.3 and 2.0.0.
+      - '^\w+\(gui\)'
+      - '(?i)\btask \d+\b'
+  # Commits that match no group (tests, CI, chores, merges, non-conventional
+  # subjects) are left out.
+  groups:
+    - title: Breaking changes
+      regexp: '^\w+(\([^)]+\))?!:'
+      order: 0
+    - title: Features
+      regexp: '^feat(\([^)]+\))?:'
+      order: 1
+    - title: Fixes
+      regexp: '^fix(\([^)]+\))?:'
+      order: 2
+    - title: Performance
+      regexp: '^perf(\([^)]+\))?:'
+      order: 3
+    - title: Refactoring
+      regexp: '^refactor(\([^)]+\))?:'
+      order: 4
+    - title: Documentation
+      regexp: '^docs(\([^)]+\))?:'
+      order: 5
 
 release:
   github:
     owner: stigoleg
     name: keep-alive
+  name_template: "keepalive {{ .Version }}"
+  prerelease: auto
   replace_existing_artifacts: true
 
-brews:
+# Package managers are only updated when PUBLISH_PACKAGE_MANAGERS is set (and
+# GH_PAT can push to the tap and the bucket).
+homebrew_casks:
   - name: keepalive
-    description: A lightweight, cross-platform utility to prevent system sleep
+    ids: [default]
+    binaries: [keepalive]
+    # Must match man/ after `go run ./cmd/gen-docs`; the check-manpages
+    # before hook fails the build when they differ.
+    manpages:
+      - man/keepalive.1
+      - man/keepalive-active.1
+      - man/keepalive-completion.1
+      - man/keepalive-completion-bash.1
+      - man/keepalive-completion-fish.1
+      - man/keepalive-completion-powershell.1
+      - man/keepalive-completion-zsh.1
+      - man/keepalive-config.1
+      - man/keepalive-config-init.1
+      - man/keepalive-config-path.1
+      - man/keepalive-config-show.1
+      - man/keepalive-doctor.1
+      - man/keepalive-extend.1
+      - man/keepalive-run.1
+      - man/keepalive-service.1
+      - man/keepalive-service-install.1
+      - man/keepalive-service-status.1
+      - man/keepalive-service-uninstall.1
+      - man/keepalive-status.1
+      - man/keepalive-stop.1
+      - man/keepalive-version.1
+    completions:
+      bash: docs/completions/keepalive.bash
+      zsh: docs/completions/_keepalive
+      fish: docs/completions/keepalive.fish
+    description: Keeps the computer awake and Teams/Slack Active
     homepage: https://github.com/stigoleg/keep-alive
     license: MIT
+    # 1.x shipped as Formula/keepalive.rb in the same tap; RELEASING.md
+    # covers the switch. The macOS binary is Developer ID signed and
+    # notarized, so the quarantine bit stays: Gatekeeper checks the ticket
+    # online on first run.
+    caveats: |
+      keepalive --active needs the Accessibility permission on macOS:
+      System Settings > Privacy & Security > Accessibility.
+      Run "keepalive doctor" to check.
     repository:
       owner: stigoleg
       name: homebrew-tap
-      token: '{{ .Env.GH_PAT }}'
-    directory: Formula
+      token: "{{ .Env.GH_PAT }}"
     commit_author:
       name: GoReleaser Bot
       email: bot@goreleaser.com
-    install: |
-      bin.install "keepalive"
     skip_upload: '{{ not (isEnvSet "PUBLISH_PACKAGE_MANAGERS") }}'
 
 scoops:
   - name: keepalive
-    description: A lightweight, cross-platform utility to prevent system sleep
+    ids: [default]
+    description: Keeps the computer awake and Teams/Slack Active
     homepage: https://github.com/stigoleg/keep-alive
     license: MIT
     repository:
       owner: stigoleg
       name: scoop-bucket
-      token: '{{ .Env.GH_PAT }}'
+      token: "{{ .Env.GH_PAT }}"
+    commit_author:
+      name: GoReleaser Bot
+      email: bot@goreleaser.com
     skip_upload: '{{ not (isEnvSet "PUBLISH_PACKAGE_MANAGERS") }}'
-
-notarize:
-  macos:
-    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
-      sign:
-        certificate: '{{ .Env.MACOS_SIGN_P12 }}'
-        password: '{{ .Env.MACOS_SIGN_PASSWORD }}'
-      notarize:
-        issuer_id: '{{ .Env.MACOS_NOTARY_ISSUER_ID }}'
-        key_id: '{{ .Env.MACOS_NOTARY_KEY_ID }}'
-        key: '{{ .Env.MACOS_NOTARY_KEY }}'
-        wait: true
-        timeout: 20m

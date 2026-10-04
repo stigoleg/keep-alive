@@ -1,0 +1,17 @@
+╭──────────────────────────────────────────────────────────────╮
+│ keepalive                                             v2.0.0 │
+│                                                              │
+│ KEYS                                                         │
+│ [↑↓] choose how long           [a]  simulate activity        │
+│ [⏎]  start                     [d]  keep the display on      │
+│ [?]  this help                 [b]  stop at a battery level  │
+│ [q]  quit                      [k]  tap Shift with activity  │
+│                                                              │
+│ Simulate activity makes small pointer arcs (up to 130 px)    │
+│ once you are idle, so Teams and Slack show you as Active.    │
+│ It pauses while you use the computer or the screen is        │
+│ locked; "keepalive doctor" checks that it works.             │
+│ Logs: off; start with --log to write                         │
+│ /home/u/.cache/keepalive/keepalive.log                       │
+╰──────────────────────────────────────────────────────────────╯
+ [esc] close  [ctrl+c] quit

@@ -1,0 +1,14 @@
+╭──────────────────────────────────────────────────────────────╮
+│ keepalive                                             v2.0.0 │
+│                                                              │
+│ KEEP AWAKE DURING WHICH WORK HOURS?                          │
+│ › Mnday 08:00-16:00█                                         │
+│   e.g. Mon-Fri 08:00-16:00 or weekdays                       │
+│   08:00-11:30,12:00-16:00                                    │
+│                                                              │
+│ ✗ unknown day "Mnday" (use Mon, Tue, … or                    │
+│   weekdays/weekends/daily)                                   │
+│   example: Mon-Fri 08:00-16:00 (days Mon-Sun, weekdays,      │
+│   weekends or daily; 24-hour times)                          │
+╰──────────────────────────────────────────────────────────────╯
+ [⏎] start  [esc] back  [ctrl+c] quit
