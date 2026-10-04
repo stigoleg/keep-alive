@@ -6,6 +6,7 @@
  Activity   ○ paused — you're using the
             computer
  Holding    IOPMAssertion(PreventUserIdleSystem
-            Sleep, +2)
+            Sleep, PreventUserIdleDisplaySleep,
+            PreventSystemSleep)
 
  a activity off · s stop · ? help · q quit

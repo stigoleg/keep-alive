@@ -8,6 +8,7 @@
                 [38;2;138;144;162mfix:[0m Grant Accessibility to "Ghostty" in System
                      Settings → Privacy & Security →
                      Accessibility
- Holding      IOPMAssertion(PreventUserIdleSystemSleep, +2)
+ Holding      IOPMAssertion(PreventUserIdleSystemSleep,
+              PreventUserIdleDisplaySleep, PreventSystemSleep)
 
  [38;2;138;144;162ma activity off · s stop · ? help · q quit[0m

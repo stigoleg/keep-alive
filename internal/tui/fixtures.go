@@ -34,7 +34,7 @@ func fixtureSnap(cfg session.Config) session.Snapshot {
 		StartedAt:   fixtureNow.Add(-48 * time.Minute),
 		Active:      cfg.Active,
 		KeepDisplay: cfg.KeepDisplay,
-		PowerHold:   "IOPMAssertion(PreventUserIdleSystemSleep, +2)",
+		PowerHold:   "IOPMAssertion(PreventUserIdleSystemSleep, PreventUserIdleDisplaySleep, PreventSystemSleep)",
 		InWindow:    true,
 		Mode:        session.ModeIndefinite,
 		Battery:     session.Battery{Threshold: cfg.BatteryThreshold},

@@ -38,3 +38,18 @@ func TestShortDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestHoldSummary(t *testing.T) {
+	for hold, want := range map[string]string{
+		"IOPMAssertion(PreventUserIdleSystemSleep, PreventUserIdleDisplaySleep, PreventSystemSleep)": "IOPMAssertion ×3",
+		"IOPMAssertion(PreventUserIdleSystemSleep)":                                                  "IOPMAssertion",
+		"PowerRequest(Execution, System, Display)":                                                   "PowerRequest ×3",
+		"logind(idle:sleep) + org.freedesktop.ScreenSaver":                                           "logind + org.freedesktop.ScreenSaver",
+		"systemd-inhibit --what=idle:sleep":                                                          "systemd-inhibit --what=idle:sleep",
+		"":                                                                                           "",
+	} {
+		if got := holdSummary(hold); got != want {
+			t.Errorf("holdSummary(%q) = %q, want %q", hold, got, want)
+		}
+	}
+}

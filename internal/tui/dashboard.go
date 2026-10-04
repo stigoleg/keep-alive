@@ -610,3 +610,32 @@ func originLabel(o string) string {
 	}
 	return o
 }
+
+// holdSummary shortens a power hold for the HOLDING row: each mechanism
+// with the number of assertions or requests it holds, "IOPMAssertion ×3"
+// for "IOPMAssertion(A, B, C)"; parts of a combined hold stay joined by
+// " + ".
+func holdSummary(hold string) string {
+	parts := strings.Split(hold, " + ")
+	for i, p := range parts {
+		open := strings.IndexByte(p, '(')
+		if open <= 0 || !strings.HasSuffix(p, ")") {
+			continue
+		}
+		name, inner := p[:open], p[open+1:len(p)-1]
+		if n := len(strings.Split(inner, ",")); n > 1 {
+			parts[i] = fmt.Sprintf("%s ×%d", name, n)
+		} else {
+			parts[i] = name
+		}
+	}
+	return strings.Join(parts, " + ")
+}
+
+// holdWhat is what the hold keeps awake.
+func holdWhat(s session.Snapshot) string {
+	if s.KeepDisplay {
+		return "system + display"
+	}
+	return "system"
+}

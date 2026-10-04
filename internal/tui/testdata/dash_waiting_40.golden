@@ -6,7 +6,9 @@
  Activity   ○ waiting for idle · 1m 10s
             of 2m
  Holding    IOPMAssertion(PreventUserId
-            leSystemSleep, +2)
+            leSystemSleep,
+            PreventUserIdleDisplaySleep
+            , PreventSystemSleep)
 
  a activity off · s stop · ? help ·
  q quit

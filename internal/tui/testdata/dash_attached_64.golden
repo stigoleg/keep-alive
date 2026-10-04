@@ -5,6 +5,7 @@
  ████████████░░░░░░░░░░░░░░░░░░  1h 12m left · until 17:00
 
  Activity     ● simulating · last move 12s ago · CoreGraphics
- Holding      IOPMAssertion(PreventUserIdleSystemSleep, +2)
+ Holding      IOPMAssertion(PreventUserIdleSystemSleep,
+              PreventUserIdleDisplaySleep, PreventSystemSleep)
 
  Stop the running keepalive? y/n

@@ -7,6 +7,7 @@
  Work hours   Mon-Fri 08:00-16:00 · ends 16:00
  Battery      76% · stops at 20%
  Watching     zoom
- Holding      IOPMAssertion(PreventUserIdleSystemSleep, +2)
+ Holding      IOPMAssertion(PreventUserIdleSystemSleep,
+              PreventUserIdleDisplaySleep, PreventSystemSleep)
 
  a activity off · +/- 15 min · s stop · ? help · q quit

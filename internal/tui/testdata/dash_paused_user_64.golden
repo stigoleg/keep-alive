@@ -4,6 +4,7 @@
  running for 48m
 
  Activity     ○ paused — you're using the computer
- Holding      IOPMAssertion(PreventUserIdleSystemSleep, +2)
+ Holding      IOPMAssertion(PreventUserIdleSystemSleep,
+              PreventUserIdleDisplaySleep, PreventSystemSleep)
 
  a activity off · s stop · ? help · q quit

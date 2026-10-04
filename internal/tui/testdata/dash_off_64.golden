@@ -4,6 +4,7 @@
  running for 48m
 
  Activity     off
- Holding      IOPMAssertion(PreventUserIdleSystemSleep, +2)
+ Holding      IOPMAssertion(PreventUserIdleSystemSleep,
+              PreventUserIdleDisplaySleep, PreventSystemSleep)
 
  a activity on · s stop · ? help · q quit

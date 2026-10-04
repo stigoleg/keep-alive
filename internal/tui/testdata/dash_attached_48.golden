@@ -7,6 +7,7 @@
  Activity   ● simulating · last move 12s ago ·
             CoreGraphics
  Holding    IOPMAssertion(PreventUserIdleSystem
-            Sleep, +2)
+            Sleep, PreventUserIdleDisplaySleep,
+            PreventSystemSleep)
 
  Stop the running keepalive? y/n

@@ -12,7 +12,9 @@
                    Privacy & Security →
                    Accessibility
  Holding    IOPMAssertion(PreventUserId
-            leSystemSleep, +2)
+            leSystemSleep,
+            PreventUserIdleDisplaySleep
+            , PreventSystemSleep)
 
  a activity off · s stop · ? help ·
  q quit

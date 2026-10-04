@@ -9,7 +9,8 @@
  Battery    76% · stops at 20%
  Watching   zoom
  Holding    IOPMAssertion(PreventUserIdleSystem
-            Sleep, +2)
+            Sleep, PreventUserIdleDisplaySleep,
+            PreventSystemSleep)
 
  a activity off · +/- 15 min · s stop · ? help…
  q quit

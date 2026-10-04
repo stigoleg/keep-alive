@@ -8,6 +8,7 @@
                 fix: Grant Accessibility to "Ghostty" in System
                      Settings → Privacy & Security →
                      Accessibility
- Holding      IOPMAssertion(PreventUserIdleSystemSleep, +2)
+ Holding      IOPMAssertion(PreventUserIdleSystemSleep,
+              PreventUserIdleDisplaySleep, PreventSystemSleep)
 
  a activity off · s stop · ? help · q quit

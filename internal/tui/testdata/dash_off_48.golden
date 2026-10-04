@@ -6,6 +6,7 @@
 
  Activity   off
  Holding    IOPMAssertion(PreventUserIdleSystem
-            Sleep, +2)
+            Sleep, PreventUserIdleDisplaySleep,
+            PreventSystemSleep)
 
  a activity on · s stop · ? help · q quit
