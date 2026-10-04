@@ -21,4 +21,4 @@ Background service
   ✓ launchd        running (pid 812); /Users/jane/Library/LaunchAgents/io.github.stigoleg.keepalive.plist
 
 Running instance
-  ✓ instance       running since 09:00 (service, pid 812), active: simulating input via CoreGraphics
+  ✓ instance       running since 08:00 (service, pid 812), active: simulating input via CoreGraphics

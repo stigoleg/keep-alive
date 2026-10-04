@@ -1,8 +1,20 @@
 #!/bin/sh
-# Starts Xvfb, lets the X idle counter pass the threshold, runs
+# Starts a mock logind and Xvfb, lets the X idle counter pass the threshold, runs
 # keepalive --active for ~40 s while sampling xprintidle, then checks that
 # the bursts reset the counter and that --json reported simulating/xdotool.
 set -eu
+
+# keepalive refuses to run without a sleep inhibitor. The container has no
+# systemd, so a mocked logind on a private system bus provides one.
+python3 /usr/local/bin/mock-logind /tmp/system-bus-address >/tmp/logind.log 2>&1 &
+i=0
+until [ -s /tmp/system-bus-address ]; do
+	i=$((i + 1))
+	[ "$i" -lt 100 ] || { echo "FAIL: mock logind did not start"; cat /tmp/logind.log; exit 1; }
+	sleep 0.1
+done
+DBUS_SYSTEM_BUS_ADDRESS=$(cat /tmp/system-bus-address)
+export DBUS_SYSTEM_BUS_ADDRESS
 
 export DISPLAY=:99
 # -noreset: without a long-lived client Xvfb regenerates (and zeroes the

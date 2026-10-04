@@ -85,9 +85,7 @@ func control(t *testing.T, args ...string) (string, string, int) {
 }
 
 func TestControlARunningInstance(t *testing.T) {
-	if testing.Short() {
-		t.Skip("holds a real power assertion")
-	}
+	requirePower(t)
 	if _, _, code := control(t, "status"); code != 3 {
 		t.Fatalf("status without an instance: exit %d, want 3", code)
 	}
@@ -147,9 +145,7 @@ func TestControlARunningInstance(t *testing.T) {
 }
 
 func TestSecondInstanceRefusedAndReplace(t *testing.T) {
-	if testing.Short() {
-		t.Skip("holds a real power assertion")
-	}
+	requirePower(t)
 	first := startInstance(t, "-d", "30m")
 
 	_, errOut, code := control(t, "--plain", "-d", "30m")

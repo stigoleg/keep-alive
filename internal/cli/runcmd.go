@@ -24,6 +24,9 @@ func (a *App) executeRun(ctx context.Context, p *Plan, argv []string) error {
 		return err
 	}
 	defer closeLog()
+	if _, err := exec.LookPath(argv[0]); err != nil {
+		return startError(argv[0], err) // before anything is held
+	}
 
 	// From here on signals are ours: before the command starts they cancel
 	// the run, afterwards they are forwarded to it.

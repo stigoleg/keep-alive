@@ -30,9 +30,10 @@ func (f fakeProcs) Alive(pid int) (bool, error) { return f.alive[pid], nil }
 
 func (f fakeProcs) FindByName(name string) ([]proc.Process, error) { return f.named[name], nil }
 
-var now = time.Date(2024, 1, 1, 10, 0, 0, 0, time.Local)
+var now = time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
 
 func TestMain(m *testing.M) {
+	time.Local = time.UTC // golden files use UTC wall clock
 	// Control commands must never reach a real keepalive.
 	dir, err := os.MkdirTemp("", "ka-cli")
 	if err != nil {

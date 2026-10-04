@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/stigoleg/keep-alive/v2/internal/power"
 )
 
 const testVersion = "9.9.9-e2e"
@@ -82,6 +84,25 @@ func testEnv(t *testing.T) []string {
 	)
 	envs[t] = env
 	return env
+}
+
+// requirePower skips a test that holds a real power assertion under -short,
+// and on a Linux machine where nothing can keep it awake (a bare container;
+// test/docker/power covers Linux with a mock logind).
+func requirePower(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("holds a real power assertion")
+	}
+	if runtime.GOOS != "linux" {
+		return
+	}
+	for _, m := range power.Mechanisms() {
+		if m.Available {
+			return
+		}
+	}
+	t.Skip("nothing can keep this machine awake (no logind, no desktop session bus)")
 }
 
 // keepalive runs the binary in the test's isolated environment.

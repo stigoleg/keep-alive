@@ -84,9 +84,7 @@ wait:
 }
 
 func TestHeadlessJSONStopsOnSIGTERM(t *testing.T) {
-	if testing.Short() {
-		t.Skip("holds a real power assertion")
-	}
+	requirePower(t)
 	lines, code := runUntilStarted(t, syscall.SIGTERM, `"type":"started"`, "--plain", "--json", "-d", "1m")
 	if code != 0 {
 		t.Fatalf("exit %d, want 0; output %v", code, lines)
@@ -109,9 +107,7 @@ func TestHeadlessJSONStopsOnSIGTERM(t *testing.T) {
 }
 
 func TestHeadlessHumanStopsOnSIGINT(t *testing.T) {
-	if testing.Short() {
-		t.Skip("holds a real power assertion")
-	}
+	requirePower(t)
 	lines, code := runUntilStarted(t, syscall.SIGINT, "keeping system", "--plain", "-d", "1m")
 	if code != 0 {
 		t.Fatalf("exit %d, want 0; output %v", code, lines)

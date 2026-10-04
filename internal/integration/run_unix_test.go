@@ -14,9 +14,7 @@ import (
 )
 
 func TestRunPropagatesExitCode(t *testing.T) {
-	if testing.Short() {
-		t.Skip("holds a real power assertion")
-	}
+	requirePower(t)
 	for script, want := range map[string]int{
 		"exit 0":        0,
 		"exit 7":        7,
@@ -41,6 +39,7 @@ func TestRunPropagatesExitCode(t *testing.T) {
 }
 
 func TestRunChildKeepsStdout(t *testing.T) {
+	requirePower(t)
 	cmd := keepalive(t, "run", "--json", "--", "sh", "-c", "echo hello; echo oops >&2")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -70,9 +69,7 @@ func TestRunChildKeepsStdout(t *testing.T) {
 }
 
 func TestRunForwardsSIGINT(t *testing.T) {
-	if testing.Short() {
-		t.Skip("holds a real power assertion")
-	}
+	requirePower(t)
 	cmd := keepalive(t, "run", "--", "sh", "-c", `trap 'echo got-int; exit 5' INT; echo ready; while :; do sleep 0.1; done`)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -117,9 +114,7 @@ func TestRunCommandNotFound(t *testing.T) {
 }
 
 func TestWatchedPIDExit(t *testing.T) {
-	if testing.Short() {
-		t.Skip("holds a real power assertion")
-	}
+	requirePower(t)
 	sleeper := keepalive(t) // only for its environment
 	sleeper.Path, sleeper.Args = "/bin/sleep", []string{"sleep", "2"}
 	if err := sleeper.Start(); err != nil {
