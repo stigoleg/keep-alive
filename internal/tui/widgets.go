@@ -103,25 +103,39 @@ func (st Styles) box(tone lipgloss.Style, width int, lines []string) []string {
 	return append(out, tone.Render(g.bl+strings.Repeat(g.h, width-2)+g.br))
 }
 
-// calloutText is what a callout box says: text, then an optional fix and
-// a muted note.
+// calloutText is what a callout box says: text (after mark, when set),
+// then an optional fix and a muted note.
 type calloutText struct {
-	text, fix, note string
+	mark, text, fix, note string
 }
 
 // callout is a box in tone, width cells wide: the text, a blank line, "Fix"
 // and the fix with a hanging indent, then the note in muted. spacer false
 // leaves out the blank line and note false the note (short terminals).
 func (st Styles) callout(tone lipgloss.Style, width int, c calloutText, spacer, note bool) []string {
-	inner := max(width-4, 8)
+	return st.box(tone, width, st.calloutLines(tone, max(width-4, 8), c, spacer, note))
+}
+
+// calloutLines are a callout's lines, width cells wide, without the box.
+func (st Styles) calloutLines(tone lipgloss.Style, width int, c calloutText, spacer, note bool) []string {
 	var lines []string
-	lines = append(lines, wrapLines(st.text(c.text), inner, "")...)
+	if c.mark != "" {
+		for i, l := range wrapLines(st.text(c.text), width-2, "") {
+			if i == 0 {
+				lines = append(lines, tone.Render(c.mark)+" "+l)
+			} else {
+				lines = append(lines, "  "+l)
+			}
+		}
+	} else {
+		lines = append(lines, wrapLines(st.text(c.text), width, "")...)
+	}
 	if c.fix != "" {
 		if spacer {
 			lines = append(lines, "")
 		}
 		const label = "Fix  "
-		for i, l := range wrapLines(st.text(c.fix), inner-len(label), "") {
+		for i, l := range wrapLines(st.text(c.fix), width-len(label), "") {
 			if i == 0 {
 				lines = append(lines, st.Bold.Render("Fix")+"  "+l)
 			} else {
@@ -130,11 +144,11 @@ func (st Styles) callout(tone lipgloss.Style, width int, c calloutText, spacer, 
 		}
 	}
 	if c.note != "" && note {
-		for _, l := range wrapLines(st.text(c.note), inner, "") {
+		for _, l := range wrapLines(st.text(c.note), width, "") {
 			lines = append(lines, st.Muted.Render(l))
 		}
 	}
-	return st.box(tone, width, lines)
+	return lines
 }
 
 // seg is a piece of text in a style from Styles (never a bare
@@ -296,4 +310,15 @@ func versionText(v string) string {
 func (st Styles) label(text string, width int) string {
 	t := strings.ToUpper(text)
 	return st.Label.Render(t) + strings.Repeat(" ", max(width-lipgloss.Width(t), 0))
+}
+
+// bigDigits draws text in the block font, bold, in the gradient across its
+// columns (every row the same).
+func (st Styles) bigDigits(text string) [3]string {
+	rows := st.bigText(text)
+	stops := st.gradientStops(gradDark, gradLight)
+	for i, r := range rows {
+		rows[i] = st.paint(strings.Split(r, ""), stops, true)
+	}
+	return rows
 }

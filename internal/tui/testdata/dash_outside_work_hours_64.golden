@@ -1,10 +1,13 @@
- keepalive 2.0.0                       ◐ PAUSED until Tue 08:00
-
- Outside work hours · the computer may sleep
- running for 48m
-
- Activity     on · resumes with the work hours
- Work hours   Mon-Fri 08:00-16:00 · starts Tue 08:00
- Holding      nothing outside the work hours
-
- a activity off · s stop · ? help · q quit
+╭──────────────────────────────────────────────────────────────╮
+│ keepalive                           [PAUSED] until Tue 08:00 │
+│                                                              │
+│ ▀█  █▀▀   ▀█  ▀▀█                                            │
+│  █  █▀█ ▀  █  █▀▀                                            │
+│ ▀▀▀ ▀▀▀ ▀ ▀▀▀ ▀▀▀   until work hours · Tue 08:00             │
+│ ──────────────────────────────────────────────────────────── │
+│                                                              │
+│ ACTIVITY  on · resumes with the work hours                   │
+│ HOURS     Mon–Fri 08:00–16:00               starts Tue 08:00 │
+│ HOLDING   nothing outside the work hours                     │
+╰──────────────────────────────────────────────────────────────╯
+ [a] activity off  [s] stop  [?] help  [q] quit

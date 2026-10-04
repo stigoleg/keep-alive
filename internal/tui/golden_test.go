@@ -66,6 +66,87 @@ func checkGolden(t *testing.T, file, view string, width int) {
 	}
 }
 
+// TestGoldenShortTerminals draws screens in terminals too short for them:
+// spacing, the HOLDING row, the sparkline, the callout's note and the big
+// digits go, in that order.
+func TestGoldenShortTerminals(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		width, height int
+	}{
+		{"dash_simulating", 64, 14},
+		{"dash_simulating", 40, 11},
+		{"dash_problem", 64, 17},
+		{"dash_problem", 40, 20},
+		{"home_warning", 40, 20},
+	} {
+		view := fixtureNamed(t, tc.name).Build(tc.width, tc.height, nil, Look{}).View()
+		checkGolden(t, fmt.Sprintf("%s_%dx%d.golden", tc.name, tc.width, tc.height), view, tc.width)
+		if n := strings.Count(view, "\n") + 1; n > tc.height {
+			t.Errorf("%s at %dx%d: %d lines", tc.name, tc.width, tc.height, n)
+		}
+	}
+}
+
+func fixtureNamed(t *testing.T, name string) Fixture {
+	t.Helper()
+	for _, f := range Fixtures() {
+		if f.Name == name {
+			return f
+		}
+	}
+	t.Fatalf("no fixture %s", name)
+	return Fixture{}
+}
+
+// TestShortTerminalDropOrder follows the problem dashboard as the
+// terminal gets shorter.
+func TestShortTerminalDropOrder(t *testing.T) {
+	f := fixtureNamed(t, "dash_problem")
+	full := f.Build(64, 40, nil, Look{}).View()
+	has := func(view, s string) bool { return strings.Contains(view, s) }
+	lines := func(view string) int { return strings.Count(view, "\n") + 1 }
+	if !has(full, "HOLDING") || !has(full, "checks again every 60 s") || !has(full, "▀▀▀") || !has(full, "│                                                              │") {
+		t.Fatalf("full view:\n%s", full)
+	}
+	prev := lines(full)
+	var seen []string
+	for h := prev - 1; h >= 8; h-- {
+		v := f.Build(64, h, nil, Look{}).View()
+		if lines(v) > prev {
+			t.Fatalf("height %d: taller than at %d", h, h+1)
+		}
+		prev = lines(v)
+		for _, step := range []struct{ name, gone string }{
+			{"spacers", "│                                                              │"},
+			{"holding", "HOLDING"},
+			{"note", "checks again every 60 s"},
+			{"digits", "▀▀▀"},
+		} {
+			if !has(v, step.gone) && !slices.Contains(seen, step.name) {
+				seen = append(seen, step.name)
+			}
+		}
+	}
+	if want := []string{"spacers", "holding", "note", "digits"}; !slices.Equal(seen, want) {
+		t.Fatalf("dropped %v, want %v", seen, want)
+	}
+	if v := f.Build(64, 8, nil, Look{}).View(); !has(v, "48m running") {
+		t.Fatalf("no one-line time:\n%s", v)
+	}
+	// The sparkline goes before the note, and the state text stays.
+	s := fixtureNamed(t, "dash_simulating")
+	for h := 20; h >= 8; h-- {
+		v := s.Build(64, h, nil, Look{}).View()
+		if !has(v, "◉ simulating") {
+			t.Fatalf("height %d: state text gone:\n%s", h, v)
+		}
+		if !has(v, "▁") && has(v, "▀▀▀") && has(v, "HOLDING") {
+			t.Fatalf("height %d: sparkline gone before HOLDING:\n%s", h, v)
+		}
+	}
+}
+
 // TestFixturesFitEveryWidth draws every fixture in every look at every
 // width from 30 to 100 columns: no line may be wider than the terminal.
 func TestFixturesFitEveryWidth(t *testing.T) {

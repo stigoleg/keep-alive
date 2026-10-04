@@ -10,8 +10,8 @@ type helpKey struct{ key, text string }
 
 var (
 	homeHelp = []helpKey{
-		{"↑ ↓", "choose how long"},
-		{"enter", "start"},
+		{"↑↓", "choose how long"},
+		{"⏎", "start"},
 		{"?", "this help"},
 		{"q", "quit"},
 		{"a", "simulate activity"},
@@ -21,27 +21,32 @@ var (
 	}
 	dashHelp = []helpKey{
 		{"a", "activity on or off"},
-		{"+ -", "15 min more or less"},
+		{"+/-", "15 min more or less"},
 		{"?", "this help"},
-		{"s esc", "stop, back to Home"},
+		{"s/esc", "stop, back to Home"},
 		{"q", "stop and quit"},
 		{"ctrl+c", "stop and quit"},
 	}
 	attachedHelp = []helpKey{
 		{"a", "activity on or off"},
-		{"+ -", "15 min more or less"},
+		{"+/-", "15 min more or less"},
 		{"?", "this help"},
-		{"s esc", "stop it (asks first)"},
+		{"s/esc", "stop it (asks first)"},
 		{"q", "quit, keep it running"},
 		{"ctrl+c", "quit, keep it running"},
 	}
 )
 
 func (m Model) helpView() string {
+	return m.fit(func(level int) string { return m.helpPage(level).String() })
+}
+
+func (m Model) helpPage(level int) *canvas {
 	st := m.st
-	p := newPage(st, m.width)
-	p.add(st.Title.Render("keepalive "+m.version) + st.Muted.Render(" · help"))
-	p.blank()
+	c := newCanvas(st, m.width, level, true)
+	c.header(st.Muted.Render(versionText(m.version)))
+	c.spacer()
+	c.add(st.label("Keys", 0))
 
 	keys := homeHelp
 	if m.screen == screenDashboard {
@@ -50,39 +55,39 @@ func (m Model) helpView() string {
 			keys = attachedHelp
 		}
 	}
-	keyW, textW := 0, 0
+	capW, textW := 0, 0
 	for _, k := range keys {
-		keyW, textW = max(keyW, lipgloss.Width(k.key)), max(textW, lipgloss.Width(k.text))
+		capW, textW = max(capW, lipgloss.Width(st.keycap(k.key))), max(textW, lipgloss.Width(k.text))
 	}
 	cell := func(k helpKey) string {
-		return st.Accent.Render(k.key) + strings.Repeat(" ", keyW-lipgloss.Width(k.key)+2) + k.text
+		kc := st.keycap(k.key)
+		return kc + strings.Repeat(" ", capW-lipgloss.Width(kc)+1) + k.text
 	}
 	// Two pairs per line when they fit, else one.
-	colW := keyW + 2 + textW
-	if p.width >= 2*colW+2 {
+	colW := capW + 1 + textW
+	if c.width >= 2*colW+3 {
 		half := (len(keys) + 1) / 2
 		for i := range half {
 			line := cell(keys[i])
 			if j := i + half; j < len(keys) {
-				line += strings.Repeat(" ", colW+2-lipgloss.Width(line)) + cell(keys[j])
+				line += strings.Repeat(" ", colW+3-lipgloss.Width(line)) + cell(keys[j])
 			}
-			p.add(line)
+			c.add(line)
 		}
 	} else {
 		for _, k := range keys {
-			p.add(cell(k))
+			c.add(cell(k))
 		}
 	}
-	p.blank()
+	c.spacer()
 
-	p.wrapped("Simulate activity moves the pointer in small arcs (up to about 130 px) and back to where it was, once you have been idle for a while, so Teams and Slack keep showing you as Active.", "", st.Muted)
-	p.wrapped(`It pauses while you use the computer or the screen is locked; "keepalive doctor" checks that it works here.`, "", st.Muted)
+	c.wrapped("Simulate activity makes small pointer arcs (up to 130 px) once you are idle, so Teams and Slack show you as Active.", "", st.Muted)
+	c.wrapped(`It pauses while you use the computer or the screen is locked; "keepalive doctor" checks that it works.`, "", st.Muted)
 	logs := "Logs: " + m.logPath
 	if !m.logOn {
 		logs = "Logs: off; start with --log to write " + m.logPath
 	}
-	p.wrapped(logs, "", st.Muted)
-	p.blank()
-	p.footer("? or esc close")
-	return p.String()
+	c.wrapped(logs, "", st.Muted)
+	c.keyHints(keyHint{"esc", "close", ""}, keyHint{"ctrl+c", "quit", ""})
+	return c
 }

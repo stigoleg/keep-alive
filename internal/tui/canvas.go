@@ -94,13 +94,7 @@ func (c *canvas) keyIndent() int {
 }
 
 // height is the number of lines the screen takes.
-func (c *canvas) height() int {
-	n := len(c.lines) + len(c.keys)
-	if c.framed {
-		n += 2
-	}
-	return n
-}
+func (c *canvas) height() int { return strings.Count(c.String(), "\n") + 1 }
 
 func (c *canvas) String() string {
 	var out []string
@@ -116,8 +110,96 @@ func (c *canvas) String() string {
 			}
 		}
 	}
+	if !c.framed && len(c.keys) > 0 && len(c.lines) > 0 && c.level < fitNoSpacers {
+		out = append(out, "") // a frame separates the keys; without one, a blank line does
+	}
 	for _, k := range c.keys {
 		out = append(out, strings.Repeat(" ", c.keyIndent())+k)
 	}
 	return strings.Join(out, "\n")
+}
+
+// labelWidth is the width of the dashboard's label column.
+const labelWidth = 10
+
+// header adds the wordmark on the left and right on the right.
+func (c *canvas) header(right string) { c.spread(c.st.wordmark(), right) }
+
+// fits reports whether a labelled row of value and right takes one line.
+func (c *canvas) fits(value, right string) bool {
+	return labelWidth+lipgloss.Width(value)+gapFor(right)+lipgloss.Width(right) <= c.width
+}
+
+// pick returns the first of values that fits on one labelled row with
+// right, or the last.
+func (c *canvas) pick(right string, values ...string) string {
+	for _, v := range values {
+		if c.fits(v, right) {
+			return v
+		}
+	}
+	return values[len(values)-1]
+}
+
+// labelRow adds an UPPERCASE label, its value and an optional right-aligned
+// note. When they do not fit on one line, the value wraps under itself and
+// the note follows on a line of its own.
+func (c *canvas) labelRow(label, value, right string) {
+	lab := c.st.label(label, labelWidth)
+	if c.fits(value, right) {
+		c.spread(lab+value, right)
+		return
+	}
+	indent := strings.Repeat(" ", labelWidth)
+	for i, l := range wrapLines(value, c.width-labelWidth, "") {
+		if i == 0 {
+			c.add(lab + l)
+		} else {
+			c.add(indent + l)
+		}
+	}
+	if right != "" {
+		c.spread(indent, right)
+	}
+}
+
+// gapFor is the space needed before right: one column, or none without it.
+func gapFor(right string) int {
+	if right == "" {
+		return 0
+	}
+	return 1
+}
+
+// rule adds a line across the content in the frame colour.
+func (c *canvas) rule() { c.add(c.st.Frame.Render(strings.Repeat(c.st.g.thin, c.width))) }
+
+// footerText puts text where the key hints go.
+func (c *canvas) footerText(text string, style lipgloss.Style) {
+	c.keys = nil
+	for _, l := range wrapLines(c.st.text(text), c.total-c.keyIndent()-1, "") {
+		c.keys = append(c.keys, style.Render(l))
+	}
+}
+
+// callout adds a callout box across the content; at the last fit level it
+// loses its box.
+func (c *canvas) callout(tone lipgloss.Style, t calloutText) {
+	if c.level >= fitNoDigits {
+		c.add(c.st.calloutLines(tone, c.width, t, false, false)...)
+		return
+	}
+	c.lines = append(c.lines, c.st.callout(tone, c.width, t, c.level < fitNoSpacers, c.level < fitNoNote)...)
+}
+
+// mark adds text after a mark in tone ("✗ invalid …"), wrapped with a
+// hanging indent, in style.
+func (c *canvas) mark(tone lipgloss.Style, mark, text string, style lipgloss.Style) {
+	for i, l := range wrapLines(c.st.text(text), c.width-2, "") {
+		if i == 0 {
+			c.add(tone.Render(mark) + " " + style.Render(l))
+		} else {
+			c.add("  " + style.Render(l))
+		}
+	}
 }

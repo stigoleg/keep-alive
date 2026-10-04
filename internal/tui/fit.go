@@ -10,6 +10,7 @@ const (
 	fitNoHolding   // the HOLDING row
 	fitNoSparkline // the sparkline (its state text stays)
 	fitNoNote      // a callout's muted line
+	fitNoDigits    // the big digits (for one line of text) and callout boxes
 	fitLevels
 )
 

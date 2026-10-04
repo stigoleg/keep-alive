@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -273,3 +274,15 @@ func keyMsg(k string) tea.KeyMsg {
 }
 
 var errNope = errors.New("nope")
+
+// flat is a view as one line of text: frames and boxes removed, wrapped
+// lines joined and runs of spaces collapsed, for checking what it says.
+func flat(view string) string {
+	view = strings.Map(func(r rune) rune {
+		if strings.ContainsRune("╭╮╰╯│─", r) {
+			return ' '
+		}
+		return r
+	}, view)
+	return strings.Join(strings.Fields(view), " ")
+}

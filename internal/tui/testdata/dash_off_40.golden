@@ -1,14 +1,12 @@
- keepalive 2.0.0                ● AWAKE
+ keepalive                      [AWAKE]
 
- Keeping the system awake · the display
- may sleep
- running for 48m
+ █▀█   █ █ █▀█
+ █ █ ▀ ▀▀█ █▀█
+ ▀▀▀ ▀   ▀ ▀▀▀   running
+ ──────────────────────────────────────
 
- Activity   off
- Holding    IOPMAssertion(PreventUserId
-            leSystemSleep,
-            PreventUserIdleDisplaySleep
-            , PreventSystemSleep)
+ ACTIVITY  off
+ HOLDING   system awake
 
- a activity on · s stop · ? help ·
- q quit
+ [a] activity  [s] stop  [?] help
+ [q] quit

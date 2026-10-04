@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/stigoleg/keep-alive/v2/internal/config"
 	"github.com/stigoleg/keep-alive/v2/internal/schedule"
@@ -191,65 +192,84 @@ func (m Model) lastInput(k inputKind) string {
 }
 
 func (m Model) inputView() string {
+	return m.fit(func(level int) string { return m.inputPage(level).String() })
+}
+
+func (m Model) inputPage(level int) *canvas {
 	st, k := m.st, m.input.kind
-	p := newPage(st, m.width)
-	p.add(st.Title.Render("keepalive " + m.version))
-	p.blank()
-	p.add(st.Heading.Render(inputs[k].title))
+	c := newCanvas(st, m.width, level, true)
+	c.header(st.Muted.Render(versionText(m.version)))
+	c.spacer()
+	c.add(st.label(inputs[k].title, 0))
 	field := m.input.fields[k]
-	p.add(st.Accent.Render("› ") + m.inputLine(field, p.width-2))
+	c.add(st.Accent.Render(st.g.prompt) + " " + m.inputLine(field, c.width-2))
 	example := inputs[k].example
 	if k == inputBattery && m.home.battery.read && m.home.battery.status.Available {
 		example += fmt.Sprintf("; the battery is at %d%% now", m.home.battery.status.Percentage)
 	}
-	p.wrapped("  "+example, "  ", st.Muted)
+	c.wrapped("  "+example, "  ", st.Muted)
 	if last := m.lastInput(k); last != "" && field.Value() == "" {
-		p.add(st.Muted.Render("  enter alone uses " + last))
+		c.add(st.Muted.Render("  enter alone uses " + last))
 	}
 
 	if w := m.input.errs[k]; w != nil {
-		p.blank()
-		p.notice("✗", st.Problem, w.Text, w.Fix)
-	} else if lines := m.preview(k, strings.TrimSpace(field.Value())); len(lines) > 0 {
-		p.blank()
-		for _, l := range lines {
-			p.add("  " + l)
+		c.spacer()
+		c.mark(st.Problem, st.g.invalid, w.Text, st.Plain)
+		if w.Fix != "" {
+			c.wrapped("  "+w.Fix, "  ", st.Muted)
+		}
+	} else if ok, more := m.preview(k, strings.TrimSpace(field.Value())); ok != "" {
+		c.spacer()
+		ok, more = st.text(ok), st.text(more)
+		if one := ok + " " + st.g.sep + " " + more; more != "" && lipgloss.Width(one)+2 <= c.width {
+			c.add(st.OK.Render(st.g.valid) + " " + ok + st.Muted.Render(" "+st.g.sep+" "+more))
+		} else {
+			c.mark(st.OK, st.g.valid, ok, st.Plain)
+			if more != "" {
+				c.wrapped("  "+more, "  ", st.Muted)
+			}
 		}
 	}
-	p.blank()
-	verb := "enter start"
+	verb := "start"
 	if k == inputBattery {
-		verb = "enter set"
+		verb = "set"
 	}
-	p.footer(verb, "esc back", "ctrl+c quit")
-	return p.String()
+	c.keyHints(keyHint{"⏎", verb, ""}, keyHint{"esc", "back", ""}, keyHint{"ctrl+c", "quit", ""})
+	return c
 }
 
-// preview describes a valid value as it is typed.
-func (m Model) preview(k inputKind, text string) []string {
+// preview describes a valid value as it is typed: what it means, and more
+// detail that may go on the same line.
+func (m Model) preview(k inputKind, text string) (ok, more string) {
 	if text == "" {
-		return nil
+		return "", ""
 	}
 	now := m.now()
 	switch k {
+	case inputDuration:
+		d, err := config.ParseDuration(text)
+		if err != nil {
+			return "", ""
+		}
+		return shortDuration(d), "until " + session.ClockText(now, now.Add(d))
 	case inputUntil:
 		t, err := util.NextClockTime(text, now)
 		if err != nil {
-			return nil
+			return "", ""
 		}
 		day := "today"
 		if y, mo, d := t.Date(); y != now.Year() || mo != now.Month() || d != now.Day() {
 			day = "tomorrow"
 		}
-		return []string{fmt.Sprintf("until %s %s · %s from now", t.Format("15:04"), day, span(t.Sub(now)))}
+		return fmt.Sprintf("until %s %s", t.Format("15:04"), day), span(t.Sub(now)) + " from now"
 	case inputSchedule:
 		s, err := schedule.Parse(text)
 		if err != nil {
-			return nil
+			return "", ""
 		}
-		return []string{s.String(), m.st.Muted.Render(scheduleNext(s, now))}
+		return m.st.scheduleText(s.String()), scheduleNext(s, now)
 	}
-	return nil
+	return "", ""
 }
 
 // scheduleNext is "now: until 16:00" inside a window, else

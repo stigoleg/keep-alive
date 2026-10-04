@@ -1,12 +1,11 @@
- keepalive 2.0.0         ◐ PAUSED · battery low
-
- Battery low · the computer may sleep
- running for 48m
-
- Activity   on · resumes when the battery
-            recovers
- Battery    18% · pauses at 20%, resumes at 25%
-            or charging
- Holding    nothing while the battery is low
-
- a activity off · s stop · ? help · q quit
+╭──────────────────────────────────────────────╮
+│ keepalive               [PAUSED] battery low │
+│                                              │
+│ Resumes at 25% or when charging              │
+│ ──────────────────────────────────────────── │
+│                                              │
+│ ACTIVITY  on · resumes with the battery      │
+│ BATTERY   ━───── 18% paused — resumes at 25% │
+│ HOLDING   nothing while the battery is low   │
+╰──────────────────────────────────────────────╯
+ [a] activity off  [s] stop  [?] help  [q] quit

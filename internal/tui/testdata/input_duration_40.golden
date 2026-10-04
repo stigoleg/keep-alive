@@ -1,8 +1,8 @@
- keepalive 2.0.0
+ keepalive                       v2.0.0
 
- Keep awake for how long?
+ KEEP AWAKE FOR HOW LONG?
  › █
    minutes (90) or a duration (45m,
    2h30m)
 
- enter start · esc back · ctrl+c quit
+ [⏎] start  [esc] back  [ctrl+c] quit

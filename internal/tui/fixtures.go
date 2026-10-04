@@ -237,12 +237,19 @@ func Fixtures() []Fixture {
 			return d.m
 		}},
 		inputFixture("input_duration", []string{"down", "enter"}, "", false),
+		inputFixture("input_duration_preview", []string{"down", "enter"}, "90", false),
 		inputFixture("input_duration_error", []string{"down", "enter"}, "9x", true),
 		inputFixture("input_until_error", []string{"down", "down", "enter"}, "25:00", true),
 		inputFixture("input_schedule_error", []string{"down", "down", "down", "enter"}, "Mnday 08:00-16:00", true),
 		inputFixture("input_schedule_preview", []string{"down", "down", "down", "enter"}, "weekdays 8:00-11:30, 12:00-16:00", false),
 		inputFixture("input_battery_error", []string{"b"}, "80", true),
 		dashFixture("dash_simulating", fixtureFull),
+		dashFixture("dash_last_hour", func() session.Snapshot {
+			s := fixtureFull()
+			s.StartedAt, s.EndsAt, s.Mode = fixtureNow.Add(-(11*time.Minute + 55*time.Second)), fixtureNow.Add(48*time.Minute+5*time.Second), session.ModeDuration
+			s.Schedule, s.Watching, s.Battery = "", "", session.Battery{}
+			return s
+		}),
 		dashFixture("dash_waiting", indefiniteFixture(activity.Status{State: activity.StateWaitingIdle, Idle: 70 * time.Second})),
 		dashFixture("dash_paused_user", indefiniteFixture(activity.Status{State: activity.StatePausedUser, Method: "CoreGraphics",
 			LastBurst: fixtureNow.Add(-3 * time.Minute)})),
@@ -258,6 +265,12 @@ func Fixtures() []Fixture {
 			s := indefiniteFixture(activity.Status{State: activity.StateOff})()
 			s.Schedule, s.InWindow, s.PowerHold, s.Paused = "Mon-Fri 08:00-16:00", false, "", session.PauseSchedule
 			s.NextChange = time.Date(2026, 10, 6, 8, 0, 0, 0, time.UTC)
+			return s
+		}),
+		dashFixture("dash_outside_work_hours_long", func() session.Snapshot {
+			s := indefiniteFixture(activity.Status{State: activity.StateOff})()
+			s.Schedule, s.InWindow, s.PowerHold, s.Paused = "Sat 10:00-12:00", false, "", session.PauseSchedule
+			s.NextChange = time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)
 			return s
 		}),
 		dashFixture("dash_battery_paused", func() session.Snapshot {
@@ -284,16 +297,22 @@ func Fixtures() []Fixture {
 			return d.m
 		}},
 		{Name: "dash_ended", Build: func(w, h int, r *lipgloss.Renderer, look Look) Model {
-			d := fixture(fixtureOptions(r, look, func(session.Config) session.Snapshot { return fixtureFull() }), w, h)
+			// A 2 h session that has just reached its end.
+			done := func() session.Snapshot {
+				s := fixtureFull()
+				s.StartedAt, s.EndsAt, s.Mode = fixtureNow.Add(-2*time.Hour), fixtureNow, session.ModeDuration
+				return s
+			}
+			d := fixture(fixtureOptions(r, look, func(session.Config) session.Snapshot { return done() }), w, h)
 			d.press("down", "enter")
 			d.typeText("2h")
 			d.press("enter")
 			c := d.m.dash.ctrl
-			d.send(snapMsg{c: c, snap: fixtureFull()})
-			end := fixtureFull()
+			d.send(snapMsg{c: c, snap: done()})
+			end := done()
 			end.Running = false
 			d.send(eventMsg{c: c, ok: true, ev: session.Event{Time: fixtureNow, Type: session.EventStopped,
-				Snapshot: end, Reason: session.ReasonUntil, Message: "end time reached"}})
+				Snapshot: end, Reason: session.ReasonDuration, Message: "duration reached"}})
 			return d.m
 		}},
 		{Name: "help_home", Build: func(w, h int, r *lipgloss.Renderer, look Look) Model {

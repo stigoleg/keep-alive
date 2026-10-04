@@ -10,7 +10,7 @@ func TestFitDropsInOrderUntilItFits(t *testing.T) {
 	build := func(level int) string { return strings.Repeat("x\n", 9-level) + "x" }
 	for _, tc := range []struct{ height, level int }{
 		{0, fitFull}, {30, fitFull}, {10, fitFull}, {9, fitNoSpacers}, {8, fitNoHolding},
-		{7, fitNoSparkline}, {6, fitNoNote}, {3, fitNoNote},
+		{7, fitNoSparkline}, {6, fitNoNote}, {5, fitNoDigits}, {3, fitNoDigits},
 	} {
 		m := Model{height: tc.height}
 		if got := strings.Count(m.fit(build), "\n") + 1; got != 10-tc.level {

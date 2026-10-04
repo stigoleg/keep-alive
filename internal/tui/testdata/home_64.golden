@@ -1,15 +1,16 @@
- keepalive 2.0.0
-
- Keep this computer awake
- ▸ Until I stop it
-   For a duration…                     last: 2h
-   Until a time…                       last: 17:00
-   During work hours…                  Mon-Fri 08:00-16:00
-
- Options
-   [x] Simulate activity  keeps Teams/Slack Active            a
-   [x] Keep display on                                        d
-   [ ] Stop at battery    current 76%                         b
-   [ ] Tap Shift too      only with activity                  k
-
- ↑↓ choose · enter start · ? help · q quit
+╭──────────────────────────────────────────────────────────────╮
+│ keepalive                                             v2.0.0 │
+│                                                              │
+│ KEEP THIS COMPUTER AWAKE                                     │
+│ ❯ Until I stop it                                            │
+│   For a duration…                                         2h │
+│   Until a time…                                        17:00 │
+│   During work hours…                     Mon–Fri 08:00–16:00 │
+│                                                              │
+│ OPTIONS                                                      │
+│ ◉ Simulate activity  keeps Teams & Slack active          [a] │
+│ ◉ Keep display on                                        [d] │
+│ ○ Stop at battery    now 76%                             [b] │
+│ ○ Tap Shift too      with activity only                  [k] │
+╰──────────────────────────────────────────────────────────────╯
+ [↑↓] move  [⏎] start  [?] help  [q] quit

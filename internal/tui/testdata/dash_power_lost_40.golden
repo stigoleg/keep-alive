@@ -1,11 +1,22 @@
- keepalive 2.0.0              ▲ PROBLEM
+ keepalive              [ACTION NEEDED]
 
- Keeping system and display awake
- running for 48m
+ █▀█   █ █ █▀█
+ █ █ ▀ ▀▀█ █▀█
+ ▀▀▀ ▀   ▀ ▀▀▀   running
+ ──────────────────────────────────────
 
- Activity   ○ waiting for idle · 5s of
-            2m
- Holding    ▲ lost · re-acquiring
+ ACTIVITY  ○ waiting for idle 5s / 2m
+           ▁▄▁▆▁▁█▁▄▁▁▆
+ HOLDING   ▲ lost
+ ╭────────────────────────────────────╮
+ │ The sleep prevention was lost, so  │
+ │ this computer may sleep.           │
+ │                                    │
+ │ Fix  if it keeps happening, run    │
+ │      "keepalive doctor"            │
+ │ keepalive retries on its own,      │
+ │ every 30 s at most                 │
+ ╰────────────────────────────────────╯
 
- a activity off · s stop · ? help ·
- q quit
+ [a] activity  [s] stop  [?] help
+ [q] quit

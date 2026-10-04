@@ -1,16 +1,16 @@
- keepalive 2.0.0                        ● AWAKE
-
- Keeping system and display awake
- ███████████░░░░░░░░  1h 12m left · until 17:00
-
- Activity   ● simulating · last move 12s ago ·
-            CoreGraphics
- Work hours Mon-Fri 08:00-16:00 · ends 16:00
- Battery    76% · stops at 20%
- Watching   zoom
- Holding    IOPMAssertion(PreventUserIdleSystem
-            Sleep, PreventUserIdleDisplaySleep,
-            PreventSystemSleep)
-
- a activity off · +/- 15 min · s stop · ? help…
- q quit
+╭──────────────────────────────────────────────╮
+│ keepalive                            [AWAKE] │
+│                                              │
+│ ▀█    ▀█  ▀▀█                                │
+│  █  ▀  █  █▀▀                                │
+│ ▀▀▀ ▀ ▀▀▀ ▀▀▀   left · until 17:00           │
+│ ━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────── │
+│                                              │
+│ ACTIVITY  ◉ simulating  ▁▄▁▆▁▁█▁▄▁▁▆ 12s ago │
+│ HOURS     Mon–Fri 08:00–16:00     ends 16:00 │
+│ BATTERY   ━━━━━━━━━━━━━──── 76% stops at 20% │
+│ WATCHING  zoom                               │
+│ HOLDING   system + display awake             │
+╰──────────────────────────────────────────────╯
+ [a] activity  [+/-] 15 min  [s] stop  [?] help
+ [q] quit

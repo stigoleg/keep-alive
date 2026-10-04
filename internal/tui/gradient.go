@@ -70,7 +70,8 @@ func (st Styles) gradientStops(dark, light []gradientStop) []gradientStop {
 }
 
 // paint renders each cell of cells in the matching colour of a gradient
-// over len(cells) colours; bold makes the text bold too. Without colours it
+// over len(cells) colours (spaces stay plain); bold makes the text bold
+// too. Without colours it
 // renders the cells as they are (bold when asked).
 func (st Styles) paint(cells []string, stops []gradientStop, bold bool) string {
 	base := st.r.NewStyle().Bold(bold)
@@ -79,6 +80,10 @@ func (st Styles) paint(cells []string, stops []gradientStop, bold bool) string {
 	}
 	var b strings.Builder
 	for i, hex := range gradient(len(cells), stops) {
+		if cells[i] == " " { // nothing to colour
+			b.WriteString(" ")
+			continue
+		}
 		b.WriteString(base.Foreground(lipgloss.Color(hex)).Render(cells[i]))
 	}
 	return b.String()
