@@ -83,8 +83,10 @@ func StatusText(st StatusInfo, now time.Time) string {
 			v = fmt.Sprintf("%d%%", bat.Percent)
 		}
 		switch {
+		case bat.Threshold > 0 && bat.Pause && session.BatteryResumeAt(bat.Threshold) == 0:
+			v += fmt.Sprintf(" · pauses at %d%%, resumes when charging", bat.Threshold)
 		case bat.Threshold > 0 && bat.Pause:
-			v += fmt.Sprintf(" · pauses at %d%%, resumes at %d%% or when charging", bat.Threshold, bat.Threshold+session.BatteryResumeMargin)
+			v += fmt.Sprintf(" · pauses at %d%%, resumes at %d%% or when charging", bat.Threshold, session.BatteryResumeAt(bat.Threshold))
 		case bat.Threshold > 0:
 			v += fmt.Sprintf(" · stops at %d%%", bat.Threshold)
 		}

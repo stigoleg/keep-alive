@@ -597,6 +597,34 @@ func TestBatteryPausesInsteadOfStopping(t *testing.T) {
 	h.assertCounts(2, 2)
 }
 
+// TestBatteryPauseAtTheTopResumesOnlyWhenCharging: -b 100 (keep awake only
+// on external power) cannot resume at 105%.
+func TestBatteryPauseAtTheTopResumesOnlyWhenCharging(t *testing.T) {
+	h := newHarness(t, Config{BatteryThreshold: 100, BatteryPause: true})
+	h.batt.set(97, nil)
+	h.start()
+	if ev := h.waitFor(EventBattery); ev.Snapshot.Paused != PauseBattery || ev.Message != "battery at 97%: paused until charging" {
+		t.Fatalf("pause event: %q %+v", ev.Message, ev.Snapshot)
+	}
+	if ev := h.poll(100); ev.Snapshot.Paused != PauseBattery || ev.Message != "" {
+		t.Fatalf("full battery, not charging: %q %+v", ev.Message, ev.Snapshot)
+	}
+	h.batt.setCharging(true)
+	if ev := h.poll(98); ev.Snapshot.Paused != "" || ev.Message != "charging: keeping awake again" {
+		t.Fatalf("resume on charging: %q %+v", ev.Message, ev.Snapshot)
+	}
+	h.s.Stop(ReasonUser)
+	h.finish(ReasonUser)
+}
+
+func TestBatteryResumeAt(t *testing.T) {
+	for threshold, want := range map[int]int{1: 6, 20: 25, 95: 100, 96: 0, 100: 0} {
+		if got := BatteryResumeAt(threshold); got != want {
+			t.Errorf("BatteryResumeAt(%d) = %d, want %d", threshold, got, want)
+		}
+	}
+}
+
 func TestBatteryPauseEndsWhenCharging(t *testing.T) {
 	h := newHarness(t, Config{BatteryThreshold: 20, BatteryPause: true})
 	h.start()

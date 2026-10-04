@@ -241,9 +241,10 @@ keepalive service status
   without asking.
 - [ ] Laptop only: `keepalive service install -b 100`, then unplug the
   power. Within a minute `keepalive status` shows `power  released while
-  the battery is low` and `battery  NN% · pauses at 100%, resumes at 105%
-  or when charging`, and the service is still running. Plug in: within a
-  minute the power hold is back. Install again without `-b` afterwards.
+  the battery is low` and `battery  NN% · pauses at 100%, resumes when
+  charging`, the service is still running, and its log says `battery at
+  NN%: paused until charging`. Plug in: within a minute the power hold is
+  back. Install again without `-b` afterwards.
 - [ ] `keepalive service uninstall` prints `removed the login service (…)`;
   the unit or autostart file is gone; `keepalive status` exits 3.
 

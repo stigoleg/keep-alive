@@ -182,6 +182,16 @@ const (
 	BatteryResumeMargin = 5
 )
 
+// BatteryResumeAt is the level at which a battery pause at threshold ends
+// without charging, or 0 when no level can end it (threshold plus
+// BatteryResumeMargin is above 100%): then only charging does.
+func BatteryResumeAt(threshold int) int {
+	if at := threshold + BatteryResumeMargin; at <= 100 {
+		return at
+	}
+	return 0
+}
+
 func (c Config) mode() Mode {
 	switch {
 	case !c.Until.IsZero():

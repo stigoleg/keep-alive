@@ -96,6 +96,34 @@ func TestStatusBatteryPause(t *testing.T) {
 	}
 }
 
+// TestStatusBatteryPauseAtTheTop: -b 100 resumes only on external power.
+func TestStatusBatteryPauseAtTheTop(t *testing.T) {
+	snap := batteryPaused()
+	snap.Battery.Percent, snap.Battery.Threshold = 97, 100
+	out := StatusText(StatusInfo{PID: 4242, Version: "2.0.0", Origin: "service", Snapshot: NewJSONSnapshot(snap)}, start.Add(time.Hour))
+	if want := "  battery     97% · pauses at 100%, resumes when charging\n"; !strings.Contains(out, want) {
+		t.Errorf("status lacks %q:\n%s", want, out)
+	}
+}
+
+// TestBatteryReadingWhenItPauses: a reading in a session that pauses at the
+// threshold does not say it stops there.
+func TestBatteryReadingWhenItPauses(t *testing.T) {
+	snap := runningSnap()
+	snap.Battery = session.Battery{Percent: 70, Available: true, Threshold: 100, Pause: true}
+	ev := session.Event{Time: start, Type: session.EventBattery, Snapshot: snap}
+	if got, want := Text(ev), "battery 70% (pauses at 100%)"; got != want {
+		t.Errorf("Text = %q, want %q", got, want)
+	}
+	if got := NewJSONEvent(ev); got.Message != "battery 70% (pauses at 100%)" || !got.Snapshot.Battery.Pause || got.Snapshot.Battery.Threshold != 100 {
+		t.Errorf("JSON event = %+v", got)
+	}
+	snap.Battery.Pause = false
+	if got, want := Text(session.Event{Type: session.EventBattery, Snapshot: snap}), "battery 70% (stops at 100%)"; got != want {
+		t.Errorf("foreground: Text = %q, want %q", got, want)
+	}
+}
+
 func TestBatteryPauseEvents(t *testing.T) {
 	running := runningSnap()
 	running.Battery = session.Battery{Percent: 30, Available: true, Threshold: 20, Pause: true}

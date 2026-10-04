@@ -143,7 +143,11 @@ func Text(ev session.Event) string {
 			return "battery status unavailable"
 		}
 		if snap.Battery.Threshold > 0 {
-			return fmt.Sprintf("battery %d%% (stops at %d%%)", snap.Battery.Percent, snap.Battery.Threshold)
+			verb := "stops"
+			if snap.Battery.Pause {
+				verb = "pauses"
+			}
+			return fmt.Sprintf("battery %d%% (%s at %d%%)", snap.Battery.Percent, verb, snap.Battery.Threshold)
 		}
 		return fmt.Sprintf("battery %d%%", snap.Battery.Percent)
 	case session.EventWarning:

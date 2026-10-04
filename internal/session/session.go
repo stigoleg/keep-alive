@@ -703,12 +703,15 @@ func (l *loop) handleBattery(r batteryResult) bool {
 	msg := ""
 	switch {
 	case !l.batteryLow && low && !r.status.Charging:
-		msg = fmt.Sprintf("battery at %d%%: paused until it is back at %d%% or charging", b.Percent, b.Threshold+BatteryResumeMargin)
+		msg = fmt.Sprintf("battery at %d%%: paused until charging", b.Percent)
+		if at := BatteryResumeAt(b.Threshold); at > 0 {
+			msg = fmt.Sprintf("battery at %d%%: paused until it is back at %d%% or charging", b.Percent, at)
+		}
 		l.setBatteryLow(true)
 	case l.batteryLow && r.status.Charging:
 		msg = "charging: keeping awake again"
 		l.setBatteryLow(false)
-	case l.batteryLow && b.Available && b.Percent >= b.Threshold+BatteryResumeMargin:
+	case l.batteryLow && b.Available && BatteryResumeAt(b.Threshold) > 0 && b.Percent >= BatteryResumeAt(b.Threshold):
 		msg = fmt.Sprintf("battery at %d%%: keeping awake again", b.Percent)
 		l.setBatteryLow(false)
 	}
