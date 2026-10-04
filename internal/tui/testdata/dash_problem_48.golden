@@ -1,0 +1,15 @@
+ keepalive 2.0.0                      ▲ PROBLEM
+
+ Keeping system and display awake
+ running for 48m
+
+ Activity   ▲ not working: Accessibility
+            permission is missing
+              fix: Grant Accessibility to
+                   "Ghostty" in System Settings
+                   → Privacy & Security →
+                   Accessibility
+ Holding    IOPMAssertion(PreventUserIdleSystem
+            Sleep, +2)
+
+ a activity off · s stop · ? help · q quit

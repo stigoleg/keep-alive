@@ -1,0 +1,15 @@
+ [1mkeepalive 2.0.0[0m
+
+ [1mKeep this computer awake[0m
+ [1;38;2;167;139;250m▸ [0m[1;38;2;167;139;250mUntil I stop it[0m                     [38;2;138;144;162m[0m
+   For a duration…                     [38;2;138;144;162mlast: 2h[0m
+   Until a time…                       [38;2;138;144;162mlast: 17:00[0m
+   During work hours…                  [38;2;138;144;162mMon-Fri 08:00-16:00[0m
+
+ [1mOptions[0m
+   [x] Simulate activity  [38;2;138;144;162mkeeps Teams/Slack Active[0m            [38;2;167;139;250ma[0m
+   [x] Keep display on    [38;2;138;144;162m[0m                                    [38;2;167;139;250md[0m
+   [ ] Stop at battery    [38;2;138;144;162mcurrent 76%[0m                         [38;2;167;139;250mb[0m
+   [ ] Tap Shift too      [38;2;138;144;162monly with activity[0m                  [38;2;167;139;250mk[0m
+
+ [38;2;138;144;162m↑↓ choose · enter start · ? help · q quit[0m

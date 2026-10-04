@@ -1,0 +1,11 @@
+ keepalive 2.0.0
+
+ Keep awake during which work hours?
+ › weekdays 8:00-11:30, 12:00-16:00█
+   e.g. Mon-Fri 08:00-16:00 or weekdays 08:00-
+   11:30,12:00-16:00
+
+   Mon-Fri 08:00-11:30,12:00-16:00
+   now: until 16:00
+
+ enter start · esc back · ctrl+c quit

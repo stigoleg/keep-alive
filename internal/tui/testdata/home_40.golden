@@ -1,0 +1,16 @@
+ keepalive 2.0.0
+
+ Keep this computer awake
+ ▸ Until I stop it
+   For a duration…     last: 2h
+   Until a time…       last: 17:00
+   During work hours…  Mon-Fri 08:00-1…
+
+ Options
+   [x] Simulate activity              a
+   [x] Keep display on                d
+   [ ] Stop at battery    76%         b
+   [ ] Tap Shift too                  k
+
+ ↑↓ choose · enter start · ? help ·
+ q quit

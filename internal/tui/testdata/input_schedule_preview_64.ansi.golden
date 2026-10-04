@@ -1,0 +1,10 @@
+ [1mkeepalive 2.0.0[0m
+
+ [1mKeep awake during which work hours?[0m
+ [38;2;167;139;250m› [0mweekdays 8:00-11:30, 12:00-16:00[7m [0m
+ [38;2;138;144;162m  e.g. Mon-Fri 08:00-16:00 or weekdays 08:00-11:30,12:00-16:00[0m
+
+   Mon-Fri 08:00-11:30,12:00-16:00
+   [38;2;138;144;162mnow: until 16:00[0m
+
+ [38;2;138;144;162menter start · esc back · ctrl+c quit[0m

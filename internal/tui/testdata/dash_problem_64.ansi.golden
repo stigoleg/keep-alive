@@ -1,0 +1,13 @@
+ [1mkeepalive 2.0.0[0m                                      [38;2;248;113;113m▲ PROBLEM[0m
+
+ [1mKeeping system and display awake[0m
+ [38;2;138;144;162mrunning for 48m[0m
+
+ Activity     [38;2;248;113;113m▲ not working: [0mAccessibility permission is
+              missing
+                [38;2;138;144;162mfix:[0m Grant Accessibility to "Ghostty" in System
+                     Settings → Privacy & Security →
+                     Accessibility
+ Holding      IOPMAssertion(PreventUserIdleSystemSleep, +2)
+
+ [38;2;138;144;162ma activity off · s stop · ? help · q quit[0m

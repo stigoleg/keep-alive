@@ -1,0 +1,10 @@
+ keepalive 2.0.0
+
+ Keep awake for how long?
+ › 9x█
+   minutes (90) or a duration (45m, 2h30m)
+
+ ✗ invalid duration "9x": use minutes (150) or
+   a duration such as 2h30m or 45m
+
+ enter start · esc back · ctrl+c quit
