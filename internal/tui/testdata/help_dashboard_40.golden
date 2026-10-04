@@ -1,21 +1,20 @@
- keepalive 2.0.0 · help
+ keepalive                       v2.0.0
 
- a       activity on or off
- + -     15 min more or less
- ?       this help
- s esc   stop, back to Home
- q       stop and quit
- ctrl+c  stop and quit
+ KEYS
+ [a]      activity on or off
+ [+/-]    15 min more or less
+ [?]      this help
+ [s/esc]  stop, back to Home
+ [q]      stop and quit
+ [ctrl+c] stop and quit
 
- Simulate activity moves the pointer in
- small arcs (up to about 130 px) and
- back to where it was, once you have
- been idle for a while, so Teams and
- Slack keep showing you as Active.
+ Simulate activity makes small pointer
+ arcs (up to 130 px) once you are idle,
+ so Teams and Slack show you as Active.
  It pauses while you use the computer
  or the screen is locked; "keepalive
- doctor" checks that it works here.
+ doctor" checks that it works.
  Logs:
  /home/u/.cache/keepalive/keepalive.log
 
- ? or esc close
+ [esc] close  [ctrl+c] quit

@@ -1,23 +1,22 @@
- keepalive 2.0.0 · help
+ keepalive                       v2.0.0
 
- ↑ ↓    choose how long
- enter  start
- ?      this help
- q      quit
- a      simulate activity
- d      keep the display on
- b      stop at a battery level
- k      tap Shift with activity
+ KEYS
+ [↑↓] choose how long
+ [⏎]  start
+ [?]  this help
+ [q]  quit
+ [a]  simulate activity
+ [d]  keep the display on
+ [b]  stop at a battery level
+ [k]  tap Shift with activity
 
- Simulate activity moves the pointer in
- small arcs (up to about 130 px) and
- back to where it was, once you have
- been idle for a while, so Teams and
- Slack keep showing you as Active.
+ Simulate activity makes small pointer
+ arcs (up to 130 px) once you are idle,
+ so Teams and Slack show you as Active.
  It pauses while you use the computer
  or the screen is locked; "keepalive
- doctor" checks that it works here.
+ doctor" checks that it works.
  Logs: off; start with --log to write
  /home/u/.cache/keepalive/keepalive.log
 
- ? or esc close
+ [esc] close  [ctrl+c] quit

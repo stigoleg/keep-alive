@@ -2,10 +2,12 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stigoleg/keep-alive/v2/internal/activity"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
@@ -123,24 +125,34 @@ func (m Model) sessionConfig() session.Config {
 }
 
 func (m Model) homeView() string {
+	return m.fit(func(level int) string { return m.homePage(level).String() })
+}
+
+func (m Model) homePage(level int) *canvas {
 	h, st := m.home, m.st
-	p := newPage(st, m.width)
-	p.add(st.Title.Render("keepalive " + m.version))
-	p.blank()
+	c := newCanvas(st, m.width, level, true)
+	c.header(st.Muted.Render(versionText(m.version)))
+	c.spacer()
 
-	p.add(st.Heading.Render("Keep this computer awake"))
-	labelW := max(lenRunes(modeLabels[modeSchedule])+2, p.width-26)
-	values := [modeCount]string{"", lastText(shortDurationOr(h.lastDuration)), lastText(h.lastUntil), h.lastSchedule}
-	for i, label := range modeLabels {
-		prefix := "  "
-		if i == h.cursor {
-			prefix, label = st.Selected.Render("▸ "), st.Selected.Render(label)
-		}
-		p.add(prefix + row(p.width-2, label, labelW, st.Muted.Render(values[i]), ""))
+	c.add(st.label("Keep this computer awake", 0))
+	values := [modeCount]string{"", shortDurationOr(h.lastDuration), h.lastUntil, st.scheduleText(h.lastSchedule)}
+	labelW := 0
+	for _, label := range modeLabels {
+		labelW = max(labelW, lipgloss.Width(st.text(label))+2)
 	}
-	p.blank()
+	for i := range values { // the labels stay whole; long values are cut
+		values[i] = ansi.Truncate(values[i], max(c.width-labelW-2, 1), st.g.ellipsis)
+	}
+	for i, label := range modeLabels {
+		if i == h.cursor {
+			c.add(st.band(c.width, []seg{{st.g.sel + " " + label, st.Selected}}, []seg{{values[i], st.Muted}}))
+			continue
+		}
+		c.spread("  "+st.text(label), st.Muted.Render(values[i]))
+	}
+	c.spacer()
 
-	p.add(st.Heading.Render("Options"))
+	c.add(st.label("Options", 0))
 	battery := "Stop at battery"
 	if h.opts.battery > 0 {
 		battery = fmt.Sprintf("Stop at battery %d%%", h.opts.battery)
@@ -150,37 +162,39 @@ func (m Model) homeView() string {
 		label, desc, short string
 		key                string
 	}{
-		{h.opts.active, "Simulate activity", "keeps Teams/Slack Active", "", "a"},
+		{h.opts.active, "Simulate activity", "keeps Teams & Slack active", "", "a"},
 		{h.opts.display, "Keep display on", "", "", "d"},
 		{h.opts.battery > 0, battery, h.batteryText(), h.batteryShort(), "b"},
-		{h.opts.keys, "Tap Shift too", "only with activity", "", "k"},
+		{h.opts.keys, "Tap Shift too", "with activity only", "", "k"},
 	}
 	optW := 0
 	for _, o := range opts {
-		optW = max(optW, lenRunes("[x] "+o.label)+2)
+		optW = max(optW, lipgloss.Width(o.label)+4) // the mark, a space and a gap of 2
 	}
-	room := p.width - 2 - optW - 3 // the key and its gap
+	keyW := lipgloss.Width(st.keycap("a"))
+	room := c.width - optW - keyW - 1
 	for _, o := range opts {
-		box := "[ ] "
+		mark := st.Dim.Render(st.g.off)
 		if o.on {
-			box = "[x] "
+			mark = st.OK.Render(st.g.on)
 		}
+		left := mark + " " + o.label
 		desc := o.desc
-		if lenRunes(desc) > room {
+		if lipgloss.Width(desc) > room {
 			desc = o.short
 		}
-		p.add("  " + row(p.width-2, box+o.label, optW, st.Muted.Render(desc), st.Accent.Render(o.key)))
+		if desc != "" {
+			left += strings.Repeat(" ", optW-lipgloss.Width(left)) + st.Muted.Render(st.text(desc))
+		}
+		c.spread(left, st.keycap(o.key))
 	}
 
-	if ws := m.homeWarnings(); len(ws) > 0 {
-		p.blank()
-		for _, w := range ws {
-			p.notice(w.mark, w.style(st), w.Text, w.Fix)
-		}
+	for _, w := range m.homeWarnings() {
+		c.spacer()
+		c.callout(w.style(st), calloutText{mark: w.mark, text: w.Text, fix: w.Fix})
 	}
-	p.blank()
-	p.footer("↑↓ choose", "enter start", "? help", "q quit")
-	return p.String()
+	c.keyHints(keyHint{"↑↓", "move", ""}, keyHint{"⏎", "start", ""}, keyHint{"?", "help", ""}, keyHint{"q", "quit", ""})
+	return c
 }
 
 // batteryShort is batteryText for narrow terminals.
@@ -198,16 +212,16 @@ func (h homeState) batteryText() string {
 	case h.battery.err != nil || !h.battery.status.Available:
 		return "no battery"
 	}
-	return fmt.Sprintf("current %d%%", h.battery.status.Percentage)
+	return fmt.Sprintf("now %d%%", h.battery.status.Percentage)
 }
 
 type homeWarning struct {
 	Warning
-	mark string // "!" or "✗"
+	mark string // "!", or ✗ for a problem that blocks
 }
 
 func (w homeWarning) style(st Styles) lipgloss.Style {
-	if w.mark == "✗" {
+	if w.mark == st.g.invalid {
 		return st.Problem
 	}
 	return st.Warn
@@ -218,7 +232,7 @@ func (m Model) homeWarnings() []homeWarning {
 	h := m.home
 	var ws []homeWarning
 	if h.problem != nil {
-		ws = append(ws, homeWarning{*h.problem, "✗"})
+		ws = append(ws, homeWarning{*h.problem, m.st.g.invalid})
 	}
 	if h.instance != nil {
 		ws = append(ws, homeWarning{*h.instance, "!"})
@@ -240,18 +254,9 @@ func activityIdle(cfg session.Config) time.Duration {
 	return activity.DefaultIdleThreshold
 }
 
-func lastText(v string) string {
-	if v == "" {
-		return ""
-	}
-	return "last: " + v
-}
-
 func shortDurationOr(d time.Duration) string {
 	if d <= 0 {
 		return ""
 	}
 	return shortDuration(d)
 }
-
-func lenRunes(s string) int { return len([]rune(s)) }

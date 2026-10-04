@@ -42,6 +42,8 @@ type dashState struct {
 	ended   string // the final line, once the session has ended
 	endedAt time.Time
 
+	bursts burstLog // for the sparkline
+
 	flash      string
 	flashKind  flashKind
 	flashUntil time.Time
@@ -113,9 +115,9 @@ func (m Model) openDashboard(c Controller, idleNeed time.Duration) Model {
 	m.slot.set(c)
 	m.screen, m.help = screenDashboard, false
 	m.tick++
-	m.dash = dashState{ctrl: c, idleNeed: idleNeed}
+	m.dash = dashState{ctrl: c, idleNeed: idleNeed, bursts: newBurstLog(m.now())}
 	if ic, ok := c.(*ipcController); ok {
-		m.dash.snap = ic.cached()
+		m.dash.setSnap(ic.cached(), m.now())
 	}
 	return m
 }
@@ -142,6 +144,12 @@ func (m Model) toHome() (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// setSnap follows the session's state, and its bursts for the sparkline.
+func (d *dashState) setSnap(s session.Snapshot, now time.Time) {
+	d.snap = s
+	d.bursts.observe(s.Activity.LastBurst, now)
+}
+
 func (m Model) flash(kind flashKind, text string, d time.Duration) Model {
 	m.dash.flash, m.dash.flashKind, m.dash.flashUntil = text, kind, m.now().Add(d)
 	return m
@@ -163,7 +171,7 @@ func (m Model) dashUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(tickCmd(m.tick), snapCmd(d.ctrl))
 	case snapMsg:
 		if msg.c == d.ctrl && d.ended == "" && msg.err == nil {
-			d.snap = msg.snap
+			d.setSnap(msg.snap, m.now())
 		}
 	case eventMsg:
 		if msg.c != d.ctrl || m.screen != screenDashboard || d.ended != "" {
@@ -217,7 +225,7 @@ func (m Model) onEvent(ev session.Event) (tea.Model, tea.Cmd) {
 	if ev.Type == session.EventStopped {
 		return m.ended(ev)
 	}
-	d.snap = ev.Snapshot
+	d.setSnap(ev.Snapshot, m.now())
 	switch ev.Type {
 	case session.EventWarning:
 		m = m.flash(flashWarn, ev.Message, flashTime)
@@ -352,33 +360,44 @@ func (m Model) extend(by time.Duration) (tea.Model, tea.Cmd) {
 // ---- view ----
 
 func (m Model) dashView() string {
+	return m.fit(func(level int) string { return m.dashPage(level).String() })
+}
+
+func (m Model) dashPage(level int) *canvas {
 	d, st := m.dash, m.st
 	s := d.snap
 	now := m.now()
 	if d.ended != "" {
 		now = d.endedAt
 	}
-	p := newPage(st, m.width)
-	p.header(st.Title.Render("keepalive "+m.version), m.badge(now))
+	c := newCanvas(st, m.width, level, true)
+	pill, aside := m.statusPill(now)
+	switch {
+	case aside == "":
+		c.header(pill)
+	case lipgloss.Width(st.wordmark())+2+lipgloss.Width(pill)+1+lipgloss.Width(aside) <= c.width:
+		c.header(pill + " " + st.Muted.Render(st.text(aside)))
+	default:
+		c.header(pill)
+		c.spread("", st.Muted.Render(st.text(aside)))
+	}
 	inst := d.ctrl.Attached()
 	if inst != nil {
-		p.add(st.Muted.Render(fmt.Sprintf("attached to %s · pid %d", originLabel(inst.Origin), inst.PID)))
+		c.add(st.Muted.Render(fmt.Sprintf("attached %s %s pid %d", st.g.sep, originLabel(inst.Origin), inst.PID)))
 	}
-	p.blank()
+	c.spacer()
+	m.hero(c, s, now)
 
 	switch {
 	case d.ended != "":
-		p.wrapped(d.ended, "  ", st.Heading)
-	case !s.Running:
-		p.add("Starting…")
-	default:
-		p.wrapped(headline(s), "", st.Heading)
-		m.timeline(p, s, now)
-		p.blank()
-		m.rows(p, s, now)
+		c.spacer()
+		c.wrapped(d.ended, "  ", st.Muted)
+	case s.Running:
+		c.spacer()
+		m.rows(c, s, now)
 	}
 	if d.flash != "" {
-		p.blank()
+		c.spacer()
 		style := st.Muted
 		switch d.flashKind {
 		case flashWarn:
@@ -386,55 +405,59 @@ func (m Model) dashView() string {
 		case flashProblem:
 			style = st.Problem
 		}
-		p.wrapped(d.flash, "  ", style)
+		c.wrapped(d.flash, "  ", style)
 	}
-	p.blank()
+	if d.confirm {
+		c.spacer()
+		c.add(st.Warn.Bold(true).Render("Stop the running keepalive?"))
+	}
+
 	switch {
 	case d.ended != "" && d.auto:
-		p.footer("q quit")
+		c.keyHints(keyHint{"q", "quit", ""})
 	case d.ended != "":
-		p.footer("enter back", "q quit")
+		c.keyHints(keyHint{"⏎", "back", ""}, keyHint{"q", "quit", ""})
 	case d.confirm:
-		p.add(st.Warn.Render("Stop the running keepalive? y/n"))
+		c.keyHints(keyHint{"y", "stop it", ""}, keyHint{"n", "keep it running", "keep it"})
 	case d.stopping:
-		p.footer("stopping…")
+		c.footerText("stopping…", st.Muted)
 	default:
-		items := []string{"a activity on"}
+		keys := []keyHint{{"a", "activity on", "activity"}}
 		if s.Active {
-			items[0] = "a activity off"
+			keys[0].label = "activity off"
 		}
 		if !s.EndsAt.IsZero() {
-			items = append(items, "+/- 15 min")
+			keys = append(keys, keyHint{"+/-", "15 min", ""})
 		}
 		if inst != nil {
-			items = append(items, "s stop…", "? help", "q detach")
+			keys = append(keys, keyHint{"s", "stop…", "stop"}, keyHint{"?", "help", ""}, keyHint{"q", "detach", ""})
 		} else {
-			items = append(items, "s stop", "? help", "q quit")
+			keys = append(keys, keyHint{"s", "stop", ""}, keyHint{"?", "help", ""}, keyHint{"q", "quit", ""})
 		}
-		p.footer(items...)
+		c.keyHints(keys...)
 	}
-	return p.String()
+	return c
 }
 
-func (m Model) badge(now time.Time) string {
+// statusPill is the header's state, and what goes beside it.
+func (m Model) statusPill(now time.Time) (pill, aside string) {
 	st, s := m.st, m.dash.snap
 	switch {
 	case m.dash.ended != "":
-		return st.Muted.Render("○ STOPPED")
+		return st.pill(pillMuted, st.g.stopped, "STOPPED"), ""
 	case !s.Running:
-		return st.Muted.Render("○ STARTING")
+		return st.pill(pillMuted, st.g.off, "STARTING"), ""
 	case !s.InWindow:
-		b := "◐ PAUSED"
 		if !s.NextChange.IsZero() {
-			b += " until " + session.ClockText(now, s.NextChange)
+			aside = "until " + session.ClockText(now, s.NextChange)
 		}
-		return st.Warn.Render(b)
+		return st.pill(pillWarn, st.g.paused, "PAUSED"), aside
 	case s.Paused == session.PauseBattery:
-		return st.Warn.Render("◐ PAUSED · battery low")
+		return st.pill(pillWarn, st.g.paused, "PAUSED"), "battery low"
 	case problem(s):
-		return st.Problem.Render("▲ PROBLEM")
+		return st.pill(pillBad, st.g.problem, "ACTION NEEDED"), ""
 	}
-	return st.OK.Render("● AWAKE")
+	return st.pill(pillOK, st.g.awake, "AWAKE"), ""
 }
 
 // problem reports whether the session is not doing what it should.
@@ -442,155 +465,237 @@ func problem(s session.Snapshot) bool {
 	return (s.Active && s.Activity.State == activity.StateDegraded) || s.PowerHold == ""
 }
 
-func headline(s session.Snapshot) string {
+// hero is the time in big digits under the header, with a line below: the
+// time left of a timed session (with its progress), the time a session
+// has run, or the time until the work hours start. On a short terminal it
+// is one line of text.
+func (m Model) hero(c *canvas, s session.Snapshot, now time.Time) {
+	st, ended := m.st, m.dash.ended != ""
+	var (
+		digits, label, short string // the digits, their label, and a shorter one
+		left, right          string // the same in one line
+		line                 string // a bold line instead of digits
+		done                 = -1.0 // progress of a timed session; < 0: a plain rule
+	)
+	sep := " " + st.g.sep + " "
 	switch {
-	case !s.InWindow:
-		return "Outside work hours · the computer may sleep"
-	case s.Paused == session.PauseBattery:
-		return "Battery low · the computer may sleep"
-	case s.KeepDisplay:
-		return "Keeping system and display awake"
-	}
-	return "Keeping the system awake · the display may sleep"
-}
-
-// timeline is a progress bar for a session with an end, else how long it
-// has run.
-func (m Model) timeline(p *page, s session.Snapshot, now time.Time) {
-	if s.EndsAt.IsZero() {
-		if !s.StartedAt.IsZero() {
-			p.add(m.st.Muted.Render("running for " + span(now.Sub(s.StartedAt))))
+	case s.StartedAt.IsZero():
+		if !ended {
+			line = "Starting…"
 		}
-		return
+	case !s.InWindow && !ended:
+		switch until := s.NextChange.Sub(now); {
+		case s.NextChange.IsZero():
+			line = "Outside work hours"
+		case until < 24*time.Hour:
+			when := session.ClockText(now, s.NextChange)
+			digits, label, short = clockDigits(until, false), "until work hours"+sep+when, "until "+when
+			left, right = st.Bold.Render(span(until))+st.Muted.Render(" until work hours"), st.Muted.Render("starts ")+when
+		default:
+			line = "Resumes " + session.ClockText(now, s.NextChange)
+		}
+	case s.Paused == session.PauseBattery && !ended:
+		line = fmt.Sprintf("Resumes at %d%% or when charging", s.Battery.Threshold+session.BatteryResumeMargin)
+	case !s.EndsAt.IsZero():
+		rest := max(s.EndsAt.Sub(now), 0)
+		until := session.ClockText(now, s.EndsAt)
+		digits, label, short = clockDigits(rest, true), "left"+sep+"until "+until, "left"
+		left, right = st.Bold.Render(span(rest))+st.Muted.Render(" left"), st.Muted.Render("until ")+until
+		done = 1
+		if total := s.EndsAt.Sub(s.StartedAt); total > 0 {
+			done = 1 - float64(rest)/float64(total)
+		}
+	default:
+		ran := now.Sub(s.StartedAt)
+		digits, label = clockDigits(ran, false), "running"
+		left = st.Bold.Render(span(ran)) + st.Muted.Render(" running")
 	}
-	left := max(s.EndsAt.Sub(now), 0)
-	text := fmt.Sprintf("%s left · until %s", span(left), session.ClockText(now, s.EndsAt))
-	total := s.EndsAt.Sub(s.StartedAt)
-	done := 1.0
-	if total > 0 {
-		done = 1 - float64(left)/float64(total)
+	if ended {
+		label, short = "", ""
 	}
-	barW := min(p.width-lipgloss.Width(text)-2, 30)
-	if barW < 10 {
-		p.add(progressBar(m.st, done, min(p.width, 30)))
-		p.add(text)
-		return
+
+	switch {
+	case digits != "" && c.level < fitNoDigits:
+		rows := st.bigDigits(digits)
+		if lipgloss.Width(rows[0])+3+lipgloss.Width(st.text(label)) > c.width {
+			label = short
+		}
+		if label != "" {
+			rows[2] += "   " + st.Muted.Render(st.text(label))
+		}
+		c.add(rows[:]...)
+	case digits != "":
+		c.spread(left, right)
+	case line != "":
+		c.add(st.Bold.Render(st.text(line)))
 	}
-	p.add(progressBar(m.st, done, barW) + "  " + text)
+	if done >= 0 {
+		c.add(st.lineBar(done, c.width))
+	} else {
+		c.rule()
+	}
 }
 
-// rows are the dashboard's detail lines; rows that do not apply are left
+// rows are the dashboard's labelled rows; rows that do not apply are left
 // out.
-func (m Model) rows(p *page, s session.Snapshot, now time.Time) {
+func (m Model) rows(c *canvas, s session.Snapshot, now time.Time) {
 	st := m.st
-	labelW := 13 // "Work hours" and a gap
-	if p.width < 50 {
-		labelW = 11
-	}
-	add := func(label, value string) {
-		lines := wrapLines(value, p.width-labelW, "")
-		for i, l := range lines {
-			if i == 0 {
-				p.add(row(p.width, label, labelW, l, ""))
-			} else {
-				p.add(strings.Repeat(" ", labelW) + l)
-			}
-		}
-	}
-	fix := func(hint string) {
-		for i, l := range wrapLines(hint, p.width-labelW-7, "") {
-			if i == 0 {
-				p.add(strings.Repeat(" ", labelW+2) + st.Muted.Render("fix:") + " " + l)
-			} else {
-				p.add(strings.Repeat(" ", labelW+7) + l)
-			}
-		}
-	}
-
-	act, hint := m.activityText(s, now)
-	add("Activity", act)
-	if hint != "" {
-		fix(hint)
-	}
+	m.activityRow(c, s, now)
 	if s.Schedule != "" {
-		v := s.Schedule
+		right := ""
 		switch {
 		case s.NextChange.IsZero():
 		case s.InWindow:
-			v += " · ends " + session.ClockText(now, s.NextChange)
+			right = "ends " + session.ClockText(now, s.NextChange)
 		default:
-			v += " · starts " + session.ClockText(now, s.NextChange)
+			right = "starts " + session.ClockText(now, s.NextChange)
 		}
-		add("Work hours", v)
+		c.labelRow("Hours", st.scheduleText(s.Schedule), st.Muted.Render(right))
 	}
-	if b := s.Battery; b.Threshold > 0 {
-		v := fmt.Sprintf("stops at %d%%", b.Threshold)
-		if b.Pause {
-			v = fmt.Sprintf("pauses at %d%%, resumes at %d%% or charging", b.Threshold, b.Threshold+session.BatteryResumeMargin)
-		}
-		if b.Available {
-			v = fmt.Sprintf("%d%% · %s", b.Percent, v)
-		}
-		add("Battery", v)
+	if s.Battery.Threshold > 0 {
+		m.batteryRow(c, s.Battery, s.Paused == session.PauseBattery)
 	}
 	if s.Watching != "" {
-		add("Watching", s.Watching)
+		c.labelRow("Watching", st.text(s.Watching), "")
 	}
 	switch {
 	case !s.InWindow:
-		add("Holding", st.Muted.Render("nothing outside the work hours"))
+		if c.level < fitNoHolding {
+			c.labelRow("Holding", c.pick("", st.Muted.Render("nothing outside the work hours"), st.Muted.Render("nothing while paused")), "")
+		}
 	case s.Paused == session.PauseBattery:
-		add("Holding", st.Muted.Render("nothing while the battery is low"))
-	case s.PowerHold == "":
-		add("Holding", st.Problem.Render("▲ lost · re-acquiring"))
+		if c.level < fitNoHolding {
+			c.labelRow("Holding", c.pick("", st.Muted.Render("nothing while the battery is low"), st.Muted.Render("nothing while paused")), "")
+		}
+	case s.PowerHold == "": // a problem: never left out
+		c.labelRow("Holding", st.Problem.Bold(true).Render(st.g.problem+" lost"), "")
+		c.callout(st.Problem, calloutText{
+			text: "The sleep prevention was lost, so this computer may sleep.",
+			fix:  `if it keeps happening, run "keepalive doctor"`,
+			note: "keepalive retries on its own, every 30 s at most",
+		})
 	default:
-		add("Holding", s.PowerHold)
+		if c.level < fitNoHolding {
+			c.labelRow("Holding", st.Muted.Render(holdWhat(s)+" awake"), "")
+		}
 	}
 }
 
-// activityText describes the activity simulation; hint is a fix for a
-// degraded state.
-func (m Model) activityText(s session.Snapshot, now time.Time) (text, hint string) {
+// activityRow is the ACTIVITY row: the state, the sparkline of recent
+// bursts and when the last one was; a callout explains a problem.
+func (m Model) activityRow(c *canvas, s session.Snapshot, now time.Time) {
 	st, a := m.st, s.Activity
+	t := st.text
+	var (
+		state string
+		spark bool
+		fix   *calloutText
+	)
+	waiting := func(text string) string { return st.Dim.Render(st.g.off) + " " + t(text) }
+	muted := func(texts ...string) string {
+		for i := range texts {
+			texts[i] = st.Muted.Render(t(texts[i]))
+		}
+		return c.pick("", texts...)
+	}
 	switch {
 	case !s.Active:
-		return st.Muted.Render("off"), ""
+		state = st.Muted.Render("off")
 	case !s.InWindow:
-		return st.Muted.Render("on · resumes with the work hours"), ""
+		state = muted("on · resumes with the work hours", "on · paused")
 	case s.Paused == session.PauseBattery:
-		return st.Muted.Render("on · resumes when the battery recovers"), ""
-	}
-	dim := func(t string) string { return st.Muted.Render("○ " + t) }
-	switch a.State {
-	case activity.StateWaitingIdle:
-		t := "waiting for idle · " + span(a.Idle)
-		if m.dash.idleNeed > 0 {
-			t += " of " + span(m.dash.idleNeed)
+		state = muted("on · resumes with the battery", "on · paused")
+	case a.State == activity.StateWaitingIdle:
+		spark = true
+		idle := st.Muted.Render(shortDuration(a.Idle))
+		if need := m.dash.idleNeed; need > 0 {
+			idle = st.Muted.Render(shortDuration(a.Idle) + " / " + shortDuration(need))
+			state = waiting("waiting for idle") + " " + st.meter(float64(a.Idle)/float64(need), 8, st.Muted) + " " + idle
 		}
-		return dim(t), ""
-	case activity.StateSimulating:
-		parts := []string{"simulating"}
-		if !a.LastBurst.IsZero() {
-			parts = append(parts, "last move "+span(now.Sub(a.LastBurst))+" ago")
+		state = c.pick("", state, waiting("waiting for idle")+" "+idle, waiting("waiting")+" "+idle)
+	case a.State == activity.StateSimulating:
+		mark := st.OK
+		if m.pulseDim {
+			mark = st.Dim
 		}
-		if a.Method != "" {
-			parts = append(parts, a.Method)
-		}
-		return st.OK.Render("●") + " " + strings.Join(parts, " · "), ""
-	case activity.StatePausedUser:
-		return dim("paused — you're using the computer"), ""
-	case activity.StatePausedLocked:
-		return dim("paused — screen locked"), ""
-	case activity.StateDegraded:
+		state, spark = mark.Render(st.g.on)+" simulating", true
+	case a.State == activity.StatePausedUser:
+		state, spark = c.pick("", waiting("paused — you're using the computer"), waiting("paused — you're active")), true
+	case a.State == activity.StatePausedLocked:
+		state, spark = waiting("paused — screen locked"), true
+	case a.State == activity.StateDegraded:
+		state = st.Problem.Bold(true).Render(st.g.problem + " not working")
 		reason := a.Reason
 		if reason == "" {
 			reason = "unknown reason"
 		}
-		return st.Problem.Render("▲ not working: ") + reason, a.Hint
-	case activity.StateOff:
-		return st.Muted.Render("off"), ""
+		fix = &calloutText{text: reason, fix: a.Hint}
+		if !strings.Contains(a.Hint, "60 s") { // the hint may say so itself
+			fix.note = "keepalive checks again every 60 s"
+		}
+	case a.State == activity.StateOff:
+		state = st.Muted.Render("off")
+	default:
+		state = st.Muted.Render(t("starting…"))
 	}
-	return st.Muted.Render("starting…"), ""
+	ago := ""
+	if spark && !a.LastBurst.IsZero() {
+		ago = st.Muted.Render(span(now.Sub(a.LastBurst)) + " ago")
+	}
+
+	if spark && c.level < fitNoSparkline {
+		// The sparkline shares the line with a short state, at a fixed
+		// column; a longer one (or one that changes width, like the idle
+		// time) gets it on the next line, so it never jumps.
+		line := st.sparkline(m.dash.bursts.counts(now))
+		sw := lipgloss.Width(state)
+		col := 15 // three spaces after "◉ simulating", or two when narrow
+		if labelWidth+col+sparkBuckets+gapFor(ago)+lipgloss.Width(ago) > c.width {
+			col = 14
+		}
+		if sw <= col-2 && labelWidth+col+sparkBuckets+gapFor(ago)+lipgloss.Width(ago) <= c.width {
+			c.spread(st.label("Activity", labelWidth)+state+strings.Repeat(" ", col-sw)+line, ago)
+		} else {
+			c.labelRow("Activity", state, "")
+			c.spread(strings.Repeat(" ", labelWidth)+line, ago)
+		}
+	} else {
+		c.labelRow("Activity", state, ago)
+	}
+	if fix != nil {
+		c.callout(st.Problem, *fix)
+	}
+}
+
+// batteryRow is the BATTERY row: a meter of the charge, coloured by how
+// close it is to the threshold, and when keepalive stops or pauses.
+func (m Model) batteryRow(c *canvas, b session.Battery, paused bool) {
+	st := m.st
+	right := fmt.Sprintf("stops at %d%%", b.Threshold)
+	if b.Pause {
+		right = fmt.Sprintf("pauses at %d%%", b.Threshold)
+		if paused {
+			right = fmt.Sprintf("paused — resumes at %d%%", b.Threshold+session.BatteryResumeMargin)
+		}
+	}
+	right = st.Muted.Render(st.text(right))
+	if !b.Available {
+		c.labelRow("Battery", st.Muted.Render("no reading"), right)
+		return
+	}
+	pct := fmt.Sprintf(" %d%%", b.Percent)
+	meterW := min(20, c.width-labelWidth-len(pct)-1-lipgloss.Width(right))
+	if meterW < 6 { // the note goes on a line of its own
+		meterW = max(min(20, c.width-labelWidth-len(pct)), 1)
+	}
+	tone := st.OK
+	switch {
+	case b.Percent <= b.Threshold:
+		tone = st.Problem
+	case b.Percent <= b.Threshold+10:
+		tone = st.Warn
+	}
+	c.labelRow("Battery", st.meter(float64(b.Percent)/100, meterW, tone)+pct, right)
 }
 
 func originLabel(o string) string {
@@ -601,4 +706,12 @@ func originLabel(o string) string {
 		return "terminal"
 	}
 	return o
+}
+
+// holdWhat is what the hold keeps awake.
+func holdWhat(s session.Snapshot) string {
+	if s.KeepDisplay {
+		return "system + display"
+	}
+	return "system"
 }

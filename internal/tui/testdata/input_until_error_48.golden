@@ -1,0 +1,11 @@
+╭──────────────────────────────────────────────╮
+│ keepalive                             v2.0.0 │
+│                                              │
+│ KEEP AWAKE UNTIL WHAT TIME?                  │
+│ › 25:00█                                     │
+│   24-hour (17:00) or 12-hour (5:30pm)        │
+│                                              │
+│ ✗ invalid time "25:00": use 24-hour HH:MM    │
+│   (22:00) or 12-hour HH:MM AM/PM (10:00PM)   │
+╰──────────────────────────────────────────────╯
+ [⏎] start  [esc] back  [ctrl+c] quit

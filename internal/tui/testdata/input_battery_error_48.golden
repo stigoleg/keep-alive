@@ -1,0 +1,13 @@
+╭──────────────────────────────────────────────╮
+│ keepalive                             v2.0.0 │
+│                                              │
+│ STOP AT WHAT BATTERY LEVEL?                  │
+│ › 80█                                        │
+│   a percentage from 1 to 100; the battery is │
+│   at 76% now                                 │
+│                                              │
+│ ✗ battery threshold must be below the        │
+│   current level (current 76%, threshold 80%) │
+│   choose a lower value                       │
+╰──────────────────────────────────────────────╯
+ [⏎] set  [esc] back  [ctrl+c] quit

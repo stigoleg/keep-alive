@@ -4,13 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/stigoleg/keep-alive/v2/internal/activity"
 	"github.com/stigoleg/keep-alive/v2/internal/ipc"
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
@@ -31,7 +31,7 @@ func TestMain(m *testing.M) {
 }
 
 // testNow is a Monday afternoon.
-var testNow = time.Date(2026, 10, 5, 15, 48, 0, 0, time.UTC)
+var testNow = fixtureNow
 
 // fakeCtrl is a Controller that records calls.
 type fakeCtrl struct {
@@ -124,32 +124,7 @@ func (f *fakeCtrl) end(r session.Reason, msg string) {
 }
 
 // runningSnap is what a session started from cfg reports.
-func runningSnap(cfg session.Config) session.Snapshot {
-	s := session.Snapshot{
-		Running:     true,
-		StartedAt:   testNow.Add(-48 * time.Minute),
-		Active:      cfg.Active,
-		KeepDisplay: cfg.KeepDisplay,
-		PowerHold:   "IOPMAssertion(PreventUserIdleSystemSleep, +2)",
-		InWindow:    true,
-		Mode:        session.ModeIndefinite,
-		Battery:     session.Battery{Threshold: cfg.BatteryThreshold},
-		Activity:    activity.Status{State: activity.StateOff},
-	}
-	if cfg.Active {
-		s.Activity = activity.Status{State: activity.StateWaitingIdle, Idle: 70 * time.Second}
-	}
-	switch {
-	case cfg.Duration > 0:
-		s.Mode, s.EndsAt = session.ModeDuration, s.StartedAt.Add(cfg.Duration)
-	case !cfg.Until.IsZero():
-		s.Mode, s.EndsAt = session.ModeUntil, cfg.Until
-	}
-	if cfg.Schedule != nil {
-		s.Schedule = cfg.Schedule.String()
-	}
-	return s
-}
+func runningSnap(cfg session.Config) session.Snapshot { return fixtureSnap(cfg) }
 
 // starter is Options.start for tests: every session is a fakeCtrl.
 type starter struct {
@@ -299,3 +274,15 @@ func keyMsg(k string) tea.KeyMsg {
 }
 
 var errNope = errors.New("nope")
+
+// flat is a view as one line of text: frames and boxes removed, wrapped
+// lines joined and runs of spaces collapsed, for checking what it says.
+func flat(view string) string {
+	view = strings.Map(func(r rune) rune {
+		if strings.ContainsRune("╭╮╰╯│─", r) {
+			return ' '
+		}
+		return r
+	}, view)
+	return strings.Join(strings.Fields(view), " ")
+}

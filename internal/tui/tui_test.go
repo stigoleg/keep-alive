@@ -209,7 +209,7 @@ func TestStopKeepsOptions(t *testing.T) {
 	if h.m.screen != screenHome || h.m.home.opts != want {
 		t.Fatalf("after stop: screen %v options %+v", h.m.screen, h.m.home.opts)
 	}
-	if v := h.m.View(); !strings.Contains(v, "[x] Stop at battery 20%") {
+	if v := h.m.View(); !strings.Contains(v, "◉ Stop at battery 20%") {
 		t.Fatalf("battery option lost:\n%s", v)
 	}
 }
@@ -270,7 +270,7 @@ func TestSessionEndsOnItsOwn(t *testing.T) {
 		if h.m.screen != screenHome || h.m.home.problem == nil {
 			t.Fatalf("screen %v problem %v", h.m.screen, h.m.home.problem)
 		}
-		if v := h.m.View(); !strings.Contains(v, "✗ Could not keep awake: keep the system awake: no inhibitor") {
+		if v := h.m.View(); !strings.Contains(flat(v), "✗ Could not keep awake: keep the system awake: no inhibitor") {
 			t.Fatalf("no error on Home:\n%s", v)
 		}
 	})
@@ -300,7 +300,7 @@ func attachedHarness(t *testing.T, snap session.Snapshot, width ...int) (*harnes
 
 func TestAttachQuitDetaches(t *testing.T) {
 	h, c := attachedHarness(t, timedSnap())
-	if v := h.m.View(); !strings.Contains(v, "attached to service · pid 812") || !strings.Contains(v, "q detach") {
+	if v := h.m.View(); !strings.Contains(v, "attached · service pid 812") || !strings.Contains(v, "[q] detach") {
 		t.Fatalf("no attach header:\n%s", v)
 	}
 	h.press("q")
@@ -323,7 +323,7 @@ func TestAttachStopAsksFirst(t *testing.T) {
 	h := newHarness(t, o, 64)
 
 	h.press("s")
-	if v := h.m.View(); !strings.Contains(v, "Stop the running keepalive? y/n") {
+	if v := h.m.View(); !strings.Contains(v, "Stop the running keepalive?") || !strings.Contains(v, "[y] stop it") {
 		t.Fatalf("no question:\n%s", v)
 	}
 	h.press("n")
@@ -390,7 +390,7 @@ func TestClaimWarningAndAttachOnStart(t *testing.T) {
 		return nil, Warning{Text: "Another keepalive is open (pid 812) and keeps nothing awake.", Fix: "quit it"}
 	}
 	h := newHarness(t, o, 64)
-	if v := h.m.View(); !strings.Contains(v, "! Another keepalive is open (pid 812)") || !strings.Contains(v, "fix: quit it") {
+	if v := flat(h.m.View()); !strings.Contains(v, "! Another keepalive is open (pid 812)") || !strings.Contains(v, "Fix quit it") {
 		t.Fatalf("no warning:\n%s", v)
 	}
 	h.press("enter")
@@ -436,8 +436,8 @@ func TestDefaultsFromConfig(t *testing.T) {
 	if hs.opts != (options{active: true, keys: true}) || hs.cursor != modeSchedule {
 		t.Fatalf("home %+v", hs)
 	}
-	v := h.m.View()
-	for _, want := range []string{"[x] Simulate activity", "[ ] Keep display on", "[x] Tap Shift too", "last: 2h", "last: 17:00", "Mon-Fri 08:00-16:00", "▸ During work hours…"} {
+	v := flat(h.m.View())
+	for _, want := range []string{"◉ Simulate activity", "○ Keep display on", "◉ Tap Shift too", "For a duration… 2h", "Until a time… 17:00", "❯ During work hours… Mon–Fri 08:00–16:00"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("Home lacks %q:\n%s", want, v)
 		}
@@ -496,7 +496,7 @@ func TestBatteryOnADesktop(t *testing.T) {
 	if h.m.screen != screenHome || h.m.home.opts.battery != 0 {
 		t.Fatalf("screen %v battery %d", h.m.screen, h.m.home.opts.battery)
 	}
-	if v := h.m.View(); !strings.Contains(v, "! No battery found") || !strings.Contains(v, "no battery") {
+	if v := flat(h.m.View()); !strings.Contains(v, "! No battery found") || !strings.Contains(v, "no battery") {
 		t.Fatalf("no warning:\n%s", v)
 	}
 }
@@ -506,7 +506,7 @@ func TestWorkHoursPreview(t *testing.T) {
 	h := newHarness(t, testOptions(st), 64)
 	h.press("down", "down", "down", "enter")
 	h.typeText("weekdays 9:00-17:00")
-	if v := h.m.View(); !strings.Contains(v, "Mon-Fri 09:00-17:00") || !strings.Contains(v, "now: until 17:00") {
+	if v := h.m.View(); !strings.Contains(v, "✓ Mon–Fri 09:00–17:00") || !strings.Contains(v, "now: until 17:00") {
 		t.Fatalf("no preview:\n%s", v)
 	}
 	h.press("backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace")

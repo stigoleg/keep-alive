@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/signal"
+	"runtime"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -166,6 +167,7 @@ func (a *App) runTUI(ctx context.Context, p *Plan, deps session.Deps) error {
 		Start:      p.AutoStart,
 		OnSession:  ctrl.set,
 		Renderer:   tui.NewRenderer(a.Stdout, a.colorAllowed()),
+		Look:       tui.Look{NoColor: !a.colorAllowed(), ASCII: !tui.UnicodeTerminal(a.LookupEnv, runtime.GOOS)},
 		Claim:      inst.claim,
 		LogPath:    logPath,
 		LogEnabled: p.Logging.Enabled,

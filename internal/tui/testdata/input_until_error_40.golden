@@ -1,6 +1,6 @@
- keepalive 2.0.0
+ keepalive                       v2.0.0
 
- Keep awake until what time?
+ KEEP AWAKE UNTIL WHAT TIME?
  › 25:00█
    24-hour (17:00) or 12-hour (5:30pm)
 
@@ -8,4 +8,4 @@
    HH:MM (22:00) or 12-hour HH:MM AM/PM
    (10:00PM)
 
- enter start · esc back · ctrl+c quit
+ [⏎] start  [esc] back  [ctrl+c] quit
