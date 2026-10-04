@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.github.stigoleg.keepalive</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/Jane Doe/bin/keep&amp;alive</string>
+		<string>--plain</string>
+		<string>--schedule</string>
+		<string>Mon-Fri 08:00-16:00</string>
+		<string>--active</string>
+		<string>--while</string>
+		<string>a&#34;b&#39;c\d$e%f&lt;g&gt;</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>KEEPALIVE_ORIGIN</key>
+		<string>service</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>StandardOutPath</key>
+	<string>/Users/Jane Doe/Library/Logs/keepalive/service.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/Jane Doe/Library/Logs/keepalive/service.log</string>
+</dict>
+</plist>
