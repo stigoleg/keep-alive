@@ -1,0 +1,195 @@
+package output
+
+import (
+	"bytes"
+	"encoding/json"
+	"flag"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stigoleg/keep-alive/v2/internal/activity"
+	"github.com/stigoleg/keep-alive/v2/internal/session"
+)
+
+var update = flag.Bool("update", false, "rewrite golden files")
+
+func TestMain(m *testing.M) {
+	time.Local = time.UTC // golden files use UTC wall clock
+	os.Exit(m.Run())
+}
+
+var (
+	start = time.Date(2026, 3, 1, 10, 2, 11, 0, time.UTC)
+	ends  = start.Add(2 * time.Hour)
+)
+
+func runningSnap() session.Snapshot {
+	return session.Snapshot{
+		Running:     true,
+		StartedAt:   start,
+		EndsAt:      ends,
+		Remaining:   2 * time.Hour,
+		Mode:        session.ModeDuration,
+		Active:      true,
+		Activity:    activity.Status{State: activity.StateOff},
+		Battery:     session.Battery{Percent: 80, Available: true, Threshold: 20},
+		KeepDisplay: true,
+		PowerHold:   "caffeinate -dims",
+	}
+}
+
+// fixtures returns one event of every type, in session order.
+func fixtures() map[string]session.Event {
+	snap := runningSnap()
+
+	waiting := snap
+	waiting.Remaining = 2*time.Hour - 2*time.Minute
+	waiting.Activity = activity.Status{State: activity.StateWaitingIdle, Method: "CoreGraphics mouse events", Reason: "needs 2m0s", Idle: 5 * time.Second}
+
+	heartbeat := waiting
+	heartbeat.Remaining = 2*time.Hour - 150*time.Second
+
+	burst := waiting
+	burst.Activity = activity.Status{State: activity.StateSimulating, Method: "CoreGraphics mouse events", LastBurst: start.Add(5 * time.Minute)}
+
+	stopped := snap
+	stopped.Running = false
+	stopped.Remaining = 0
+	stopped.Activity = activity.Status{State: activity.StateOff}
+
+	return map[string]session.Event{
+		"started":  {Time: start, Type: session.EventStarted, Snapshot: snap},
+		"activity": {Time: start.Add(2 * time.Minute), Type: session.EventActivity, Snapshot: waiting},
+		"burst":    {Time: start.Add(5 * time.Minute), Type: session.EventActivity, Snapshot: burst},
+		"battery":  {Time: start.Add(30 * time.Second), Type: session.EventBattery, Snapshot: snap},
+		"snapshot": {Time: start.Add(150 * time.Second), Type: session.EventSnapshot, Snapshot: heartbeat},
+		"warning":  {Time: start.Add(time.Minute), Type: session.EventWarning, Snapshot: snap, Message: "battery status unavailable: no battery"},
+		"stopping": {Time: ends, Type: session.EventStopping, Snapshot: snap, Reason: session.ReasonDuration},
+		"stopped":  {Time: ends, Type: session.EventStopped, Snapshot: stopped, Reason: session.ReasonDuration, Message: "duration reached"},
+	}
+}
+
+func golden(t *testing.T, name string, got []byte) {
+	t.Helper()
+	path := filepath.Join("testdata", name)
+	if *update {
+		if err := os.WriteFile(path, got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("%v (run with -update to create)", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("%s mismatch\n got: %s\nwant: %s", name, got, want)
+	}
+}
+
+func TestJSONGolden(t *testing.T) {
+	for name, ev := range fixtures() {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := NewJSON(&buf).Print(ev); err != nil {
+				t.Fatal(err)
+			}
+			if !json.Valid(buf.Bytes()) || strings.Count(buf.String(), "\n") != 1 {
+				t.Fatalf("not a single NDJSON line: %q", buf.String())
+			}
+			golden(t, "json_"+name+".golden", buf.Bytes())
+		})
+	}
+}
+
+func TestJSONIndefiniteHasNullEnd(t *testing.T) {
+	snap := runningSnap()
+	snap.Mode, snap.EndsAt, snap.Remaining = session.ModeIndefinite, time.Time{}, 0
+	var buf bytes.Buffer
+	if err := NewJSON(&buf).Print(session.Event{Time: start, Type: session.EventStarted, Snapshot: snap}); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Snapshot map[string]any `json:"snapshot"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"ends_at", "remaining"} {
+		if v, ok := got.Snapshot[k]; !ok || v != nil {
+			t.Errorf("%s = %v (present %v), want null", k, v, ok)
+		}
+	}
+}
+
+func TestHumanGolden(t *testing.T) {
+	f := fixtures()
+	var buf bytes.Buffer
+	p := NewHuman(&buf, false)
+	for _, name := range []string{"started", "battery", "warning", "activity", "snapshot", "burst", "stopping", "stopped"} {
+		if err := p.Print(f[name]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	golden(t, "human.golden", buf.Bytes())
+	if strings.Contains(buf.String(), "\x1b[") {
+		t.Fatal("ANSI escapes without color")
+	}
+}
+
+func TestHumanColor(t *testing.T) {
+	var buf bytes.Buffer
+	NewHuman(&buf, true).Print(fixtures()["warning"])
+	if !strings.Contains(buf.String(), "\x1b[") {
+		t.Fatal("no ANSI escapes with color on")
+	}
+}
+
+func TestHumanStartedVariants(t *testing.T) {
+	snap := runningSnap()
+	snap.Active = false
+	snap.Battery = session.Battery{}
+
+	indefinite := snap
+	indefinite.Mode, indefinite.EndsAt, indefinite.Remaining = session.ModeIndefinite, time.Time{}, 0
+
+	until := snap
+	until.Mode, until.Remaining = session.ModeUntil, 11*time.Hour+58*time.Minute
+	until.EndsAt = time.Date(2026, 3, 1, 22, 0, 0, 0, time.UTC)
+
+	systemOnly := indefinite
+	systemOnly.KeepDisplay = false
+
+	tests := map[string]struct {
+		snap session.Snapshot
+		want string
+	}{
+		"duration":    {snap, "keeping system and display awake for 2h0m (until 12:02)"},
+		"indefinite":  {indefinite, "keeping system and display awake indefinitely"},
+		"until":       {until, "keeping system and display awake until 22:00 (11h58m)"},
+		"system only": {systemOnly, "keeping system awake indefinitely"},
+	}
+	for name, tt := range tests {
+		got := Text(session.Event{Type: session.EventStarted, Snapshot: tt.snap})
+		if got != tt.want {
+			t.Errorf("%s: %q, want %q", name, got, tt.want)
+		}
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		2 * time.Hour:                        "2h0m",
+		45 * time.Minute:                     "45m",
+		90 * time.Second:                     "1m30s",
+		30 * time.Second:                     "30s",
+		0:                                    "0s",
+		2*time.Minute + 400*time.Millisecond: "2m",
+	} {
+		if got := FormatDuration(d); got != want {
+			t.Errorf("FormatDuration(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
