@@ -105,6 +105,7 @@ func (a *App) executeRun(ctx context.Context, p *Plan, argv []string) error {
 
 	child := exec.Command(argv[0], argv[1:]...)
 	child.Stdin, child.Stdout, child.Stderr = a.Stdin, a.Stdout, a.Stderr
+	csigs := newCommandSignals(child)
 	if err := child.Start(); err != nil {
 		finish(session.ReasonCommandExited)
 		return startError(argv[0], err)
@@ -118,9 +119,8 @@ func (a *App) executeRun(ctx context.Context, p *Plan, argv []string) error {
 		for {
 			select {
 			case sig := <-sigs:
-				if forwardSignal(sig) {
-					slog.Debug("run: forwarding signal", "signal", sig)
-					_ = child.Process.Signal(sig)
+				if csigs.forward(child.Process, sig) {
+					slog.Debug("run: forwarded signal", "signal", sig)
 				}
 			case <-waited:
 				return
