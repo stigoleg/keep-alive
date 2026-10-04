@@ -420,7 +420,7 @@ Headless output is one line per event:
 |---|---|
 | 0 | ended normally, including Ctrl+C and `keepalive stop` |
 | 1 | runtime error, e.g. nothing can keep the machine awake; `doctor`: a check failed |
-| 2 | usage error: a bad flag, value, schedule or process, or a mistyped subcommand (with a suggestion) |
+| 2 | usage error: a bad flag, value, schedule or process, or a mistyped command (with a suggestion) |
 | 3 | `status`, `stop`, `active`, `extend`: no keepalive is running |
 | *n* | `keepalive run`: always the command's exit status (127 not found, 126 not executable) |
 

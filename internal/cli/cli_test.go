@@ -405,6 +405,35 @@ func TestRootRejectsACommand(t *testing.T) {
 	}
 }
 
+// TestRootCommandTypos: a mistyped command gets a command suggestion; only
+// an argument close to no command points to `keepalive run`.
+func TestRootCommandTypos(t *testing.T) {
+	for typed, want := range map[string]string{
+		"statsu":  "status",
+		"stpo":    "stop",
+		"doctr":   "doctor",
+		"servce":  "service",
+		"verison": "version",
+		"extnd":   "extend",
+	} {
+		ta := newTestApp(t)
+		if code := ta.run(typed); code != ExitUsage {
+			t.Errorf("%s: exit %d, want 2", typed, code)
+		}
+		line := fmt.Sprintf("keepalive: error: unknown command %q — did you mean %q?\n", typed, want)
+		if got := ta.stderr.String(); got != line {
+			t.Errorf("%s: stderr %q, want %q", typed, got, line)
+		}
+	}
+	ta := newTestApp(t)
+	if code := ta.run("backup", "nightly"); code != ExitUsage {
+		t.Fatalf("exit %d", code)
+	}
+	if got, want := ta.stderr.String(), "keepalive: error: unexpected argument \"backup\"\nhint: did you mean \"keepalive run -- backup nightly\"?\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
 func TestRunParsesTheCommand(t *testing.T) {
 	ta := newTestApp(t)
 	ta.StdinTTY, ta.StdoutTTY = true, true

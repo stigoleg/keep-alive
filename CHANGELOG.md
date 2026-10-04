@@ -150,8 +150,8 @@ All notable changes to keepalive. Releases before 2.0.0 are described on the
 - `--json` snapshots say why nothing is held right now (`paused`:
   `schedule` or `battery`) and whether the battery threshold pauses
   (`battery.pause`).
-- A mistyped subcommand (`keepalive service instal`) is a usage error
-  (exit status 2) with a suggestion.
+- A mistyped command (`keepalive statsu`, `keepalive service instal`) is a
+  usage error (exit status 2) with a suggestion.
 - `KEEPALIVE_RUNTIME_DIR` moves the control socket. An existing directory
   that other users can read (such as `/tmp`) is left as it is; keepalive
   uses a private `keepalive-<uid>` directory inside it. Symlinks are

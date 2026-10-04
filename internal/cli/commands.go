@@ -143,6 +143,7 @@ func (a *App) Command() *cobra.Command {
   keepalive completion bash > /etc/bash_completion.d/keepalive
   keepalive completion fish > ~/.config/fish/completions/keepalive.fish`
 	}
+	root.SuggestionsMinimumDistance = 2 // cobra's default, which only Find sets
 	for _, c := range root.Commands() {
 		if c.HasSubCommands() {
 			makeGroup(c)
@@ -169,8 +170,7 @@ func groupArgs(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	hint := ""
-	if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
-		best := slices.MinFunc(s, func(x, y string) int { return editDistance(args[0], x) - editDistance(args[0], y) })
+	if best := closestCommand(cmd, args[0]); best != "" {
 		hint = fmt.Sprintf("did you mean %q?", cmd.CommandPath()+" "+best)
 	} else {
 		var names []string
@@ -184,10 +184,24 @@ func groupArgs(cmd *cobra.Command, args []string) error {
 	return usageErr(fmt.Errorf("unknown command %q for %q", args[0], cmd.CommandPath()), hint)
 }
 
-// rootArgs turns a command given to the root into a pointer to `run`.
-func rootArgs(_ *cobra.Command, args []string) error {
+// closestCommand is the subcommand of cmd closest to typed (cobra's
+// suggestions: a prefix, or within SuggestionsMinimumDistance edits), or "".
+func closestCommand(cmd *cobra.Command, typed string) string {
+	s := cmd.SuggestionsFor(typed)
+	if len(s) == 0 {
+		return ""
+	}
+	return slices.MinFunc(s, func(x, y string) int { return editDistance(typed, x) - editDistance(typed, y) })
+}
+
+// rootArgs turns a mistyped command into a suggestion, and any other
+// argument given to the root into a pointer to `run`.
+func rootArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return nil
+	}
+	if best := closestCommand(cmd, args[0]); best != "" {
+		return usageErr(fmt.Errorf("unknown command %q — did you mean %q?", args[0], best), "")
 	}
 	return usageErr(fmt.Errorf("unexpected argument %q", args[0]),
 		fmt.Sprintf(`did you mean "keepalive run -- %s"?`, strings.Join(args, " ")))
