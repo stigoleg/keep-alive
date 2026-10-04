@@ -29,7 +29,11 @@ All notable changes to keepalive. Releases before 2.0.0 are described on the
   display and battery options, and follow a dashboard with the time left,
   the activity state, the work hours and the power hold. Opened while
   another keepalive runs (the login service, for example), it attaches to
-  that one instead of refusing to start.
+  that one instead of refusing to start. It is drawn in colour: a framed
+  layout with a status badge, a large countdown with a progress line, a
+  pulse and a sparkline of recent activity, key hints and a highlighted box
+  when something needs fixing. Colours adapt to light and dark terminals,
+  degrade to 256 or 16 colours, and `NO_COLOR` gives plain text.
 - **`keepalive doctor`** checks what works on this machine: power
   mechanisms, activity backends, idle sources, permissions and the lock
   screen, each with a fix.
