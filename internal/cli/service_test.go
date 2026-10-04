@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -262,5 +263,70 @@ func TestServiceLogFileFallsBackToTheDefault(t *testing.T) {
 	p.Origin = ipc.OriginTerminal
 	if _, err := ta.startLogging(p); err == nil {
 		t.Fatal("terminal: no error for an unwritable log file")
+	}
+}
+
+func TestServiceInstallNextToARunningKeepalive(t *testing.T) {
+	const warning = "keepalive: warning: another keepalive is running (pid "
+	stopped := func(f *fakeInstance) bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return slices.Contains(f.calls, "stop "+string(session.ReasonIPC))
+	}
+	end := func(f *fakeInstance) { f.srv.Close(); <-f.stopped }
+
+	// Not a terminal: install, warn, leave the other one alone.
+	ta, m := newServiceApp(t)
+	f := startInstanceFrom(t, timedSnap(), ipc.OriginTerminal)
+	if code := ta.run("service", "install"); code != ExitOK {
+		t.Fatalf("exit %d: %s", code, ta.stderr)
+	}
+	errOut := ta.stderr.String()
+	if m.installed == nil || stopped(f) || !strings.Contains(errOut, warning) ||
+		!strings.Contains(errOut, "the service will not start while it runs") ||
+		!strings.Contains(errOut, `"keepalive stop", then "keepalive service install" again`) {
+		t.Fatalf("installed %v, stopped %v, stderr %q", m.installed != nil, stopped(f), errOut)
+	}
+	end(f)
+
+	// --replace stops it first.
+	ta, m = newServiceApp(t)
+	f = startInstanceFrom(t, timedSnap(), ipc.OriginTerminal)
+	if code := ta.run("service", "install", "--replace"); code != ExitOK {
+		t.Fatalf("--replace: exit %d: %s", code, ta.stderr)
+	}
+	if m.installed == nil || !stopped(f) || strings.Contains(ta.stderr.String(), "warning") {
+		t.Fatalf("--replace: installed %v, stopped %v, stderr %q", m.installed != nil, stopped(f), ta.stderr)
+	}
+	if strings.Contains(strings.Join(m.installed.Args, " "), "replace") {
+		t.Fatalf("--replace stored in the service: %q", m.installed.Args)
+	}
+	end(f)
+
+	// On a terminal it asks.
+	for answer, wantStop := range map[string]bool{"y\n": true, "\n": false, "no\n": false} {
+		ta, m = newServiceApp(t)
+		ta.StdinTTY, ta.StdoutTTY = true, true
+		ta.Stdin = strings.NewReader(answer)
+		f = startInstanceFrom(t, timedSnap(), ipc.OriginTerminal)
+		if code := ta.run("service", "install"); code != ExitOK {
+			t.Fatalf("%q: exit %d: %s", answer, code, ta.stderr)
+		}
+		if !strings.Contains(ta.stdout.String(), "Stop the running keepalive now so the service can start? [y/N] ") {
+			t.Fatalf("%q: no question in %q", answer, ta.stdout)
+		}
+		if m.installed == nil || stopped(f) != wantStop || strings.Contains(ta.stderr.String(), warning) == wantStop {
+			t.Fatalf("%q: installed %v, stopped %v, stderr %q", answer, m.installed != nil, stopped(f), ta.stderr)
+		}
+		end(f)
+	}
+
+	// The service's own keepalive is replaced by the install itself.
+	ta, m = newServiceApp(t)
+	ta.StdinTTY, ta.StdoutTTY = true, true
+	f = startInstance(t, timedSnap())
+	if code := ta.run("service", "install"); code != ExitOK || stopped(f) || ta.stderr.Len() != 0 ||
+		strings.Contains(ta.stdout.String(), "[y/N]") {
+		t.Fatalf("service instance: exit %d, stopped %v, stderr %q", code, stopped(f), ta.stderr)
 	}
 }

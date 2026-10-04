@@ -68,7 +68,12 @@ func (f *fakeInstance) Subscribe() (<-chan session.Event, func()) {
 
 func startInstance(t *testing.T, snap session.Snapshot) *fakeInstance {
 	t.Helper()
-	srv, err := ipc.Listen(ipc.ServerInfo{Version: "2.0.0", Origin: ipc.OriginService})
+	return startInstanceFrom(t, snap, ipc.OriginService)
+}
+
+func startInstanceFrom(t *testing.T, snap session.Snapshot, origin string) *fakeInstance {
+	t.Helper()
+	srv, err := ipc.Listen(ipc.ServerInfo{Version: "2.0.0", Origin: origin})
 	if err != nil {
 		t.Fatal(err)
 	}
