@@ -376,8 +376,11 @@ in `keepalive/` under `$XDG_RUNTIME_DIR` (Linux), the user cache directory
 (macOS) or `%LOCALAPPDATA%` (Windows). `KEEPALIVE_RUNTIME_DIR` moves it. On
 macOS and Linux, if that directory already exists and other users can read
 it (such as `/tmp` on Linux), keepalive uses a private `keepalive-<uid>`
-directory inside it and leaves the directory's own permissions alone. A
-symlink (such as `/tmp` on macOS) is refused; use the real path.
+directory inside it and leaves the directory's own permissions alone.
+Symlinks are resolved first, so `/tmp` on macOS means
+`/private/tmp/keepalive-<uid>` for every command. When the directory cannot
+be used, keepalive does not start (the service logs it and notifies once);
+`keepalive run` runs its command anyway, without control.
 
 ## Output and scripting
 

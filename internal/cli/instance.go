@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -19,9 +18,10 @@ const replaceTimeout = 10 * time.Second
 
 // claimInstance makes this process the running keepalive by taking the
 // single-instance lock and listening on the control socket; call it before
-// acquiring power. A nil server without error means the session runs
-// without control (`keepalive run` next to another instance, or a socket
-// that cannot be created).
+// acquiring power. A nil server without error means `keepalive run` runs
+// its command without control (next to another instance, or without a
+// socket). Any other keepalive that cannot create the socket does not run:
+// "keepalive status" and "keepalive stop" could not reach it.
 func (a *App) claimInstance(ctx context.Context, p *Plan) (*ipc.Server, error) {
 	info := ipc.ServerInfo{Version: a.Version, Origin: p.Origin}
 	srv, err := ipc.Listen(info)
@@ -30,10 +30,22 @@ func (a *App) claimInstance(ctx context.Context, p *Plan) (*ipc.Server, error) {
 	}
 	if !errors.Is(err, ipc.ErrAlreadyRunning) {
 		slog.Warn("control socket unavailable", "err", err)
-		if p.Origin != originRun {
-			fmt.Fprintf(a.Stderr, "keepalive: warning: %v; 'keepalive status' and 'keepalive stop' will not find this instance\n", err)
+		switch p.Origin {
+		case originRun:
+			return nil, nil
+		case ipc.OriginService:
+			// Restarting cannot fix the directory: say so once and exit 0,
+			// so the service manager does not restart us in a loop.
+			ue := unreachableErr(err)
+			printError(a.Stderr, ue, false)
+			msg := failureMessage(ue)
+			slog.Error("service: could not start", "err", msg)
+			if p.Notify {
+				a.notifyService("service-start", "Keep-Alive service could not start", msg)
+			}
+			return nil, &ExitError{Code: ExitOK}
 		}
-		return nil, nil
+		return nil, unreachableErr(err)
 	}
 	if p.Origin == originRun {
 		slog.Debug("another keepalive holds the control socket; running without it", "err", err)
@@ -53,6 +65,15 @@ func (a *App) claimInstance(ctx context.Context, p *Plan) (*ipc.Server, error) {
 		}
 	}
 	return a.replace(ctx, info, other)
+}
+
+// unreachableErr is why a keepalive without a control socket does not run.
+func unreachableErr(err error) *ExitError {
+	return &ExitError{
+		Code: ExitFailure,
+		Err:  fmt.Errorf(`cannot create the control socket that "keepalive status" and "keepalive stop" use: %w`, err),
+		Hint: "fix that directory, or set " + ipc.EnvRuntimeDir + " to a directory only you can use",
+	}
 }
 
 // describeOther is "pid 123, started by service" for the instance holding the
@@ -116,10 +137,9 @@ func (a *App) replace(ctx context.Context, info ipc.ServerInfo, other string) (*
 // It is taken when the UI starts, or, while another keepalive runs, once
 // that one has stopped; until then the UI follows the other one.
 type tuiInstance struct {
-	ctx    context.Context
-	info   ipc.ServerInfo
-	ctrl   *switchController
-	stderr io.Writer
+	ctx  context.Context
+	info ipc.ServerInfo
+	ctrl *switchController
 
 	mu    sync.Mutex // held for a whole claim, so two never race
 	held  bool
@@ -144,6 +164,8 @@ func (t *tuiInstance) adoptLocked(srv *ipc.Server) {
 // claim makes this process the running keepalive. When another one runs a
 // session, it returns a controller attached to it; when another one holds
 // the claim without a session, or cannot be reached, an error with a fix.
+// Without a control socket the first claim, made before the UI starts,
+// returns an *ExitError.
 func (t *tuiInstance) claim() (tui.Controller, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -157,9 +179,11 @@ func (t *tuiInstance) claim() (tui.Controller, error) {
 	}
 	if err != nil {
 		slog.Warn("control socket unavailable", "err", err)
+		ue := unreachableErr(err)
 		if t.calls == 1 {
-			fmt.Fprintf(t.stderr, "keepalive: warning: %v; 'keepalive status' and 'keepalive stop' will not find this instance\n", err)
+			return nil, ue // before the UI: keepalive exits with it
 		}
+		return nil, tui.Warning{Text: ue.Err.Error(), Fix: ue.Hint}
 	}
 	t.adoptLocked(srv)
 	return nil, nil

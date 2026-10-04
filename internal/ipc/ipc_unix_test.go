@@ -144,8 +144,12 @@ func TestSharedRuntimeDirIsNotChanged(t *testing.T) {
 			t.Errorf("%s left in the shared directory", name)
 		}
 	}
-	if got, err := Dir(); err != nil || got != sub {
-		t.Fatalf("Dir() = %q, %v; want %q", got, err, sub)
+	want, err := filepath.EvalSymlinks(sub) // macOS's temp dir is under the /var symlink
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Dir(); err != nil || got != want {
+		t.Fatalf("Dir() = %q, %v; want %q", got, err, want)
 	}
 }
 
@@ -169,19 +173,90 @@ func TestSharedRuntimeDirWithAnOpenSubdirIsRefused(t *testing.T) {
 	}
 }
 
-func TestRuntimeDirRejectsSymlink(t *testing.T) {
+// TestRuntimeDirFollowsSymlink: KEEPALIVE_RUNTIME_DIR=/tmp on macOS names a
+// symlink to the shared /private/tmp. The server and every client resolve it
+// to the same private subdirectory of the real directory.
+func TestRuntimeDirFollowsSymlink(t *testing.T) {
 	base := runtimeDir(t)
-	target := filepath.Join(base, "target")
-	link := filepath.Join(base, "link")
-	if err := os.Mkdir(target, 0o700); err != nil {
+	shared := filepath.Join(base, "s") // short: macOS's temp dir is long
+	link := filepath.Join(base, "l")
+	if err := os.Mkdir(shared, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(target, link); err != nil {
+	if err := os.Chmod(shared, 0o1777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shared, link); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(EnvRuntimeDir, link)
+	listenAndStatus(t)
+	real, err := filepath.EvalSymlinks(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(real, fmt.Sprintf("keepalive-%d", os.Getuid()))
+	if got, err := Dir(); err != nil || got != want {
+		t.Fatalf("Dir() = %q, %v; want %q", got, err, want)
+	}
+	if _, err := os.Stat(filepath.Join(want, SocketName)); err != nil {
+		t.Fatalf("socket not in the private subdirectory of the link's target: %v", err)
+	}
+	if got := mode(t, shared); got != 0o777 {
+		t.Fatalf("shared directory changed to mode %o", got)
+	}
+}
+
+// TestRuntimeDirNotYetCreatedBehindSymlink: a runtime directory that does not
+// exist yet resolves through its existing parents, so it is the same path
+// before and after the server creates it.
+func TestRuntimeDirNotYetCreatedBehindSymlink(t *testing.T) {
+	base := runtimeDir(t)
+	target := filepath.Join(base, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(EnvRuntimeDir, filepath.Join(base, "link", "rt"))
+	before, err := Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	listenAndStatus(t)
+	after, err := Dir()
+	if err != nil || after != before {
+		t.Fatalf("Dir() = %q before the server created it, %q (%v) after", before, after, err)
+	}
+	real, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(real, "rt"); after != want {
+		t.Fatalf("Dir() = %q, want %q", after, want)
+	}
+}
+
+// TestPrivateSubdirSymlinkIsRefused: the directory keepalive names itself
+// inside a shared one is never followed, so another account cannot point it
+// elsewhere.
+func TestPrivateSubdirSymlinkIsRefused(t *testing.T) {
+	dir := runtimeDir(t)
+	target := filepath.Join(dir, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, fmt.Sprintf("keepalive-%d", os.Getuid()))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if srv, err := Listen(testInfo); err == nil {
 		srv.Close()
-		t.Fatal("Listen accepted a symlinked runtime directory")
+		t.Fatal("Listen followed a symlinked private subdirectory")
+	} else if !strings.Contains(err.Error(), "symlinks are refused") {
+		t.Fatalf("error %q does not say why", err)
 	}
 }

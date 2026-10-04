@@ -250,14 +250,15 @@ keepalive --plain --notify=false -d 1
 ## 13. Shared runtime directory
 
 ```sh
-KEEPALIVE_RUNTIME_DIR=/private/tmp keepalive --plain -d 5 & sleep 1
+KEEPALIVE_RUNTIME_DIR=/tmp keepalive --plain -d 5 & sleep 1
 ls -ld /private/tmp /private/tmp/keepalive-$(id -u)
 KEEPALIVE_RUNTIME_DIR=/private/tmp keepalive status
-KEEPALIVE_RUNTIME_DIR=/private/tmp keepalive stop
+KEEPALIVE_RUNTIME_DIR=/tmp keepalive stop
 ```
 
-- [ ] `/private/tmp` keeps its mode (`drwxrwxrwt`); `/private/tmp/keepalive-<uid>` is
-  `drwx------`; `status` and `stop` find the running keepalive.
+- [ ] No warning at start; `/private/tmp` keeps its mode (`drwxrwxrwt`);
+  `/private/tmp/keepalive-<uid>` is `drwx------`; `status` (through the real
+  path) and `stop` (through the `/tmp` symlink) find the running keepalive.
 
 ## Report back
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/signal"
@@ -148,7 +149,7 @@ func (a *App) colorAllowed() bool {
 // without one quits the UI.
 func (a *App) runTUI(ctx context.Context, p *Plan, deps session.Deps) error {
 	ctrl := &switchController{}
-	inst := &tuiInstance{ctx: ctx, info: ipc.ServerInfo{Version: a.Version, Origin: p.Origin}, ctrl: ctrl, stderr: a.Stderr}
+	inst := &tuiInstance{ctx: ctx, info: ipc.ServerInfo{Version: a.Version, Origin: p.Origin}, ctrl: ctrl}
 	defer inst.close()
 	logPath := p.Logging.Path
 	if logPath == "" {
@@ -176,6 +177,10 @@ func (a *App) runTUI(ctx context.Context, p *Plan, deps session.Deps) error {
 		opts.Claimed = true
 	} else {
 		other, err := inst.claim()
+		var ee *ExitError
+		if errors.As(err, &ee) {
+			return err
+		}
 		opts.Attach, opts.Warning, opts.Claimed = other, err, other == nil && err == nil
 	}
 	model := tui.New(opts)

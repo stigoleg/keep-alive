@@ -153,8 +153,11 @@ All notable changes to keepalive. Releases before 2.0.0 are described on the
 - A mistyped subcommand (`keepalive service instal`) is a usage error
   (exit status 2) with a suggestion.
 - `KEEPALIVE_RUNTIME_DIR` moves the control socket. An existing directory
-  that other users can read (such as `/tmp` on Linux) is left as it is;
-  keepalive uses a private `keepalive-<uid>` directory inside it.
+  that other users can read (such as `/tmp`) is left as it is; keepalive
+  uses a private `keepalive-<uid>` directory inside it. Symlinks are
+  resolved (`/tmp` on macOS), and a keepalive that cannot create its control
+  socket does not start instead of running out of reach of `status` and
+  `stop`.
 - Linux: on desktops without an idle source (KDE Plasma and Wayland
   compositors other than GNOME) activity is simulated on a fixed schedule,
   reported as working with a hint that it cannot pause while you use the

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -272,7 +274,7 @@ func TestServiceUsageErrorExitsZero(t *testing.T) {
 }
 
 func newTUIInstance() *tuiInstance {
-	return &tuiInstance{ctx: context.Background(), info: ipc.ServerInfo{Version: "2.0.0"}, ctrl: &switchController{}, stderr: &strings.Builder{}}
+	return &tuiInstance{ctx: context.Background(), info: ipc.ServerInfo{Version: "2.0.0"}, ctrl: &switchController{}}
 }
 
 func TestTUIAttachesToARunningSession(t *testing.T) {
@@ -350,5 +352,74 @@ func TestServiceRestartsDoNotRepeatNotifications(t *testing.T) {
 	}
 	if len(n.sent) != 1 || !strings.Contains(n.sent[0], "no inhibitor answered") {
 		t.Fatalf("notifications = %q, want one", n.sent)
+	}
+}
+
+// unusableRuntimeDir points KEEPALIVE_RUNTIME_DIR at a regular file, so no
+// control socket can be created.
+func unusableRuntimeDir(t *testing.T) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "ka") // short: socket paths are limited
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	file := filepath.Join(dir, "rt")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ipc.EnvRuntimeDir, file)
+}
+
+// TestUnreachableKeepaliveDoesNotRun: a keepalive that cannot create its
+// control socket would run where "keepalive status" and "keepalive stop"
+// cannot reach it; it fails instead (a service: once, and exit 0).
+func TestUnreachableKeepaliveDoesNotRun(t *testing.T) {
+	unusableRuntimeDir(t)
+	noLog := func(logging.Options) (string, func() error, error) { return "", func() error { return nil }, nil }
+
+	ta := newTestApp(t)
+	ta.runSession = nil // the real headless run
+	ta.newPower = func() power.Inhibitor { return failingPower{} }
+	ta.logSetup = noLog
+	ta.Notifier = &recordingNotifier{}
+	if code := ta.run("--plain"); code != ExitFailure {
+		t.Fatalf("terminal: exit %d, want 1 (stderr %q)", code, ta.stderr)
+	}
+	errOut := ta.stderr.String()
+	if !strings.HasPrefix(errOut, `keepalive: error: cannot create the control socket that "keepalive status" and "keepalive stop" use: `) ||
+		!strings.Contains(errOut, "\nhint: ") || strings.Contains(errOut, "no inhibitor answered") {
+		t.Fatalf("terminal: stderr = %q", errOut)
+	}
+
+	n := &recordingNotifier{}
+	state := t.TempDir()
+	for range 2 {
+		ta := newTestApp(t)
+		ta.runSession = nil
+		ta.newPower = func() power.Inhibitor { return failingPower{} }
+		ta.logSetup = noLog
+		ta.Notifier = n
+		ta.stateDir = func() (string, error) { return state, nil }
+		if code := ta.run("--plain", "--origin", "service"); code != ExitOK {
+			t.Fatalf("service: exit %d, want 0 (stderr %q)", code, ta.stderr)
+		}
+		if !strings.Contains(ta.stderr.String(), "cannot create the control socket") {
+			t.Fatalf("service: stderr = %q", ta.stderr)
+		}
+	}
+	if len(n.sent) != 1 || !strings.HasPrefix(n.sent[0], "Keep-Alive service could not start: cannot create the control socket") {
+		t.Fatalf("service notifications = %q, want one", n.sent)
+	}
+
+	inst := newTUIInstance()
+	defer inst.close()
+	c, err := inst.claim()
+	var ee *ExitError
+	if c != nil || !errors.As(err, &ee) || ee.Code != ExitFailure || ee.Hint == "" {
+		t.Fatalf("interactive UI: claim = %v, %v; want an exit 1 error with a hint", c, err)
+	}
+	if inst.held {
+		t.Fatal("interactive UI: claimed without a control socket")
 	}
 }

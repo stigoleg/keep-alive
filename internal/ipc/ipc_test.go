@@ -648,6 +648,10 @@ func TestRemoteErrorIsTyped(t *testing.T) {
 func TestRuntimeDirResolution(t *testing.T) {
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 	cache := func() (string, error) { return "/home/u/.cache", nil }
+	resolveDirReal := resolveDir
+	resolveDir := func(getenv func(string) string, cacheDir func() (string, error)) (string, error) {
+		return resolveDirReal(getenv, cacheDir, func(p string) string { return p })
+	}
 
 	got, err := resolveDir(env(map[string]string{EnvRuntimeDir: "/custom"}), cache)
 	if err != nil || got != "/custom" {
@@ -676,5 +680,57 @@ func TestRuntimeDirResolution(t *testing.T) {
 	got, err = resolveDir(env(nil), longCache)
 	if want := "/tmp/keepalive-" + strconv.Itoa(os.Getuid()); err != nil || got != want {
 		t.Errorf("long cache dir: %q, %v; want %q", got, err, want)
+	}
+
+	// Symlinks: a named directory resolves completely, keepalive's own leaf
+	// only through its parent.
+	links := map[string]string{"/tmp": "/private/tmp", "/tmp/rt": "/private/tmp/rt", "/home/u/.cache": "/data/u/.cache"}
+	real := func(p string) string {
+		if r, ok := links[p]; ok {
+			return r
+		}
+		return p
+	}
+	got, err = resolveDirReal(env(map[string]string{EnvRuntimeDir: "/tmp/rt"}), cache, real)
+	if err != nil || got != "/private/tmp/rt" {
+		t.Errorf("symlinked override: %q, %v", got, err)
+	}
+	got, err = resolveDirReal(env(nil), cache, real)
+	if err != nil || got != "/data/u/.cache/keepalive" {
+		t.Errorf("symlinked cache dir: %q, %v", got, err)
+	}
+	got, err = resolveDirReal(env(nil), longCache, real)
+	if want := "/private/tmp/keepalive-" + strconv.Itoa(os.Getuid()); err != nil || got != want {
+		t.Errorf("long cache dir behind a symlink: %q, %v; want %q", got, err, want)
+	}
+	nearLimit := "/" + strings.Repeat("d", maxSocketPath-len("/"+SocketName)-len("/private/tmp/rt")-1)
+	links[nearLimit] = "/private/tmp/rt" + nearLimit
+	if _, err := resolveDirReal(env(map[string]string{EnvRuntimeDir: nearLimit}), cache, real); err == nil || !strings.Contains(err.Error(), "too long") {
+		t.Errorf("override too long once resolved: %v, want a too-long error", err)
+	}
+}
+
+func TestRealPath(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(base, "link")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	realTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for in, want := range map[string]string{
+		filepath.Join(base, "link"):            realTarget,
+		filepath.Join(base, "link", "a", "b"):  filepath.Join(realTarget, "a", "b"),
+		filepath.Join(base, "link", "a", ".."): realTarget,
+		filepath.Join(base, "missing", "rt"):   filepath.Join(realTarget, "..", "missing", "rt"),
+	} {
+		if got := realPath(in); got != filepath.Clean(want) {
+			t.Errorf("realPath(%q) = %q, want %q", in, got, filepath.Clean(want))
+		}
 	}
 }

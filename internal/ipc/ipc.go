@@ -16,7 +16,10 @@
 // The directory is created with mode 0700 and must be a real directory owned
 // by the user; the socket is 0600. An existing directory that other users
 // may open ($KEEPALIVE_RUNTIME_DIR=$HOME, /tmp) is left as it is, and a
-// private keepalive-<uid> directory inside it is used instead.
+// private keepalive-<uid> directory inside it is used instead. Symlinks in
+// the path are resolved first, the same way by the server and every client
+// ($KEEPALIVE_RUNTIME_DIR=/tmp on macOS is /private/tmp/keepalive-<uid>);
+// only a directory keepalive names itself may not be a symlink.
 //
 // # Protocol
 //

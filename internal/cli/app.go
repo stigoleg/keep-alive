@@ -162,16 +162,22 @@ func (a *App) isServiceRun(root *cobra.Command, args []string) bool {
 // reportServiceFailure logs a service start failure and shows one
 // notification; failures to do either are ignored.
 func (a *App) reportServiceFailure(err error) {
-	msg := err.Error()
-	var ee *ExitError
-	if errors.As(err, &ee) && ee.Hint != "" {
-		msg += " (" + ee.Hint + ")"
-	}
+	msg := failureMessage(err)
 	if _, closeLog, lerr := a.logSetup(logging.Options{Enabled: true}); lerr == nil {
 		slog.Error("service: could not start", "err", msg)
 		_ = closeLog()
 	}
 	a.notifyService("service-start", "Keep-Alive service could not start", msg)
+}
+
+// failureMessage is err with its hint, on one line.
+func failureMessage(err error) string {
+	msg := err.Error()
+	var ee *ExitError
+	if errors.As(err, &ee) && ee.Hint != "" {
+		msg += " (" + ee.Hint + ")"
+	}
+	return msg
 }
 
 // notifyService shows a notification from the login service, at most once
