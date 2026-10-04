@@ -41,7 +41,7 @@ func (a *App) executeRun(ctx context.Context, p *Plan, argv []string) error {
 	s := session.New(p.Session, a.deps(p))
 	events, unsub := s.Subscribe()
 	defer unsub()
-	defer serve(ctx, srv, s)()
+	stopServing := serve(ctx, srv, s)
 	var pr output.Printer = output.NewRun(a.Stderr, a.StderrTTY && a.colorAllowed())
 	if p.JSON {
 		pr = output.NewJSON(a.Stderr)
@@ -66,7 +66,14 @@ func (a *App) executeRun(ctx context.Context, p *Plan, argv []string) error {
 	}()
 
 	result := make(chan session.Result, 1)
-	go func() { result <- s.Run(context.WithoutCancel(ctx)) }()
+	go func() {
+		res := s.Run(context.WithoutCancel(ctx))
+		// The session is over, though the command may still run: give up
+		// the lock and the socket, so "keepalive stop" and "status" see no
+		// instance and another keepalive can start.
+		stopServing()
+		result <- res
+	}()
 	finish := func(r session.Reason) session.Result {
 		s.Stop(r)
 		res := <-result
