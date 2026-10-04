@@ -36,7 +36,7 @@ func TestAccessibilityHintNamesTheApp(t *testing.T) {
 
 // Reading counters, the pointer and the displays changes nothing.
 func TestCoreGraphicsReadOnlyQueries(t *testing.T) {
-	b := newBackend(false)
+	b := newBackend(context.Background(), false)
 	for _, s := range append(b.sources, b.idle) {
 		d, err := s.Idle()
 		if err != nil || d < 0 {

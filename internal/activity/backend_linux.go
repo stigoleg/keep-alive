@@ -19,9 +19,20 @@ import (
 // cmdTimeout bounds every helper process (xdotool, ydotool, xprintidle).
 const cmdTimeout = 3 * time.Second
 
-const uinputPermissionHint = `give your user access to /dev/uinput: run "sudo usermod -aG input $USER", ` +
-	`add the udev rule KERNEL=="uinput", MODE="0660", GROUP="input" to /etc/udev/rules.d/60-uinput.rules, ` +
-	`then reboot or log out and back in`
+// uinputPermissionHint grants /dev/uinput to whoever is logged in at the
+// seat (systemd's uaccess tag) rather than to a group: the "input" group
+// can also read every keyboard, so any program the user runs could log
+// keystrokes.
+const uinputPermissionHint = `give your login session access to /dev/uinput: ` +
+	`echo 'KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/60-keepalive-uinput.rules, ` +
+	`then sudo udevadm control --reload && sudo udevadm trigger ` +
+	`(or log out and back in, or sudo modprobe -r uinput && sudo modprobe uinput). ` +
+	`Adding yourself to the "input" group also works, but then every program you run can read your keyboard`
+
+// xwaylandNote warns that apps under XWayland may keep counting idle time:
+// XWayland only sees input while one of its windows has the pointer.
+const xwaylandNote = "Apps running under XWayland (some Slack/Teams builds) may not see this activity; " +
+	"start them with --ozone-platform=wayland"
 
 // linuxEnv is the slice of the environment that picks backends.
 type linuxEnv struct {
@@ -41,14 +52,17 @@ func (e linuxEnv) x11() bool { return e.display != "" && e.wayland == "" }
 
 func (e linuxEnv) kde() bool { return strings.Contains(e.desktop, "KDE") }
 
-func newBackend(keys bool) *backend {
+// newBackend probes the desktop. ctx bounds every D-Bus call and helper
+// process, now and for as long as the backend is used: both bus connections
+// close when ctx is done, which also ends a call waiting on a hung bus.
+func newBackend(ctx context.Context, keys bool) *backend {
 	env := currentEnv()
 	b := &backend{noIdleHint: noIdleHint(env)}
-	sess, err := connectSessionBus()
+	sess, err := connectSessionBus(ctx)
 	if err != nil {
 		slog.Debug("activity: no session bus", "err", err)
 	}
-	sys, err := dbus.ConnectSystemBus()
+	sys, err := dbus.ConnectSystemBus(dbus.WithContext(ctx))
 	if err != nil {
 		slog.Debug("activity: no system bus", "err", err)
 		sys = nil
@@ -60,21 +74,28 @@ func newBackend(keys bool) *backend {
 			}
 		}
 	}
-	b.sources = idleSources(env, sess, exec.LookPath)
-	if len(b.sources) > 0 {
-		b.idle = b.sources[0]
+	idle := idleSources(ctx, env, sess, exec.LookPath)
+	b.idle, b.sources = idle.gate, idle.sources
+	if idle.xwayland != nil {
+		b.secondary, b.secondaryNote = idle.xwayland, xwaylandNote
 	}
-	b.lock = newLinuxLock(sys, sess)
-	switch b.lock.(type) {
-	case logindLock:
-		b.lockName = "logind LockedHint"
-	case screensaverLock:
-		b.lockName = "org.freedesktop.ScreenSaver"
+	if lock := newLinuxLock(ctx, sys, sess); len(lock) > 0 {
+		b.lock, b.lockName = lock, lock.String()
 	}
-	b.open = func() (Injector, error) { return openLinux(env, keys) }
-	b.candidates = func() []Injector { return linuxCandidates(env, keys) }
+	b.open = func() (Injector, error) { return openLinux(ctx, env, keys, nil) }
+	b.next = func(skip func(string) bool) (Injector, error) { return openLinux(ctx, env, keys, skip) }
+	b.candidates = func() []Injector { return linuxCandidates(ctx, env, keys) }
 	b.env = env.describe()
+	b.notes = desktopNotes(env)
 	return b
+}
+
+// desktopNotes warns about XWayland on a Wayland session that runs it.
+func desktopNotes(env linuxEnv) []string {
+	if env.wayland != "" && env.display != "" {
+		return []string{"XWayland: " + xwaylandNote}
+	}
+	return nil
 }
 
 // describe is the desktop as doctor shows it.
@@ -95,16 +116,26 @@ func (e linuxEnv) describe() []string {
 	return []string{"display server: " + server, "desktop: " + desktop}
 }
 
-func linuxCandidates(env linuxEnv, keys bool) []Injector {
-	return []Injector{newUinput(keys), newYdotool(), newXdotool(env)}
+// linuxCandidates lists the input methods in order; ctx bounds their
+// availability checks.
+func linuxCandidates(ctx context.Context, env linuxEnv, keys bool) []Injector {
+	return []Injector{newUinput(keys), newYdotool(ctx), newXdotool(ctx, env)}
 }
 
-// openLinux tries uinput, then ydotool 1.x, then xdotool (X11 only).
-func openLinux(env linuxEnv, keys bool) (Injector, error) {
-	candidates := linuxCandidates(env, keys)
+// openLinux tries uinput, then ydotool 1.x, then xdotool (X11 only),
+// leaving out the methods skip rejects.
+func openLinux(ctx context.Context, env linuxEnv, keys bool, skip func(string) bool) (Injector, error) {
+	return firstAvailable(linuxCandidates(ctx, env, keys), env, skip)
+}
+
+func firstAvailable(candidates []Injector, env linuxEnv, skip func(string) bool) (Injector, error) {
 	var reasons []string
 	hint := uinputPermissionHint
 	for i, inj := range candidates {
+		if skip != nil && skip(inj.Name()) {
+			reasons = append(reasons, inj.Name()+": failed recently")
+			continue
+		}
 		err := inj.Available()
 		if err == nil {
 			return inj, nil
@@ -166,9 +197,10 @@ func runCmd(ctx context.Context, timeout time.Duration, env []string, name strin
 const dbusTimeout = 2 * time.Second
 
 // connectSessionBus connects to an existing session bus. Unlike
-// dbus.ConnectSessionBus it never starts one with dbus-launch.
-func connectSessionBus() (*dbus.Conn, error) {
-	conn, err := dbus.SessionBusPrivateNoAutoStartup()
+// dbus.ConnectSessionBus it never starts one with dbus-launch. The
+// connection closes when ctx is done, which also aborts a hung handshake.
+func connectSessionBus(ctx context.Context) (*dbus.Conn, error) {
+	conn, err := dbus.SessionBusPrivateNoAutoStartup(dbus.WithContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -183,11 +215,11 @@ func connectSessionBus() (*dbus.Conn, error) {
 	return conn, nil
 }
 
-func hasOwner(conn *dbus.Conn, name string) bool {
+func hasOwner(ctx context.Context, conn *dbus.Conn, name string) bool {
 	if conn == nil {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), dbusTimeout)
+	ctx, cancel := context.WithTimeout(ctx, dbusTimeout)
 	defer cancel()
 	var ok bool
 	err := conn.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.NameHasOwner", 0, name).Store(&ok)
@@ -195,8 +227,8 @@ func hasOwner(conn *dbus.Conn, name string) bool {
 }
 
 // dbusCall calls method on dest/path and returns the reply body.
-func dbusCall(conn *dbus.Conn, dest string, path dbus.ObjectPath, method string, args ...any) ([]any, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), dbusTimeout)
+func dbusCall(ctx context.Context, conn *dbus.Conn, dest string, path dbus.ObjectPath, method string, args ...any) ([]any, error) {
+	ctx, cancel := context.WithTimeout(ctx, dbusTimeout)
 	defer cancel()
 	call := conn.Object(dest, path).CallWithContext(ctx, method, 0, args...)
 	if call.Err != nil {

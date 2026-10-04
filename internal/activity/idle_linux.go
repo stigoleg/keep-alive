@@ -13,43 +13,79 @@ import (
 	"github.com/godbus/dbus/v5"
 )
 
-// idleSources returns every idle source that answers, best first: Mutter's
-// IdleMonitor, xprintidle on X11, KDE's ScreenSaver on X11, and xprintidle
-// under XWayland as a last resort (it only sees input sent to X11 clients).
-func idleSources(env linuxEnv, sess *dbus.Conn, lookPath func(string) (string, error)) []IdleSource {
-	var candidates []IdleSource
-	if hasOwner(sess, "org.gnome.Mutter.IdleMonitor") {
-		candidates = append(candidates, mutterIdle{sess})
+// linuxIdle is what the desktop tells about idle time.
+type linuxIdle struct {
+	// gate decides when to simulate and verifies bursts; nil means a fixed
+	// schedule.
+	gate IdleSource
+	// xwayland is XWayland's counter on a Wayland session, read for
+	// information only.
+	xwayland IdleSource
+	// sources is every source that answered, for Probe and Diagnose.
+	sources []IdleSource
+}
+
+// idleSources reads the idle counters this desktop offers: Mutter's
+// IdleMonitor, xprintidle (X11 or XWayland) and KDE's ScreenSaver on X11.
+func idleSources(ctx context.Context, env linuxEnv, sess *dbus.Conn, lookPath func(string) (string, error)) linuxIdle {
+	var mutter, xp, kde IdleSource
+	if hasOwner(ctx, sess, "org.gnome.Mutter.IdleMonitor") {
+		mutter = mutterIdle{ctx, sess}
 	}
-	_, xerr := lookPath("xprintidle")
-	if env.x11() && xerr == nil {
-		candidates = append(candidates, xprintidle{run: runCmd})
+	if _, err := lookPath("xprintidle"); err == nil && env.display != "" {
+		xp = xprintidle{ctx: ctx, run: runCmd, xwayland: env.wayland != ""}
 	}
-	if env.x11() && env.kde() && hasOwner(sess, "org.freedesktop.ScreenSaver") {
-		candidates = append(candidates, kdeIdle{sess})
+	if env.x11() && env.kde() && hasOwner(ctx, sess, "org.freedesktop.ScreenSaver") {
+		kde = kdeIdle{ctx, sess}
 	}
-	if env.display != "" && env.wayland != "" && xerr == nil {
-		candidates = append(candidates, xprintidle{run: runCmd, xwayland: true})
+	return pickIdle(env, answering(mutter), answering(xp), answering(kde))
+}
+
+// answering returns s if it can be read, else nil.
+func answering(s IdleSource) IdleSource {
+	if s == nil {
+		return nil
 	}
-	var out []IdleSource
-	for _, s := range candidates {
-		if _, err := s.Idle(); err != nil {
-			slog.Debug("activity: idle source unusable", "source", s.Name(), "err", err)
-			continue
+	if _, err := s.Idle(); err != nil {
+		slog.Debug("activity: idle source unusable", "source", s.Name(), "err", err)
+		return nil
+	}
+	return s
+}
+
+// pickIdle chooses among the sources that answered (nil when absent). On
+// Wayland only Mutter is trusted: XWayland's counter moves only when an X11
+// client gets input, so it never gates or verifies, and without Mutter
+// (KDE, wlroots) there is no trustworthy source at all. On X11 the order
+// is Mutter, xprintidle, KDE.
+func pickIdle(env linuxEnv, mutter, xprintidle, kde IdleSource) linuxIdle {
+	var li linuxIdle
+	for _, s := range []IdleSource{mutter, xprintidle, kde} {
+		if s != nil {
+			li.sources = append(li.sources, s)
 		}
-		out = append(out, s)
 	}
-	return out
+	if env.wayland != "" {
+		li.gate, li.xwayland = mutter, xprintidle
+		return li
+	}
+	if len(li.sources) > 0 {
+		li.gate = li.sources[0]
+	}
+	return li
 }
 
 // mutterIdle is GNOME's idle monitor: GetIdletime returns uint64
-// milliseconds.
-type mutterIdle struct{ conn *dbus.Conn }
+// milliseconds. ctx bounds every call (see newBackend).
+type mutterIdle struct {
+	ctx  context.Context
+	conn *dbus.Conn
+}
 
 func (mutterIdle) Name() string { return "Mutter IdleMonitor" }
 
 func (m mutterIdle) Idle() (time.Duration, error) {
-	body, err := dbusCall(m.conn, "org.gnome.Mutter.IdleMonitor", "/org/gnome/Mutter/IdleMonitor/Core",
+	body, err := dbusCall(m.ctx, m.conn, "org.gnome.Mutter.IdleMonitor", "/org/gnome/Mutter/IdleMonitor/Core",
 		"org.gnome.Mutter.IdleMonitor.GetIdletime")
 	if err != nil {
 		return 0, err
@@ -73,12 +109,15 @@ func mutterIdleFromReply(body []any) (time.Duration, error) {
 // kdeIdle is KDE's org.freedesktop.ScreenSaver.GetSessionIdleTime, which
 // returns milliseconds (its interface XML says seconds) and only works on
 // X11.
-type kdeIdle struct{ conn *dbus.Conn }
+type kdeIdle struct {
+	ctx  context.Context
+	conn *dbus.Conn
+}
 
 func (kdeIdle) Name() string { return "KDE ScreenSaver" }
 
 func (k kdeIdle) Idle() (time.Duration, error) {
-	body, err := dbusCall(k.conn, "org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver",
+	body, err := dbusCall(k.ctx, k.conn, "org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver",
 		"org.freedesktop.ScreenSaver.GetSessionIdleTime")
 	if err != nil {
 		return 0, err
@@ -102,6 +141,7 @@ func kdeIdleFromReply(body []any) (time.Duration, error) {
 // xprintidle prints the XScreenSaver idle time in milliseconds, the value
 // Chromium reads on X11.
 type xprintidle struct {
+	ctx      context.Context
 	run      cmdRunner
 	xwayland bool
 }
@@ -114,7 +154,7 @@ func (x xprintidle) Name() string {
 }
 
 func (x xprintidle) Idle() (time.Duration, error) {
-	out, _, err := x.run(context.Background(), cmdTimeout, nil, "xprintidle")
+	out, _, err := x.run(x.ctx, cmdTimeout, nil, "xprintidle")
 	if err != nil {
 		return 0, err
 	}

@@ -3,21 +3,33 @@
 package activity
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
+// NewLazySystemDLL loads only from System32, so a DLL planted next to
+// keepalive.exe or in the working directory is never picked up.
 var (
-	user32   = syscall.NewLazyDLL("user32.dll")
-	kernel32 = syscall.NewLazyDLL("kernel32.dll")
-	wtsapi32 = syscall.NewLazyDLL("wtsapi32.dll")
+	user32   = windows.NewLazySystemDLL("user32.dll")
+	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
+	wtsapi32 = windows.NewLazySystemDLL("wtsapi32.dll")
 
 	procSendInput                     = user32.NewProc("SendInput")
 	procGetCursorPos                  = user32.NewProc("GetCursorPos")
+	procSetCursorPos                  = user32.NewProc("SetCursorPos")
+	procMonitorFromRect               = user32.NewProc("MonitorFromRect")
+	procGetMonitorInfoW               = user32.NewProc("GetMonitorInfoW")
+	procOpenInputDesktop              = user32.NewProc("OpenInputDesktop")
+	procCloseDesktop                  = user32.NewProc("CloseDesktop")
+	procGetUserObjectInformationW     = user32.NewProc("GetUserObjectInformationW")
 	procGetSystemMetrics              = user32.NewProc("GetSystemMetrics")
 	procGetLastInputInfo              = user32.NewProc("GetLastInputInfo")
 	procSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
@@ -48,6 +60,10 @@ const (
 	wtsSessionInfoEx      = 25
 	wtsSessionStateLock   = 0
 	wtsSessionStateUnlock = 1
+
+	desktopSwitchDesktop = 0x0100
+	uoiName              = 2
+	monitorDefaultToNull = 0
 
 	// DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 is the handle value -4.
 	dpiAwarenessPerMonitorV2 = ^uintptr(3)
@@ -99,6 +115,16 @@ type lastInputInfo struct {
 
 type point32 struct{ x, y int32 }
 
+type rect32 struct{ left, top, right, bottom int32 }
+
+// monitorInfo is MONITORINFO.
+type monitorInfo struct {
+	cbSize    uint32
+	rcMonitor rect32
+	rcWork    rect32
+	dwFlags   uint32
+}
+
 // wtsInfoEx is the head of WTSINFOEXW: Level, then the level-1 union, which
 // is 8-byte aligned because it holds LARGE_INTEGERs.
 type wtsInfoEx struct {
@@ -109,7 +135,7 @@ type wtsInfoEx struct {
 	sessionFlags int32
 }
 
-func newBackend(keys bool) *backend {
+func newBackend(_ context.Context, keys bool) *backend {
 	idle := lastInputIdle{}
 	return &backend{
 		idle:    idle,
@@ -118,7 +144,7 @@ func newBackend(keys bool) *backend {
 		open:    openSendInput,
 
 		candidates: func() []Injector { return []Injector{sendInput{}} },
-		lockName:   "WTS session state",
+		lockName:   "WTS session state, else the input desktop",
 	}
 }
 
@@ -138,11 +164,17 @@ func (lastInputIdle) Idle() (time.Duration, error) {
 	return time.Duration(uint32(now)-lii.dwTime) * time.Millisecond, nil
 }
 
-// wtsLock reads the session lock flag. Windows 7 reports it inverted, but Go
-// no longer runs there.
+// wtsLock reads the session lock flag, and the input desktop when the flag
+// is unavailable or unknown.
 type wtsLock struct{}
 
 func (wtsLock) Locked() (bool, error) {
+	return lockedSessionOrDesktop(wtsSessionLocked, inputDesktopIsLocked)
+}
+
+// wtsSessionLocked reads the session lock flag. Windows 7 reports it
+// inverted, but Go no longer runs there.
+func wtsSessionLocked() (bool, error) {
 	var info *wtsInfoEx
 	var n uint32
 	r, _, err := procWTSQuerySessionInformationW.Call(0, wtsCurrentSession, wtsSessionInfoEx,
@@ -161,6 +193,23 @@ func (wtsLock) Locked() (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("unknown session lock state %d", info.sessionFlags)
+}
+
+// inputDesktopIsLocked opens the desktop that receives input: the user's
+// "Default" one, or Winlogon's secure desktop while the session is locked.
+func inputDesktopIsLocked() (bool, error) {
+	h, _, err := procOpenInputDesktop.Call(0, 0, desktopSwitchDesktop)
+	if h == 0 {
+		return inputDesktopLocked("", fmt.Errorf("OpenInputDesktop: %w", err), errors.Is(err, windows.ERROR_ACCESS_DENIED))
+	}
+	defer procCloseDesktop.Call(h)
+	var name [256]uint16
+	var n uint32
+	if r, _, err := procGetUserObjectInformationW.Call(h, uoiName, uintptr(unsafe.Pointer(&name[0])),
+		uintptr(len(name)*2), uintptr(unsafe.Pointer(&n))); r == 0 {
+		return false, fmt.Errorf("GetUserObjectInformation: %w", err)
+	}
+	return inputDesktopLocked(windows.UTF16ToString(name[:]), nil, false)
 }
 
 var dpiAware sync.Once
@@ -206,9 +255,45 @@ func (sendInput) Position() (float64, float64, bool) {
 	return float64(p.x), float64(p.y), true
 }
 
-func (sendInput) Bounds() (Rect, bool) {
+// Bounds is the monitor under the cursor. The virtual screen around all
+// monitors has dead zones where Windows would clamp the pointer, which a
+// burst would mistake for the user moving it.
+func (s sendInput) Bounds() (Rect, bool) {
+	if x, y, ok := s.Position(); ok {
+		if r, ok := monitorAt(x, y); ok {
+			return r, true
+		}
+	}
 	r := virtualScreen()
 	return r, r.W > 0 && r.H > 0
+}
+
+func monitorAt(x, y float64) (Rect, bool) {
+	px, py := int32(x), int32(y)
+	at := rect32{px, py, px + 1, py + 1}
+	h, _, _ := procMonitorFromRect.Call(uintptr(unsafe.Pointer(&at)), monitorDefaultToNull)
+	if h == 0 {
+		return Rect{}, false
+	}
+	mi := monitorInfo{cbSize: uint32(unsafe.Sizeof(monitorInfo{}))}
+	if r, _, _ := procGetMonitorInfoW.Call(h, uintptr(unsafe.Pointer(&mi))); r == 0 {
+		return Rect{}, false
+	}
+	m := mi.rcMonitor
+	return Rect{X: float64(m.left), Y: float64(m.top), W: float64(m.right - m.left), H: float64(m.bottom - m.top)}, m.right > m.left && m.bottom > m.top
+}
+
+// FinishAt corrects a return stroke that landed a pixel or two off.
+func (s sendInput) FinishAt(ox, oy float64) {
+	set := func(x, y int32) error {
+		if r, _, err := procSetCursorPos.Call(uintptr(x), uintptr(y)); r == 0 {
+			return fmt.Errorf("SetCursorPos: %w", err)
+		}
+		return nil
+	}
+	if _, err := snapBack(s.Position, set, ox, oy); err != nil {
+		slog.Debug("activity: cursor not put back exactly", "err", err)
+	}
 }
 
 func virtualScreen() Rect {

@@ -21,6 +21,7 @@ func TestDiagnoseIsStatic(t *testing.T) {
 	b := probeBackend(m)
 	b.lockName = "fake lock"
 	b.env = []string{"desktop: fake"}
+	b.notes = []string{"XWayland: " + testXWaylandNote}
 	b.candidates = func() []Injector {
 		return []Injector{
 			fakeInjector{m},
@@ -57,6 +58,9 @@ func TestDiagnoseIsStatic(t *testing.T) {
 	}
 	if len(d.Environment) != 1 || d.Environment[0] != "desktop: fake" {
 		t.Fatalf("environment = %v", d.Environment)
+	}
+	if len(d.Notes) != 1 || d.Notes[0] != "XWayland: "+testXWaylandNote {
+		t.Fatalf("notes = %v", d.Notes)
 	}
 	if !d.Usable() {
 		t.Fatal("Usable() = false with an available injector")

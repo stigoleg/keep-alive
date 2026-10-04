@@ -99,10 +99,10 @@ func (s sysUinput) close() error { return syscall.Close(s.fd) }
 // (it has BTN_LEFT plus REL_X/REL_Y), so libinput and every compositor treat
 // its events as real input.
 type uinputInjector struct {
-	keys   bool
-	open   func(path string) (uinputFile, error)
-	access func(path string) error
-	sleep  func(time.Duration)
+	keys  bool
+	open  func(path string) (uinputFile, error)
+	probe func(path string) error
+	sleep func(time.Duration)
 
 	mu  sync.Mutex
 	dev uinputFile // created on the first burst
@@ -110,11 +110,23 @@ type uinputInjector struct {
 
 func newUinput(keys bool) *uinputInjector {
 	return &uinputInjector{
-		keys:   keys,
-		open:   openUinputDevice,
-		access: func(p string) error { return syscall.Access(p, 2 /* W_OK */) },
-		sleep:  time.Sleep,
+		keys:  keys,
+		open:  openUinputDevice,
+		probe: probeUinput,
+		sleep: time.Sleep,
 	}
+}
+
+// probeUinput opens the device as the first burst will and closes it,
+// which creates nothing. Unlike access(2) it also sees what blocks the
+// open itself: a sandbox's device policy, an LSM, a static node whose
+// module is missing.
+func probeUinput(path string) error {
+	fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	return syscall.Close(fd)
 }
 
 func (u *uinputInjector) Name() string { return "uinput" }
@@ -126,19 +138,22 @@ func (u *uinputInjector) Available() error {
 	if created {
 		return nil
 	}
-	err := u.access(uinputPath)
+	err := u.probe(uinputPath)
 	switch {
 	case err == nil:
 		return nil
 	case errors.Is(err, os.ErrNotExist):
-		return &Unavailable{
-			Reason: uinputPath + " does not exist",
-			Hint:   "load the uinput module: sudo modprobe uinput (add uinput to /etc/modules-load.d/uinput.conf to keep it)",
-		}
-	default:
+		return &Unavailable{Reason: uinputPath + " does not exist", Hint: uinputModuleHint}
+	case errors.Is(err, syscall.ENODEV) || errors.Is(err, syscall.ENXIO):
+		return &Unavailable{Reason: "the uinput module is not loaded", Hint: uinputModuleHint}
+	case errors.Is(err, os.ErrPermission):
 		return &Unavailable{Reason: "no write access to " + uinputPath, Hint: uinputPermissionHint}
+	default:
+		return &Unavailable{Reason: fmt.Sprintf("cannot open %s: %v", uinputPath, err)}
 	}
 }
+
+const uinputModuleHint = "load the uinput module: sudo modprobe uinput (add uinput to /etc/modules-load.d/uinput.conf to keep it)"
 
 // device creates the virtual pointer on first use.
 func (u *uinputInjector) device() (uinputFile, error) {

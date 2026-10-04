@@ -5,10 +5,17 @@ package activity
 import (
 	"context"
 	"errors"
+	"net"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/godbus/dbus/v5"
 )
 
 func TestMutterIdleIsTypedMilliseconds(t *testing.T) {
@@ -73,16 +80,21 @@ func TestYdotoolSocketSearchOrder(t *testing.T) {
 	env := map[string]string{"YDOTOOL_SOCKET": "/custom/sock", "XDG_RUNTIME_DIR": "/run/user/1000"}
 	getenv := func(k string) string { return env[k] }
 	exists := map[string]bool{}
-	isSock := func(p string) bool { return exists[p] }
+	dial := func(p string) error {
+		if exists[p] {
+			return nil
+		}
+		return syscall.ENOENT
+	}
 
-	sock, candidates := ydotoolSocket(getenv, isSock)
+	sock, candidates, err := ydotoolSocket(getenv, dial)
 	want := []string{"/custom/sock", "/run/user/1000/.ydotool_socket", "/tmp/.ydotool_socket"}
-	if sock != "" || !reflect.DeepEqual(candidates, want) {
-		t.Fatalf("got %q %v, want none of %v", sock, candidates, want)
+	if sock != "" || err != nil || !reflect.DeepEqual(candidates, want) {
+		t.Fatalf("got %q %v %v, want none of %v", sock, candidates, err, want)
 	}
 	for i := len(want) - 1; i >= 0; i-- {
 		exists[want[i]] = true
-		if sock, _ := ydotoolSocket(getenv, isSock); sock != want[i] {
+		if sock, _, _ := ydotoolSocket(getenv, dial); sock != want[i] {
 			t.Fatalf("with %s present got %q", want[i], sock)
 		}
 	}
@@ -97,12 +109,14 @@ type call struct {
 
 type fakeRunner struct {
 	calls []call
+	ctxs  []context.Context
 	reply func(c call) (string, string, error)
 }
 
 func (f *fakeRunner) run(ctx context.Context, timeout time.Duration, env []string, name string, args ...string) (string, string, error) {
 	c := call{timeout, env, name, args}
 	f.calls = append(f.calls, c)
+	f.ctxs = append(f.ctxs, ctx)
 	if f.reply != nil {
 		return f.reply(c)
 	}
@@ -124,7 +138,13 @@ func TestYdotoolAvailability(t *testing.T) {
 		for _, s := range sockets {
 			set[s] = true
 		}
-		return &ydotool{run: r.run, lookPath: found, getenv: func(string) string { return "" }, isSocket: func(p string) bool { return set[p] }}, r
+		dial := func(p string) error {
+			if set[p] {
+				return nil
+			}
+			return syscall.ENOENT
+		}
+		return &ydotool{run: r.run, lookPath: found, getenv: func(string) string { return "" }, dial: dial}, r
 	}
 	var un *Unavailable
 
@@ -251,3 +271,279 @@ func TestNoIdleHints(t *testing.T) {
 		t.Fatalf("X11 hint %q", h)
 	}
 }
+
+// hungBus accepts D-Bus connections and never answers, like a frozen
+// dbus-daemon.
+func hungBus(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "bus")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = l.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	})
+	return "unix:path=" + path
+}
+
+func TestNewBackendGivesUpOnAHungBusWhenCancelled(t *testing.T) {
+	addr := hungBus(t)
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", addr)
+	t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", addr)
+	t.Setenv("DISPLAY", "")
+	t.Setenv("WAYLAND_DISPLAY", "")
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan *backend, 1)
+	go func() { done <- newBackend(ctx, false) }()
+	select {
+	case b := <-done:
+		b.Close()
+		if b.lock != nil || len(b.sources) != 0 {
+			t.Fatalf("a hung bus produced lock %v, sources %v", b.lock, b.sources)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("newBackend still blocked on a hung bus 3s after its context ended")
+	}
+}
+
+func TestXprintidleRunsUnderTheBackendContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := &fakeRunner{reply: func(call) (string, string, error) { return "1000", "", nil }}
+	if _, err := (xprintidle{ctx: ctx, run: r.run}).Idle(); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.ctxs) != 1 || r.ctxs[0].Err() == nil {
+		t.Fatal("xprintidle did not run under the backend's context")
+	}
+}
+
+type namedIdle string
+
+func (n namedIdle) Name() string               { return string(n) }
+func (namedIdle) Idle() (time.Duration, error) { return time.Minute, nil }
+
+func TestPickIdleNeverGatesOnXWayland(t *testing.T) {
+	mutter, xp, kde := namedIdle("mutter"), namedIdle("xprintidle"), namedIdle("kde")
+	names := func(ss []IdleSource) []string {
+		var out []string
+		for _, s := range ss {
+			out = append(out, s.Name())
+		}
+		return out
+	}
+	tests := []struct {
+		name            string
+		env             linuxEnv
+		mutter, xp, kde IdleSource
+		gate, xwayland  IdleSource
+		sources         []string
+	}{
+		{"GNOME Wayland with XWayland", linuxEnv{display: ":0", wayland: "wayland-0", desktop: "GNOME"}, mutter, xp, nil, mutter, xp, []string{"mutter", "xprintidle"}},
+		{"KDE Wayland with XWayland", linuxEnv{display: ":1", wayland: "wayland-0", desktop: "KDE"}, nil, xp, nil, nil, xp, []string{"xprintidle"}},
+		{"sway without XWayland", linuxEnv{wayland: "wayland-1", desktop: "SWAY"}, nil, nil, nil, nil, nil, nil},
+		{"GNOME on X11", linuxEnv{display: ":0", desktop: "GNOME"}, mutter, xp, nil, mutter, nil, []string{"mutter", "xprintidle"}},
+		{"plain X11", linuxEnv{display: ":0", desktop: "XFCE"}, nil, xp, nil, xp, nil, []string{"xprintidle"}},
+		{"KDE X11 without xprintidle", linuxEnv{display: ":0", desktop: "KDE"}, nil, nil, kde, kde, nil, []string{"kde"}},
+	}
+	for _, tt := range tests {
+		got := pickIdle(tt.env, tt.mutter, tt.xp, tt.kde)
+		if got.gate != tt.gate || got.xwayland != tt.xwayland || !reflect.DeepEqual(names(got.sources), tt.sources) {
+			t.Errorf("%s: gate %v, xwayland %v, sources %v; want %v, %v, %v", tt.name, got.gate, got.xwayland, names(got.sources), tt.gate, tt.xwayland, tt.sources)
+		}
+	}
+}
+
+func TestXWaylandNoteOnlyOnWaylandWithXWayland(t *testing.T) {
+	if n := desktopNotes(linuxEnv{display: ":0", wayland: "wayland-0"}); len(n) != 1 || !strings.Contains(n[0], "--ozone-platform=wayland") {
+		t.Fatalf("Wayland with XWayland: %v", n)
+	}
+	for _, env := range []linuxEnv{{display: ":0"}, {wayland: "wayland-0"}} {
+		if n := desktopNotes(env); len(n) != 0 {
+			t.Fatalf("%+v: %v", env, n)
+		}
+	}
+}
+
+type fakeLockSource struct {
+	locked bool
+	err    error
+}
+
+func (f fakeLockSource) Locked() (bool, error) { return f.locked, f.err }
+
+func TestAnyLockIsLockedWhenAnySourceSaysSo(t *testing.T) {
+	notSupported := errors.New("org.freedesktop.DBus.Error.NotSupported")
+	src := func(name string, locked bool, err error) namedLock {
+		return namedLock{name: name, LockSource: fakeLockSource{locked, err}}
+	}
+	tests := []struct {
+		name    string
+		lock    anyLock
+		locked  bool
+		wantErr bool
+	}{
+		{"logind unlocked, GNOME locked", anyLock{src("logind", false, nil), src("gnome", true, nil)}, true, false},
+		{"logind locked, screensaver unlocked", anyLock{src("logind", true, nil), src("fdo", false, nil)}, true, false},
+		{"NotSupported is ignored", anyLock{src("fdo", false, notSupported), src("gnome", false, nil)}, false, false},
+		{"NotSupported next to a locked source", anyLock{src("fdo", false, notSupported), src("mate", true, nil)}, true, false},
+		{"every source failing is unknown", anyLock{src("logind", false, errors.New("gone")), src("fdo", false, notSupported)}, false, true},
+	}
+	for _, tt := range tests {
+		locked, err := tt.lock.Locked()
+		if locked != tt.locked || (err != nil) != tt.wantErr {
+			t.Errorf("%s: Locked() = %v, %v; want %v, error %v", tt.name, locked, err, tt.locked, tt.wantErr)
+		}
+	}
+	if got := (anyLock{src("logind LockedHint", false, nil), src("org.gnome.ScreenSaver", false, nil)}).String(); got != "logind LockedHint, org.gnome.ScreenSaver" {
+		t.Errorf("String() = %q", got)
+	}
+}
+
+func TestScreensaverServicesMatchChromium(t *testing.T) {
+	want := map[string]dbus.ObjectPath{
+		"org.freedesktop.ScreenSaver": "/org/freedesktop/ScreenSaver",
+		"org.gnome.ScreenSaver":       "/org/gnome/ScreenSaver",
+		"org.mate.ScreenSaver":        "/org/mate/ScreenSaver",
+		"org.cinnamon.ScreenSaver":    "/org/cinnamon/ScreenSaver",
+		"org.xfce.ScreenSaver":        "/org/xfce/ScreenSaver",
+	}
+	got := map[string]dbus.ObjectPath{}
+	for _, s := range screensaverServices {
+		got[s.name] = s.path
+		if s.iface == "" {
+			t.Errorf("%s has no interface", s.name)
+		}
+	}
+	for name, path := range want {
+		if got[name] != path {
+			t.Errorf("%s at %q, want %q", name, got[name], path)
+		}
+	}
+}
+
+func TestYdotoolConnectsToTheDaemonSocket(t *testing.T) {
+	dir := t.TempDir()
+	live := filepath.Join(dir, "live")
+	daemon, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: live, Net: "unixgram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	stale := filepath.Join(dir, "stale")
+	dead, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: stale, Net: "unixgram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = dead.Close() // the socket file stays, nobody reads it: ydotoold died
+
+	if err := dialYdotoold(live); err != nil {
+		t.Fatalf("live daemon: %v", err)
+	}
+	if err := dialYdotoold(stale); !errors.Is(err, syscall.ECONNREFUSED) {
+		t.Fatalf("stale socket: %v, want connection refused", err)
+	}
+	if err := dialYdotoold(filepath.Join(dir, "missing")); !errors.Is(err, syscall.ENOENT) {
+		t.Fatalf("missing socket: %v, want ENOENT", err)
+	}
+
+	r := &fakeRunner{reply: func(call) (string, string, error) { return ydotool104Help, "", nil }}
+	newY := func(sock string, dial func(string) error) *ydotool {
+		env := map[string]string{"YDOTOOL_SOCKET": sock}
+		return &ydotool{run: r.run, lookPath: found, getenv: func(k string) string { return env[k] }, dial: dial}
+	}
+	if err := newY(live, dialYdotoold).Available(); err != nil {
+		t.Fatalf("live daemon: %v", err)
+	}
+	var un *Unavailable
+	if err := newY(stale, dialYdotoold).Available(); !errors.As(err, &un) ||
+		!strings.Contains(un.Reason, "connection refused") || !strings.Contains(un.Hint, "systemctl --user") {
+		t.Fatalf("stale socket: %v", err)
+	}
+	denied := func(string) error {
+		return &net.OpError{Op: "dial", Net: "unixgram", Err: os.NewSyscallError("connect", syscall.EACCES)}
+	}
+	if err := newY(live, denied).Available(); !errors.As(err, &un) ||
+		!strings.Contains(un.Reason, "permission denied") || !strings.Contains(un.Hint, "another user") {
+		t.Fatalf("socket of another user: %v", err)
+	}
+}
+
+func TestUinputProbeOpensTheDevice(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "uinput")
+	if err := probeUinput(path); !errors.Is(err, syscall.ENOENT) {
+		t.Fatalf("missing device: %v", err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := probeUinput(path); err != nil {
+		t.Fatalf("writable device: %v", err)
+	}
+
+	u := newUinput(false)
+	var probed []string
+	var un *Unavailable
+	for errno, want := range map[syscall.Errno]string{
+		syscall.EACCES: "no write access",
+		syscall.EPERM:  "no write access",
+		syscall.ENODEV: "uinput module",
+		syscall.EBUSY:  "cannot open /dev/uinput",
+	} {
+		u.probe = func(p string) error { probed = append(probed, p); return errno }
+		if err := u.Available(); !errors.As(err, &un) || !strings.Contains(un.Reason, want) {
+			t.Errorf("%v: %v, want a reason with %q", errno, err, want)
+		}
+	}
+	if len(probed) == 0 || probed[0] != "/dev/uinput" {
+		t.Fatalf("probed %v", probed)
+	}
+}
+
+func TestFirstAvailableSkipsFailedMethods(t *testing.T) {
+	a := unavailableInjector{err: nil}
+	b := unavailableInjector{err: &Unavailable{Reason: "not installed", Hint: "install it"}}
+	named := func(name string, u unavailableInjector) Injector { return renamed{u, name} }
+	cands := []Injector{named("uinput", a), named("ydotool", b), named("xdotool", a)}
+
+	inj, err := firstAvailable(cands, linuxEnv{}, nil)
+	if err != nil || inj.Name() != "uinput" {
+		t.Fatalf("no skip: %v, %v", inj, err)
+	}
+	inj, err = firstAvailable(cands, linuxEnv{}, func(n string) bool { return n == "uinput" })
+	if err != nil || inj.Name() != "xdotool" {
+		t.Fatalf("uinput skipped: %v, %v", inj, err)
+	}
+	_, err = firstAvailable(cands, linuxEnv{}, func(n string) bool { return n != "ydotool" })
+	var un *Unavailable
+	if !errors.As(err, &un) || !strings.Contains(un.Reason, "uinput: failed recently") || !strings.Contains(un.Reason, "ydotool: not installed") {
+		t.Fatalf("all skipped or unavailable: %v", err)
+	}
+}
+
+type renamed struct {
+	unavailableInjector
+	name string
+}
+
+func (r renamed) Name() string { return r.name }

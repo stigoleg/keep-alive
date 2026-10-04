@@ -1,6 +1,7 @@
 package activity
 
 import (
+	"context"
 	"strings"
 	"time"
 )
@@ -22,6 +23,9 @@ type Diagnostics struct {
 	Lock       LockCheck
 	// Environment describes the desktop, e.g. "display server: Wayland".
 	Environment []string
+	// Notes warn about limits of this desktop, as "name: text", e.g. that
+	// apps running under XWayland may not see simulated input.
+	Notes []string
 }
 
 // InjectorCheck is one input method.
@@ -81,13 +85,13 @@ func (d Diagnostics) Problem() (reason, hint string) {
 
 // Diagnose inspects the activity backends without simulating anything.
 func Diagnose() Diagnostics {
-	b := newBackend(false)
+	b := newBackend(context.Background(), false)
 	defer b.Close()
 	return diagnose(b)
 }
 
 func diagnose(b *backend) Diagnostics {
-	d := Diagnostics{NoIdleHint: b.noIdleHint, Environment: b.env}
+	d := Diagnostics{NoIdleHint: b.noIdleHint, Environment: b.env, Notes: b.notes}
 	if b.candidates != nil {
 		for _, inj := range b.candidates() {
 			c := InjectorCheck{Name: inj.Name()}

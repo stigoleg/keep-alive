@@ -42,6 +42,13 @@ type pathPlayer interface {
 	Play(ctx context.Context, ox, oy float64, p Path) error
 }
 
+// finisher is implemented by absolute injectors whose return stroke can
+// land a pixel off the origin (SendInput); FinishAt puts the pointer back
+// exactly without generating input.
+type finisher interface {
+	FinishAt(ox, oy float64)
+}
+
 // minStepper is implemented by relative injectors that are too slow for a
 // move every few milliseconds (ydotool starts a process per move).
 type minStepper interface {

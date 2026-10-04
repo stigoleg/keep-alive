@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -58,7 +59,7 @@ func newRecordedUinput(keys bool, rec *uinputRecorder) (*uinputInjector, *[]time
 		opens++
 		return rec, nil
 	}
-	u.access = func(string) error { return nil }
+	u.probe = func(string) error { return nil }
 	u.sleep = func(d time.Duration) { slept = append(slept, d) }
 	return u, &slept, &opens
 }
@@ -259,14 +260,44 @@ func TestUinputOtherSetupErrorsFail(t *testing.T) {
 
 func TestUinputAvailabilityHints(t *testing.T) {
 	u := newUinput(false)
-	u.access = func(string) error { return syscall.ENOENT }
+	u.probe = func(string) error { return syscall.ENOENT }
 	var un *Unavailable
 	if err := u.Available(); !errors.As(err, &un) || un.Hint == "" || !bytes.Contains([]byte(un.Hint), []byte("modprobe uinput")) {
 		t.Fatalf("missing device: %v", err)
 	}
-	u.access = func(string) error { return syscall.EACCES }
-	if err := u.Available(); !errors.As(err, &un) || !bytes.Contains([]byte(un.Hint), []byte(`usermod -aG input`)) ||
-		!bytes.Contains([]byte(un.Hint), []byte(`KERNEL=="uinput", MODE="0660", GROUP="input"`)) {
+	u.probe = func(string) error { return syscall.EACCES }
+	if err := u.Available(); !errors.As(err, &un) || un.Hint != uinputPermissionHint {
 		t.Fatalf("no permission: %v", err)
+	}
+}
+
+func TestUinputPermissionHintUsesTheSeatNotTheInputGroup(t *testing.T) {
+	h := uinputPermissionHint
+	for _, want := range []string{
+		`echo 'KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/60-keepalive-uinput.rules`,
+		"sudo udevadm control --reload && sudo udevadm trigger",
+		"sudo modprobe -r uinput && sudo modprobe uinput",
+		`"input" group`, // only as an alternative, with its caveat
+		"read your keyboard",
+	} {
+		if !strings.Contains(h, want) {
+			t.Errorf("hint lacks %q:\n%s", want, h)
+		}
+	}
+	if strings.Contains(h, "usermod") || strings.Contains(h, `GROUP="input"`) {
+		t.Errorf("hint still tells the user to join the input group:\n%s", h)
+	}
+	// Every Linux hint that sends the user to uinput carries it.
+	y := &ydotool{run: (&fakeRunner{reply: func(call) (string, string, error) { return ydotool018Help, "", nil }}).run, lookPath: found}
+	var un *Unavailable
+	if err := y.Available(); !errors.As(err, &un) || !strings.Contains(un.Hint, h) {
+		t.Errorf("ydotool 0.1.x hint: %v", err)
+	}
+	x := &xdotool{lookPath: found, env: linuxEnv{display: ":0", wayland: "wayland-0"}}
+	if err := x.Available(); !errors.As(err, &un) || !strings.Contains(un.Hint, h) {
+		t.Errorf("xdotool on Wayland hint: %v", err)
+	}
+	if _, hint := x.Diagnose(); !strings.Contains(hint, h) {
+		t.Errorf("xdotool diagnosis hint %q", hint)
 	}
 }

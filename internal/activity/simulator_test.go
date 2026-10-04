@@ -3,6 +3,7 @@ package activity
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 )
@@ -54,6 +55,41 @@ func TestProbeExplainsIneffectiveBurst(t *testing.T) {
 	}
 }
 
+func TestProbeNotesACounterThatMissedTheBurst(t *testing.T) {
+	for _, follows := range []bool{false, true} {
+		m := newMachine()
+		m.xwFollows = follows
+		m.clk.Advance(5 * time.Minute)
+		b := probeBackend(m)
+		b.sources = append(b.sources, fakeXWayland{m})
+		b.secondary, b.secondaryNote = fakeXWayland{m}, testXWaylandNote
+		res := probe(context.Background(), b, false, seeded(1), noSleep)
+		if !res.Effective || len(res.Sources) != 2 {
+			t.Fatalf("probe = %+v", res)
+		}
+		xw := res.Sources[1]
+		if xw.Source != "xprintidle (XWayland)" || xw.Before != 5*time.Minute {
+			t.Fatalf("XWayland reading = %+v", xw)
+		}
+		want := testXWaylandNote
+		if follows {
+			want = ""
+		}
+		if xw.Note != want || res.Sources[0].Note != "" {
+			t.Fatalf("follows=%v: notes %q / %q, want %q on XWayland only", follows, res.Sources[0].Note, xw.Note, want)
+		}
+	}
+}
+
+func TestProbeReportsAMouseMovedDuringTheBurst(t *testing.T) {
+	m := newMachine()
+	m.playErr = errUserMoved
+	res := probe(context.Background(), probeBackend(m), false, seeded(1), noSleep)
+	if res.Effective || res.Reason != "the mouse was moved during the probe" || res.Hint != "keep the mouse still and probe again" {
+		t.Fatalf("probe = %+v", res)
+	}
+}
+
 func TestProbeWithoutInjector(t *testing.T) {
 	m := newMachine()
 	m.openErr = &Unavailable{Reason: "no backend", Hint: "install one"}
@@ -63,14 +99,18 @@ func TestProbeWithoutInjector(t *testing.T) {
 	}
 }
 
-type move struct{ x, y float64 }
-
 // absRecorder is an AbsoluteInjector without Play, so playBurst steps it.
+// The pointer follows its moves, lagging by lag moves, until userAt moves
+// have been made; then the user has grabbed it and it sits at user.
 type absRecorder struct {
-	ox, oy float64
-	bounds Rect
-	moves  []move
-	failAt int
+	ox, oy    float64
+	bounds    Rect
+	moves     []move
+	failAt    int
+	lag       int
+	userAt    int
+	user      move
+	positions int
 }
 
 func (*absRecorder) Name() string               { return "abs" }
@@ -79,6 +119,13 @@ func (*absRecorder) Tap() error                 { return nil }
 func (*absRecorder) Diagnose() (string, string) { return "", "" }
 func (*absRecorder) Close() error               { return nil }
 func (a *absRecorder) Position() (float64, float64, bool) {
+	a.positions++
+	if a.userAt > 0 && len(a.moves) >= a.userAt {
+		return a.user.x, a.user.y, true
+	}
+	if i := len(a.moves) - 1 - a.lag; i >= 0 {
+		return a.moves[i].x, a.moves[i].y, true
+	}
 	return a.ox, a.oy, true
 }
 func (a *absRecorder) Bounds() (Rect, bool) { return a.bounds, a.bounds.W > 0 }
@@ -227,5 +274,183 @@ func TestVirtualDeskAbsolute(t *testing.T) {
 		if nx != tt.nx || ny != tt.ny {
 			t.Errorf("%s: virtualDeskAbsolute(%v, %v) = (%d, %d), want (%d, %d)", tt.name, tt.x, tt.y, nx, ny, tt.nx, tt.ny)
 		}
+	}
+}
+
+func TestPlayBurstRelativeLimitsMovesUpAndLeft(t *testing.T) {
+	for seed := uint64(0); seed < 300; seed++ {
+		r := &relRecorder{}
+		p := NewPath(seeded(seed))
+		var radius float64
+		for _, s := range p {
+			radius = math.Max(radius, math.Hypot(s.X, s.Y))
+		}
+		if err := playBurst(context.Background(), r, p, noSleep); err != nil {
+			t.Fatal(err)
+		}
+		var x, y int
+		for _, mv := range r.moves {
+			x, y = x+mv[0], y+mv[1]
+			if float64(x) < -0.4*radius-1 || float64(y) < -0.4*radius-1 {
+				t.Fatalf("seed %d: relative pointer at (%d, %d), more than 40%% of %.0f px up or left", seed, x, y, radius)
+			}
+		}
+	}
+}
+
+func TestPlayBurstStopsWhenTheUserMovesThePointer(t *testing.T) {
+	p := NewPath(seeded(11))
+	a := &absRecorder{ox: 700, oy: 400, bounds: Rect{0, 0, 1440, 900}, userAt: 20, user: move{1000, 120}}
+	err := playBurst(context.Background(), a, p, noSleep)
+	if !errors.Is(err, errUserMoved) {
+		t.Fatalf("err = %v, want errUserMoved", err)
+	}
+	if n := len(a.moves); n < 20 || n > 23 {
+		t.Fatalf("made %d moves, want to stop within 3 steps of the user's move at 20", n)
+	}
+	if last := a.moves[len(a.moves)-1]; last == (move{700, 400}) || last == a.user {
+		t.Fatalf("moved the pointer to %+v after the user took it", last)
+	}
+	if a.positions > len(p)/3+1 {
+		t.Fatalf("read the position %d times for %d steps, want every 3 steps", a.positions, len(p))
+	}
+}
+
+func TestPlayBurstToleratesPositionLagAndRounding(t *testing.T) {
+	for _, lag := range []int{0, 1} {
+		a := &absRecorder{ox: 700, oy: 400, bounds: Rect{0, 0, 1440, 900}, lag: lag}
+		if err := playBurst(context.Background(), a, NewPath(seeded(12)), noSleep); err != nil {
+			t.Fatalf("lag %d: %v", lag, err)
+		}
+		if last := a.moves[len(a.moves)-1]; last != (move{700, 400}) {
+			t.Fatalf("lag %d: ended at %+v", lag, last)
+		}
+	}
+	if userMoved(102.5, 99, move{100, 100}, move{90, 95}) {
+		t.Fatal("a pixel of rounding counted as the user")
+	}
+	if !userMoved(104, 100, move{100, 100}, move{90, 95}) {
+		t.Fatal("4 px from both points not counted as the user")
+	}
+}
+
+func TestWindowsLockFallsBackToTheInputDesktop(t *testing.T) {
+	wtsFailed := func() (bool, error) { return false, errors.New("WTSQuerySessionInformation: access denied") }
+	unknownFlag := func() (bool, error) { return false, errors.New("unknown session lock state 7") }
+	desk := func(locked bool, err error) func() (bool, error) {
+		return func() (bool, error) { return locked, err }
+	}
+	deskCalled := false
+	tests := []struct {
+		name    string
+		wts     func() (bool, error)
+		desk    func() (bool, error)
+		locked  bool
+		wantErr bool
+	}{
+		{"WTS says locked", func() (bool, error) { return true, nil }, func() (bool, error) { deskCalled = true; return false, nil }, true, false},
+		{"WTS says unlocked", func() (bool, error) { return false, nil }, func() (bool, error) { deskCalled = true; return true, nil }, false, false},
+		{"WTS fails, secure desktop", wtsFailed, desk(true, nil), true, false},
+		{"unknown flag, Default desktop", unknownFlag, desk(false, nil), false, false},
+		{"both fail", wtsFailed, desk(false, errors.New("GetUserObjectInformation failed")), false, true},
+	}
+	for _, tt := range tests {
+		deskCalled = false
+		locked, err := lockedSessionOrDesktop(tt.wts, tt.desk)
+		if locked != tt.locked || (err != nil) != tt.wantErr {
+			t.Errorf("%s: %v, %v; want %v, error %v", tt.name, locked, err, tt.locked, tt.wantErr)
+		}
+		if deskCalled {
+			t.Errorf("%s: asked the input desktop although WTS answered", tt.name)
+		}
+	}
+
+	for _, tt := range []struct {
+		name         string
+		desktop      string
+		openErr      error
+		accessDenied bool
+		locked       bool
+		wantErr      bool
+	}{
+		{"Default desktop", "Default", nil, false, false, false},
+		{"Default in other case", "default", nil, false, false, false},
+		{"Winlogon desktop", "Winlogon", nil, false, true, false},
+		{"screen saver desktop", "Screen-saver", nil, false, true, false},
+		{"access denied opening it", "", errors.New("OpenInputDesktop: Access is denied."), true, true, false},
+		{"other open error", "", errors.New("OpenInputDesktop: invalid handle"), false, false, true},
+	} {
+		locked, err := inputDesktopLocked(tt.desktop, tt.openErr, tt.accessDenied)
+		if locked != tt.locked || (err != nil) != tt.wantErr {
+			t.Errorf("%s: %v, %v; want %v, error %v", tt.name, locked, err, tt.locked, tt.wantErr)
+		}
+	}
+}
+
+// fakeCursor is a Windows cursor for snapBack.
+type fakeCursor struct {
+	x, y float64
+	ok   bool
+	sets []move
+}
+
+func (c *fakeCursor) get() (float64, float64, bool) { return c.x, c.y, c.ok }
+func (c *fakeCursor) set(x, y int32) error {
+	c.sets = append(c.sets, move{float64(x), float64(y)})
+	c.x, c.y = float64(x), float64(y)
+	return nil
+}
+
+func TestSnapBackOnlyFixesASmallMiss(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		x, y   float64
+		ok     bool
+		ox, oy float64
+		snap   bool
+	}{
+		{"exact", 700, 400, true, 700, 400, false},
+		{"one pixel left", 699, 400, true, 700, 400, true},
+		{"two pixels diagonally", 702, 398, true, 700, 400, true},
+		{"rounded origin", 1001, 500, true, 999.6, 500.2, true},
+		{"three pixels: the user's", 703, 400, true, 700, 400, false},
+		{"far away: the user's", 900, 120, true, 700, 400, false},
+		{"position unknown", 0, 0, false, 700, 400, false},
+		{"negative coordinates", -1281, -2, true, -1280, -1, true},
+	} {
+		c := &fakeCursor{x: tt.x, y: tt.y, ok: tt.ok}
+		snapped, err := snapBack(c.get, c.set, tt.ox, tt.oy)
+		if err != nil || snapped != tt.snap {
+			t.Errorf("%s: snapped %v, %v; want %v", tt.name, snapped, err, tt.snap)
+			continue
+		}
+		if tt.snap && (len(c.sets) != 1 || c.sets[0] != (move{math.Round(tt.ox), math.Round(tt.oy)})) {
+			t.Errorf("%s: set %v, want the origin", tt.name, c.sets)
+		}
+		if !tt.snap && len(c.sets) != 0 {
+			t.Errorf("%s: moved the cursor to %v", tt.name, c.sets)
+		}
+	}
+}
+
+// finishingRecorder is an absolute injector that also corrects its return.
+type finishingRecorder struct {
+	absRecorder
+	finished []move
+}
+
+func (f *finishingRecorder) FinishAt(x, y float64) { f.finished = append(f.finished, move{x, y}) }
+
+func TestPlayBurstFinishesExactlyAtTheOrigin(t *testing.T) {
+	f := &finishingRecorder{absRecorder: absRecorder{ox: 700, oy: 400, bounds: Rect{0, 0, 1440, 900}}}
+	if err := playBurst(context.Background(), f, NewPath(seeded(13)), noSleep); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.finished) != 1 || f.finished[0] != (move{700, 400}) {
+		t.Fatalf("FinishAt calls %v, want one at the origin", f.finished)
+	}
+	f = &finishingRecorder{absRecorder: absRecorder{ox: 700, oy: 400, bounds: Rect{0, 0, 1440, 900}, userAt: 10, user: move{100, 100}}}
+	if err := playBurst(context.Background(), f, NewPath(seeded(13)), noSleep); !errors.Is(err, errUserMoved) || len(f.finished) != 0 {
+		t.Fatalf("after the user took the pointer: err %v, FinishAt %v", err, f.finished)
 	}
 }

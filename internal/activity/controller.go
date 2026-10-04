@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand/v2"
 	"time"
 
@@ -27,11 +28,28 @@ const (
 	settleDelay = 200 * time.Millisecond
 	// ineffectiveLimit consecutive bursts without effect mean degraded.
 	ineffectiveLimit = 2
+	// failLimit consecutive bursts that an input method fails to play mark
+	// it failed; the next available method takes over.
+	failLimit = 2
 	// cadenceJitter spreads bursts uniformly over Interval ±35 %.
 	cadenceJitter = 0.35
 )
 
-const noIdleReason = "no idle source on this desktop; simulating on a fixed schedule"
+const (
+	noIdleReason = "no idle source on this desktop; simulating on a fixed schedule"
+	userReason   = "you are using the computer"
+)
+
+const (
+	// userCheckEvery is how many moves an absolute burst makes between
+	// checks that the pointer is still where it put it.
+	userCheckEvery = 3
+	// userMoveTolerance absorbs rounding to whole pixels.
+	userMoveTolerance = 3.0
+)
+
+// errUserMoved stops a burst whose pointer the user has taken over.
+var errUserMoved = errors.New("the pointer was moved during the burst")
 
 type controllerDeps struct {
 	clock clock.Clock
@@ -43,11 +61,19 @@ type controllerDeps struct {
 	// lock pauses simulation; nil means never locked.
 	lock LockSource
 	// open picks an injector; while it fails it is retried every minute.
-	open  func() (Injector, error)
+	open func() (Injector, error)
+	// next opens the first available input method that skip does not
+	// reject, in the same order as open; nil when the OS has only one.
+	next  func(skip func(name string) bool) (Injector, error)
 	rnd   *rand.Rand
 	sleep sleepFunc
 	// noIdleHint explains how to get an idle source on this desktop.
 	noIdleHint string
+	// secondary is read around every burst for information only (XWayland
+	// on a Wayland session); nil when there is none. After it misses two
+	// bursts in a row that verify saw, simulating reports secondaryHint.
+	secondary     IdleSource
+	secondaryHint string
 }
 
 // controller is the OS-independent state machine behind the Simulator: it
@@ -66,9 +92,14 @@ type controller struct {
 	lastBurst time.Time // end of the last burst since arming
 	nextBurst time.Time
 	misses    int
-	lastErr   error  // error of the last fixed-schedule burst
-	status    Status // last published
-	armedSt   Status // status between bursts while armed
+	errs      int                  // bursts in a row the injector failed to play
+	failed    map[string]time.Time // input methods marked failed, and when
+	recheck   time.Time            // when failed methods get another chance
+	secMisses int                  // bursts in a row the secondary counter missed
+	secWarned bool                 // secondaryHint is shown from now on
+	lastErr   error                // error of the last fixed-schedule burst
+	status    Status               // last published
+	armedSt   Status               // status between bursts while armed
 }
 
 func newController(cfg Config, d controllerDeps, report func(Status)) *controller {
@@ -78,7 +109,7 @@ func newController(cfg Config, d controllerDeps, report func(Status)) *controlle
 	if d.sleep == nil {
 		d.sleep = realSleep
 	}
-	return &controller{cfg: cfg, deps: d, report: report}
+	return &controller{cfg: cfg, deps: d, report: report, failed: map[string]time.Time{}}
 }
 
 // init decides between idle-gated and fixed-schedule mode. Without an idle
@@ -100,6 +131,10 @@ func (c *controller) init() {
 }
 
 func (c *controller) run(ctx context.Context) error {
+	// init reads the idle source, which may be a D-Bus call.
+	if ctx.Err() != nil {
+		return nil
+	}
 	c.init()
 	defer c.close()
 	t := c.deps.clock.NewTimer(c.step(ctx))
@@ -143,6 +178,7 @@ func (c *controller) step(ctx context.Context) time.Duration {
 		slog.Info("activity: input method", "method", inj.Name())
 		c.inj = inj
 	}
+	c.recheckFailed(now)
 	method := c.inj.Name()
 
 	if c.deps.lock != nil {
@@ -164,7 +200,7 @@ func (c *controller) step(ctx context.Context) time.Duration {
 	}
 	if c.armed && !c.lastBurst.IsZero() && idle+userReturnTolerance < now.Sub(c.lastBurst) {
 		c.disarm()
-		c.publish(Status{State: StatePausedUser, Method: method, Reason: "you are using the computer", Idle: idle})
+		c.publish(Status{State: StatePausedUser, Method: method, Reason: userReason, Idle: idle})
 		return tickInterval
 	}
 	if !c.armed {
@@ -199,8 +235,18 @@ func (c *controller) disarm() {
 
 // burst plays one burst and verifies that it reset the idle counter.
 func (c *controller) burst(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	secBefore, secOK := c.readSecondary()
 	err := c.play(ctx)
 	if ctx.Err() != nil {
+		return
+	}
+	if errors.Is(err, errUserMoved) {
+		// The user took the pointer mid-burst: leave it to them.
+		c.disarm()
+		c.publish(Status{State: StatePausedUser, Method: c.inj.Name(), Reason: userReason})
 		return
 	}
 	end := c.deps.clock.Now()
@@ -216,7 +262,13 @@ func (c *controller) burst(ctx context.Context) {
 		idle, err = c.deps.verify.Idle()
 		effective = err == nil && idle < effectiveIdle
 	}
+	if effective && secOK {
+		c.checkSecondary(secBefore)
+	}
 	st := Status{State: StateSimulating, Method: c.inj.Name(), LastBurst: end, Idle: idle}
+	if c.secWarned {
+		st.Hint = c.deps.secondaryHint
+	}
 	if effective {
 		c.misses = 0
 	} else {
@@ -241,17 +293,60 @@ func (c *controller) burst(ctx context.Context) {
 	c.publish(st)
 }
 
+func (c *controller) readSecondary() (time.Duration, bool) {
+	if c.deps.secondary == nil {
+		return 0, false
+	}
+	d, err := c.deps.secondary.Idle()
+	return d, err == nil
+}
+
+// checkSecondary compares the secondary counter after a burst that reset
+// the verified one. Input still works, so the state stays simulating; after
+// two misses in a row the hint is shown for the rest of the run.
+func (c *controller) checkSecondary(before time.Duration) {
+	if before < effectiveIdle {
+		return // not idle before the burst: nothing to compare
+	}
+	after, err := c.deps.secondary.Idle()
+	if err != nil {
+		return
+	}
+	if after < effectiveIdle {
+		c.secMisses = 0
+		return
+	}
+	c.secMisses++
+	if c.secMisses >= ineffectiveLimit && !c.secWarned {
+		c.secWarned = true
+		slog.Warn("activity: simulated input does not reach "+c.deps.secondary.Name(), "idle_after", after)
+	}
+}
+
 // fixedStep bursts every Interval without idle information.
 func (c *controller) fixedStep(ctx context.Context, now time.Time) time.Duration {
 	if now.Before(c.nextBurst) {
-		c.publish(c.fixedStatus())
+		if c.status.State == StatePausedUser {
+			c.publish(c.status)
+		} else {
+			c.publish(c.fixedStatus())
+		}
 		return min(tickInterval, c.nextBurst.Sub(now))
+	}
+	if ctx.Err() != nil {
+		return tickInterval
 	}
 	err := c.play(ctx)
 	if ctx.Err() != nil {
 		return tickInterval
 	}
 	end := c.deps.clock.Now()
+	if errors.Is(err, errUserMoved) {
+		// Without an idle source, give the user one idle threshold.
+		c.nextBurst = end.Add(c.cfg.IdleThreshold)
+		c.publish(Status{State: StatePausedUser, Method: c.inj.Name(), Reason: userReason, LastBurst: c.lastBurst})
+		return c.untilNextBurst()
+	}
 	c.lastBurst = end
 	c.nextBurst = end.Add(c.cfg.Interval)
 	c.lastErr = err
@@ -291,7 +386,81 @@ func (c *controller) untilNextBurst() time.Duration {
 	return min(tickInterval, d)
 }
 
+// play plays one burst. When the input method fails to play it, the
+// failure is counted, and a method that takes over plays the same burst.
 func (c *controller) play(ctx context.Context) error {
+	for {
+		err := c.playOnce(ctx)
+		if err == nil {
+			c.errs = 0
+			delete(c.failed, c.inj.Name())
+			return nil
+		}
+		if ctx.Err() != nil || errors.Is(err, errUserMoved) || !c.failover() {
+			return err
+		}
+	}
+}
+
+// failover counts a failed burst. After failLimit failures in a row (one,
+// for a method that failed before) it marks the method failed and switches
+// to the next available one; it reports whether it switched. Without
+// another method the failed one stays in use.
+func (c *controller) failover() bool {
+	c.errs++
+	name := c.inj.Name()
+	_, failedBefore := c.failed[name]
+	if c.deps.next == nil || (c.errs < failLimit && !failedBefore) {
+		return false
+	}
+	now := c.deps.clock.Now()
+	c.failed[name] = now
+	c.recheck = now.Add(reprobeInterval)
+	inj, err := c.deps.next(c.recentlyFailed(now))
+	if err != nil {
+		return false
+	}
+	slog.Warn("activity: input method failed; trying the next one", "failed", name, "method", inj.Name())
+	c.switchTo(inj)
+	return true
+}
+
+// recheckFailed gives methods that failed a minute ago another chance: the
+// first available method that has not failed since takes over if it is
+// not the current one. A retried method that fails once more is dropped
+// again at once.
+func (c *controller) recheckFailed(now time.Time) {
+	if c.deps.next == nil || len(c.failed) == 0 || now.Before(c.recheck) {
+		return
+	}
+	c.recheck = now.Add(reprobeInterval)
+	inj, err := c.deps.next(c.recentlyFailed(now))
+	if err != nil {
+		return
+	}
+	if inj.Name() == c.inj.Name() {
+		_ = inj.Close()
+		return
+	}
+	slog.Info("activity: trying an input method again", "method", inj.Name())
+	c.switchTo(inj)
+}
+
+func (c *controller) recentlyFailed(now time.Time) func(string) bool {
+	return func(name string) bool {
+		t, ok := c.failed[name]
+		return ok && now.Sub(t) < reprobeInterval
+	}
+}
+
+func (c *controller) switchTo(inj Injector) {
+	c.close()
+	c.inj = inj
+	c.errs, c.misses = 0, 0
+	c.armedSt.Method = inj.Name()
+}
+
+func (c *controller) playOnce(ctx context.Context) error {
 	err := playBurst(ctx, c.inj, NewPath(c.deps.rnd), c.deps.sleep)
 	if err == nil && c.cfg.Keys {
 		if terr := c.inj.Tap(); terr != nil {
@@ -323,7 +492,10 @@ func explain(err error) (reason, hint string) {
 }
 
 // playBurst moves the pointer along p from where it is now and back. An
-// interrupted burst still returns the pointer to its origin.
+// interrupted burst still returns the pointer to its origin, except when
+// the user has taken the pointer (errUserMoved): absolute injectors check
+// every few moves that it is still where they put it, and stop at once.
+// Relative injectors cannot tell.
 func playBurst(ctx context.Context, inj Injector, p Path, sleep sleepFunc) error {
 	switch in := inj.(type) {
 	case AbsoluteInjector:
@@ -337,18 +509,30 @@ func playBurst(ctx context.Context, inj Injector, p Path, sleep sleepFunc) error
 		if pl, ok := inj.(pathPlayer); ok {
 			return pl.Play(ctx, ox, oy, p)
 		}
-		for _, s := range p {
+		last, prev := move{ox, oy}, move{ox, oy}
+		for i, s := range p {
 			if err := sleep(ctx, s.Delay); err != nil {
 				_ = in.MoveTo(ox, oy)
 				return err
 			}
-			if err := in.MoveTo(ox+s.X, oy+s.Y); err != nil {
+			if i > 0 && i%userCheckEvery == 0 {
+				if x, y, ok := in.Position(); ok && userMoved(x, y, last, prev) {
+					return errUserMoved
+				}
+			}
+			x, y := ox+s.X, oy+s.Y
+			if err := in.MoveTo(x, y); err != nil {
 				_ = in.MoveTo(ox, oy)
 				return err
 			}
+			last, prev = move{x, y}, last
+		}
+		if f, ok := inj.(finisher); ok {
+			f.FinishAt(ox, oy)
 		}
 		return nil
 	case RelativeInjector:
+		p = p.ForUnknownPosition()
 		var minStep time.Duration
 		if m, ok := inj.(minStepper); ok {
 			minStep = m.MinStep()
@@ -373,4 +557,13 @@ func playBurst(ctx context.Context, inj Injector, p Path, sleep sleepFunc) error
 		return nil
 	}
 	return fmt.Errorf("%s cannot move the pointer", inj.Name())
+}
+
+type move struct{ x, y float64 }
+
+// userMoved reports whether the pointer at (x, y) is more than a few pixels
+// from the last point a burst set. The point before it is accepted too, in
+// case the OS has not applied the last move yet.
+func userMoved(x, y float64, last, prev move) bool {
+	return math.Hypot(x-last.x, y-last.y) > userMoveTolerance && math.Hypot(x-prev.x, y-prev.y) > userMoveTolerance
 }

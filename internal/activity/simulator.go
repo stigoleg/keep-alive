@@ -2,6 +2,7 @@ package activity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"time"
@@ -18,9 +19,17 @@ type backend struct {
 	verify IdleSource
 	// sources is every idle source that could be read, for Probe.
 	sources []IdleSource
-	lock    LockSource
+	// secondary is a counter some apps read that bursts may not reach
+	// (XWayland's on a Wayland session). It never gates or verifies; when it
+	// misses bursts that verify saw, secondaryNote is shown.
+	secondary     IdleSource
+	secondaryNote string
+	lock          LockSource
 	// open picks the input backend.
 	open func() (Injector, error)
+	// next is open without the methods skip rejects, for falling through
+	// after one fails; nil when there is only one method.
+	next func(skip func(name string) bool) (Injector, error)
 	// noIdleHint explains how to get idle-aware simulation.
 	noIdleHint string
 	// candidates lists the input methods open tries, unopened, for
@@ -30,6 +39,8 @@ type backend struct {
 	lockName string
 	// env describes the desktop for Diagnose.
 	env []string
+	// notes warn about the desktop for Diagnose, as "name: text".
+	notes []string
 	// release frees OS resources (D-Bus connections).
 	release func()
 }
@@ -51,17 +62,23 @@ func (simulator) Run(ctx context.Context, cfg Config, report func(Status)) error
 	if cfg.Interval <= 0 {
 		cfg.Interval = DefaultInterval
 	}
-	b := newBackend(cfg.Keys)
+	if ctx.Err() != nil {
+		return nil
+	}
+	b := newBackend(ctx, cfg.Keys)
 	defer b.Close()
 	c := newController(cfg, controllerDeps{
-		clock:      clock.Real(),
-		idle:       b.idle,
-		verify:     b.verify,
-		lock:       b.lock,
-		open:       b.open,
-		rnd:        newRand(),
-		sleep:      realSleep,
-		noIdleHint: b.noIdleHint,
+		clock:         clock.Real(),
+		idle:          b.idle,
+		verify:        b.verify,
+		lock:          b.lock,
+		open:          b.open,
+		next:          b.next,
+		rnd:           newRand(),
+		sleep:         realSleep,
+		noIdleHint:    b.noIdleHint,
+		secondary:     b.secondary,
+		secondaryHint: b.secondaryNote,
 	}, report)
 	return c.run(ctx)
 }
@@ -95,13 +112,16 @@ type ProbeReading struct {
 	Source        string
 	Before, After time.Duration
 	Err           string
+	// Note is set when this counter missed a burst the verifier saw and
+	// that matters, e.g. for apps running under XWayland.
+	Note string
 }
 
 // Probe reads every idle source, plays one burst (the pointer visibly
 // moves), reads them again and reports whether the burst registered as user
 // input.
 func Probe(ctx context.Context, keys bool) ProbeResult {
-	b := newBackend(keys)
+	b := newBackend(ctx, keys)
 	defer b.Close()
 	return probe(ctx, b, keys, newRand(), realSleep)
 }
@@ -146,6 +166,10 @@ func probe(ctx context.Context, b *backend, keys bool, r *rand.Rand, sleep sleep
 		}
 	}
 	res.Burst = time.Since(start)
+	if errors.Is(err, errUserMoved) {
+		res.Reason, res.Hint = "the mouse was moved during the probe", "keep the mouse still and probe again"
+		return res
+	}
 	if err != nil {
 		_, res.Hint = inj.Diagnose()
 		res.Reason = fmt.Sprintf("burst failed: %v", err)
@@ -165,6 +189,14 @@ func probe(ctx context.Context, b *backend, keys bool, r *rand.Rand, sleep sleep
 		res.Effective = err == nil && d < effectiveIdle
 		if !res.Effective && res.Reason == "" {
 			res.Reason, res.Hint = inj.Diagnose()
+		}
+	}
+	if res.Effective && b.secondary != nil {
+		for i := range res.Sources {
+			rd := &res.Sources[i]
+			if rd.Source == b.secondary.Name() && rd.Err == "" && rd.Before >= effectiveIdle && rd.After >= effectiveIdle {
+				rd.Note = b.secondaryNote
+			}
 		}
 	}
 	return res
