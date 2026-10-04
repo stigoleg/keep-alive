@@ -6,6 +6,47 @@ import (
 	"time"
 )
 
+// ActivityEventKind classifies an ActivityController observation.
+type ActivityEventKind int
+
+const (
+	// ActivityIdleUnknown: idle detection failed, simulation is skipped.
+	ActivityIdleUnknown ActivityEventKind = iota
+	// ActivityWaitingIdle: the user is active; waiting for the idle threshold.
+	ActivityWaitingIdle
+	// ActivityUserReturned: real input was seen after a synthetic burst.
+	ActivityUserReturned
+	// ActivityBurst: a jitter burst was performed.
+	ActivityBurst
+)
+
+// ActivityEvent is passed to the observer installed with SetActivityObserver.
+type ActivityEvent struct {
+	Kind ActivityEventKind
+	Idle time.Duration
+	Err  error
+	At   time.Time
+}
+
+var activityObserver atomic.Pointer[func(ActivityEvent)]
+
+// SetActivityObserver installs fn to receive ActivityController events; nil
+// removes it. It exists for the v2 legacy activity adapter and goes away with
+// it.
+func SetActivityObserver(fn func(ActivityEvent)) {
+	if fn == nil {
+		activityObserver.Store(nil)
+		return
+	}
+	activityObserver.Store(&fn)
+}
+
+func notifyActivity(ev ActivityEvent) {
+	if fn := activityObserver.Load(); fn != nil {
+		(*fn)(ev)
+	}
+}
+
 // IdleDetector returns the current system idle time.
 type IdleDetector func() (time.Duration, error)
 
@@ -58,6 +99,7 @@ func (ac *ActivityController) MaybeJitter(getIdle IdleDetector, execute JitterEx
 	lastUserActiveNS := atomic.LoadInt64(&ac.lastUserActiveNS)
 
 	if err != nil {
+		notifyActivity(ActivityEvent{Kind: ActivityIdleUnknown, Err: err, At: time.Unix(0, nowNS)})
 		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
 			atomic.StoreInt64(&ac.lastActiveLogNS, nowNS)
 			log.Printf("%s: idle detection failed (%v); skipping activity simulation to avoid interference", ac.platformName, err)
@@ -72,6 +114,7 @@ func (ac *ActivityController) MaybeJitter(getIdle IdleDetector, execute JitterEx
 		if expectedIdle > 0 && idle+SyntheticIdleResetTolerance < expectedIdle {
 			atomic.StoreInt64(&ac.lastJitterNS, 0)
 			atomic.StoreInt64(&ac.lastUserActiveNS, observedActiveTimestamp(nowNS, idle))
+			notifyActivity(ActivityEvent{Kind: ActivityUserReturned, Idle: idle, At: time.Unix(0, nowNS)})
 			if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
 				atomic.StoreInt64(&ac.lastActiveLogNS, nowNS)
 				log.Printf("%s: user activity detected (idle: %v); pausing activity simulation", ac.platformName, idle)
@@ -85,6 +128,7 @@ func (ac *ActivityController) MaybeJitter(getIdle IdleDetector, execute JitterEx
 	if !idleQualified {
 		atomic.StoreInt64(&ac.lastJitterNS, 0)
 		atomic.StoreInt64(&ac.lastUserActiveNS, observedActiveTimestamp(nowNS, idle))
+		notifyActivity(ActivityEvent{Kind: ActivityWaitingIdle, Idle: idle, At: time.Unix(0, nowNS)})
 		if lastActiveLog == 0 || time.Duration(nowNS-lastActiveLog) > 2*time.Minute {
 			atomic.StoreInt64(&ac.lastActiveLogNS, nowNS)
 			log.Printf("%s: user is active (idle: %v); skipping simulation to avoid interference", ac.platformName, idle)
@@ -93,6 +137,7 @@ func (ac *ActivityController) MaybeJitter(getIdle IdleDetector, execute JitterEx
 	}
 
 	if lastUserActiveNS != 0 && time.Duration(nowNS-lastUserActiveNS) < IdleThreshold {
+		notifyActivity(ActivityEvent{Kind: ActivityWaitingIdle, Idle: idle, At: time.Unix(0, nowNS)})
 		return false
 	}
 
@@ -113,6 +158,7 @@ func (ac *ActivityController) MaybeJitter(getIdle IdleDetector, execute JitterEx
 	idleBefore := idle
 	execute(points, sessionDuration)
 	atomic.StoreInt64(&ac.lastJitterNS, nowNS)
+	notifyActivity(ActivityEvent{Kind: ActivityBurst, Idle: idle, At: time.Unix(0, nowNS)})
 
 	// Re-read idle so we can see whether the synthetic events actually reset
 	// the counter Teams/Slack use. If idleAfter is consistently near zero, the
