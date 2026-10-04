@@ -4,6 +4,7 @@ package integration
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -173,5 +174,56 @@ func TestRootWithACommandIsUsageError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `hint: did you mean "keepalive run -- make release"?`) {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestDoctorJSON(t *testing.T) {
+	cmd := keepalive(t, "doctor", "--json")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	code := exitCode(cmd.Run())
+	if code != 0 && code != 1 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	var doc struct {
+		Sections []struct {
+			Title  string `json:"title"`
+			Checks []struct {
+				Name   string `json:"name"`
+				Status string `json:"status"`
+				Detail string `json:"detail"`
+				Fix    string `json:"fix"`
+			} `json:"checks"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("not one JSON document: %v\n%s", err, stdout.String())
+	}
+	var titles []string
+	failed := false
+	for _, s := range doc.Sections {
+		titles = append(titles, s.Title)
+		if len(s.Checks) == 0 {
+			t.Errorf("section %q has no checks", s.Title)
+		}
+		for _, c := range s.Checks {
+			switch c.Status {
+			case "ok", "warn":
+			case "fail":
+				failed = true
+			default:
+				t.Errorf("%s/%s: status %q", s.Title, c.Name, c.Status)
+			}
+			if c.Status != "ok" && c.Fix == "" && s.Title != "Activity probe" {
+				t.Logf("%s/%s has no fix: %s", s.Title, c.Name, c.Detail)
+			}
+		}
+	}
+	want := "keepalive,Sleep prevention,Activity simulation,Battery,Notifications,Background service,Running instance"
+	if got := strings.Join(titles, ","); got != want {
+		t.Fatalf("sections = %s", got)
+	}
+	if failed != (code == 1) {
+		t.Fatalf("exit %d with failed=%v", code, failed)
 	}
 }

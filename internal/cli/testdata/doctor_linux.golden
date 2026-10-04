@@ -1,0 +1,37 @@
+keepalive
+  ✓ version         2.0.0 (linux/amd64, cgo off)
+  ✗ config          config file /home/jane/.config/keepalive/config.toml: battery: must be 1-100
+                    fix: fix the value, or start over with "keepalive config init --force"
+  ✓ log             /home/jane/.cache/keepalive/keepalive.log
+
+Sleep prevention
+  ✗ system bus      no system bus: dial unix /run/dbus/system_bus_socket: no such file
+                    fix: keepalive needs systemd-logind on the system bus or a desktop session (GNOME, KDE, XFCE) on the session bus
+  ✗ session bus     no session bus
+                    fix: keepalive needs systemd-logind on the system bus or a desktop session (GNOME, KDE, XFCE) on the session bus
+
+Activity simulation
+  ! uinput          no write access to /dev/uinput
+                    fix: give your user access to /dev/uinput
+  ! ydotool         ydotool is not installed
+                    fix: install ydotool 1.x
+  ! idle time       no idle source; activity is simulated on a fixed schedule
+                    fix: install xprintidle for idle-aware simulation
+  ! screen lock     cannot tell when the screen is locked
+                    fix: activity keeps running while the screen is locked; on Linux this needs logind or org.freedesktop.ScreenSaver
+  ✓ display server  Wayland
+  ✓ desktop         GNOME
+
+Battery
+  ! battery         no battery (no battery found)
+                    fix: --battery only works on a machine with a battery; nothing to do on a desktop
+
+Notifications
+  ! notifications   no D-Bus session bus; notify-send not found
+                    fix: notifications are optional; install a notification daemon (most desktops have one) or notify-send
+
+Background service
+  ✓ XDG autostart   not installed (optional: "keepalive service install")
+
+Running instance
+  ✓ instance        none running

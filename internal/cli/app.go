@@ -52,6 +52,11 @@ type App struct {
 
 	// logSetup is logging.Setup; tests replace it.
 	logSetup func(logging.Options) (string, func() error, error)
+	// doctorFacts, probe and probeWait back `keepalive doctor`; tests
+	// replace them.
+	doctorFacts func(*cobra.Command) doctorFacts
+	probe       func(context.Context) activity.ProbeResult
+	probeWait   time.Duration
 
 	// runSession executes a resolved plan; tests replace it.
 	runSession func(ctx context.Context, p *Plan) error

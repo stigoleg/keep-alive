@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/stigoleg/keep-alive/v2/internal/activity"
 	"github.com/stigoleg/keep-alive/v2/internal/config"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
 )
@@ -42,6 +44,13 @@ func (a *App) Command() *cobra.Command {
 	}
 	if a.logSetup == nil {
 		a.logSetup = logging.Setup
+	}
+	if a.doctorFacts == nil {
+		a.doctorFacts = a.collectDoctor
+	}
+	if a.probe == nil {
+		a.probe = func(ctx context.Context) activity.ProbeResult { return activity.Probe(ctx, false) }
+		a.probeWait = probeDelay
 	}
 	var sf sessionFlags
 	root := &cobra.Command{
@@ -82,10 +91,7 @@ func (a *App) Command() *cobra.Command {
 
 	root.AddCommand(
 		a.runCommand(),
-		stubCommand("doctor", "Check that keepalive can keep this machine awake", "4", func(fs *pflag.FlagSet) {
-			fs.Bool("probe", false, "briefly exercise power and input to verify them")
-			fs.Bool("json", false, "print the report as JSON")
-		}),
+		a.doctorCommand(),
 		a.statusCommand(),
 		a.stopCommand(),
 		a.activeCommand(),
@@ -125,25 +131,6 @@ func flagError(_ *cobra.Command, err error) error {
 		err = fmt.Errorf("--%s: %w", ive.GetFlag().Name, cause)
 	}
 	return usageErr(err, "run 'keepalive --help' for usage")
-}
-
-func notImplemented(name, phase string) error {
-	return runtimeErr(fmt.Errorf("'keepalive %s' is not implemented yet", name), "it arrives in a later v2 phase ("+phase+")")
-}
-
-func stubCommand(name, short, phase string, flags func(*pflag.FlagSet)) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   name,
-		Short: short,
-		Args:  cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return notImplemented(name, "phase "+phase)
-		},
-	}
-	if flags != nil {
-		flags(cmd.Flags())
-	}
-	return cmd
 }
 
 const runUsage = "usage: keepalive run [flags] -- command [args…]"

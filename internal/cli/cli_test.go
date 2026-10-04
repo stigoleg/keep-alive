@@ -490,21 +490,6 @@ func TestServiceOriginDefaults(t *testing.T) {
 	}
 }
 
-func TestStubsExit1(t *testing.T) {
-	for _, args := range [][]string{
-		{"doctor"},
-		{"doctor", "--probe", "--json"},
-	} {
-		ta := newTestApp(t)
-		if code := ta.run(args...); code != ExitFailure {
-			t.Errorf("%v: exit %d, want %d", args, code, ExitFailure)
-		}
-		if !strings.Contains(ta.stderr.String(), "not implemented yet") {
-			t.Errorf("%v: stderr %q", args, ta.stderr)
-		}
-	}
-}
-
 func TestConfigCommands(t *testing.T) {
 	ta := newTestApp(t)
 	if code := ta.run("config", "path"); code != ExitOK || ta.stdout.String() != ta.configPath+"\n" {
