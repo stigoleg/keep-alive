@@ -206,17 +206,21 @@ func NewJSON(w io.Writer) *JSON {
 	return &JSON{enc: enc}
 }
 
-func (j *JSON) Print(ev session.Event) error { return j.enc.Encode(newJSONEvent(ev)) }
+func (j *JSON) Print(ev session.Event) error { return j.enc.Encode(NewJSONEvent(ev)) }
 
-type jsonEvent struct {
+// JSONEvent is the NDJSON object for one event. Field order is part of the
+// output format; other packages (the control socket) reuse it.
+type JSONEvent struct {
 	Time     string       `json:"time"`
 	Type     string       `json:"type"`
-	Snapshot jsonSnapshot `json:"snapshot"`
+	Snapshot JSONSnapshot `json:"snapshot"`
 	Message  string       `json:"message"`
 	Reason   string       `json:"reason"`
 }
 
-type jsonSnapshot struct {
+// JSONSnapshot is the JSON form of a session.Snapshot. Times are RFC 3339
+// strings or null; durations are whole seconds.
+type JSONSnapshot struct {
 	Running       bool         `json:"running"`
 	StartedAt     *string      `json:"started_at"`
 	EndsAt        *string      `json:"ends_at"`
@@ -224,13 +228,14 @@ type jsonSnapshot struct {
 	RemainingText string       `json:"remaining_text"`
 	Mode          string       `json:"mode"`
 	Active        bool         `json:"active"`
-	Activity      jsonActivity `json:"activity"`
-	Battery       jsonBattery  `json:"battery"`
+	Activity      JSONActivity `json:"activity"`
+	Battery       JSONBattery  `json:"battery"`
 	KeepDisplay   bool         `json:"keep_display"`
 	PowerHold     string       `json:"power_hold"`
 }
 
-type jsonActivity struct {
+// JSONActivity is the activity part of a JSONSnapshot.
+type JSONActivity struct {
 	State     string  `json:"state"`
 	Method    string  `json:"method"`
 	Reason    string  `json:"reason"`
@@ -240,21 +245,34 @@ type jsonActivity struct {
 	IdleText  string  `json:"idle_text"`
 }
 
-type jsonBattery struct {
+// JSONBattery is the battery part of a JSONSnapshot.
+type JSONBattery struct {
 	Percent   int  `json:"percent"`
 	Available bool `json:"available"`
 	Threshold int  `json:"threshold"`
 }
 
-func newJSONEvent(ev session.Event) jsonEvent {
-	snap := ev.Snapshot
-	js := jsonSnapshot{
+// NewJSONEvent converts ev to the object the JSON printer writes; its
+// message is Text(ev).
+func NewJSONEvent(ev session.Event) JSONEvent {
+	return JSONEvent{
+		Time:     ev.Time.Format(time.RFC3339Nano),
+		Type:     string(ev.Type),
+		Snapshot: NewJSONSnapshot(ev.Snapshot),
+		Message:  Text(ev),
+		Reason:   string(ev.Reason),
+	}
+}
+
+// NewJSONSnapshot converts snap to its JSON form.
+func NewJSONSnapshot(snap session.Snapshot) JSONSnapshot {
+	js := JSONSnapshot{
 		Running:   snap.Running,
 		StartedAt: timePtr(snap.StartedAt),
 		EndsAt:    timePtr(snap.EndsAt),
 		Mode:      string(snap.Mode),
 		Active:    snap.Active,
-		Activity: jsonActivity{
+		Activity: JSONActivity{
 			State:     string(snap.Activity.State),
 			Method:    snap.Activity.Method,
 			Reason:    snap.Activity.Reason,
@@ -263,7 +281,7 @@ func newJSONEvent(ev session.Event) jsonEvent {
 			Idle:      seconds(snap.Activity.Idle),
 			IdleText:  FormatDuration(snap.Activity.Idle),
 		},
-		Battery:     jsonBattery{Percent: snap.Battery.Percent, Available: snap.Battery.Available, Threshold: snap.Battery.Threshold},
+		Battery:     JSONBattery{Percent: snap.Battery.Percent, Available: snap.Battery.Available, Threshold: snap.Battery.Threshold},
 		KeepDisplay: snap.KeepDisplay,
 		PowerHold:   snap.PowerHold,
 	}
@@ -272,13 +290,7 @@ func newJSONEvent(ev session.Event) jsonEvent {
 		js.Remaining = &r
 		js.RemainingText = FormatDuration(snap.Remaining)
 	}
-	return jsonEvent{
-		Time:     ev.Time.Format(time.RFC3339Nano),
-		Type:     string(ev.Type),
-		Snapshot: js,
-		Message:  Text(ev),
-		Reason:   string(ev.Reason),
-	}
+	return js
 }
 
 func timePtr(t time.Time) *string {
