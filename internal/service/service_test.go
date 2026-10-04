@@ -695,6 +695,9 @@ func TestResolveExecutable(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				t.Skip("models macOS and Linux install paths")
+			}
 			got, warn, err := resolveExecutable(env(tt.exe, tt.lookPath))
 			if tt.err != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.err) || !strings.Contains(Hint(err), "install") {
@@ -711,12 +714,12 @@ func TestResolveExecutable(t *testing.T) {
 	win := env("/c/Program Files/keepalive/keepalive.exe", "")
 	win.goos = "windows"
 	got, warn, err := resolveExecutable(win)
-	if err != nil || got != "/c/Program Files/keepalive/keepalive.exe" || !strings.Contains(warn, "console window") {
+	if err != nil || got != filepath.FromSlash("/c/Program Files/keepalive/keepalive.exe") || !strings.Contains(warn, "console window") {
 		t.Fatalf("windows without keepalivew: %q, %q, %v", got, warn, err)
 	}
-	win.exists = func(p string) bool { return p == "/c/Program Files/keepalive/keepalivew.exe" }
+	win.exists = func(p string) bool { return p == filepath.FromSlash("/c/Program Files/keepalive/keepalivew.exe") }
 	got, warn, err = resolveExecutable(win)
-	if err != nil || got != "/c/Program Files/keepalive/keepalivew.exe" || warn != "" {
+	if err != nil || got != filepath.FromSlash("/c/Program Files/keepalive/keepalivew.exe") || warn != "" {
 		t.Fatalf("windows with keepalivew: %q, %q, %v", got, warn, err)
 	}
 }

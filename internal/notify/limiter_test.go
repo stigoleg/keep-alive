@@ -3,6 +3,7 @@ package notify
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -25,7 +26,7 @@ func TestFileLimiterPersistsAcrossProcesses(t *testing.T) {
 	if !limiter().Allow("stopped", t0.Add(10*time.Minute)) {
 		t.Fatal("held back after the interval")
 	}
-	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+	if fi, err := os.Stat(path); err != nil || (runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600) {
 		t.Fatalf("state file: %v, %v", fi, err)
 	}
 	// The clock was set back: never silence notifications for good.

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -355,7 +356,11 @@ func TestWatchErrorsHaveHints(t *testing.T) {
 	}
 	ta := newTestApp(t)
 	ta.run("--while", "nothing")
-	if !strings.Contains(ta.stderr.String(), `hint: start the app first, or check the name with "ps"`) {
+	lister := "ps"
+	if runtime.GOOS == "windows" {
+		lister = "tasklist"
+	}
+	if !strings.Contains(ta.stderr.String(), `hint: start the app first, or check the name with "`+lister+`"`) {
 		t.Errorf("stderr = %q", ta.stderr)
 	}
 }

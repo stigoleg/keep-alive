@@ -4,6 +4,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -104,12 +105,18 @@ func requirePower(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		return
 	}
-	for _, m := range power.Mechanisms() {
-		if m.Available {
-			return
-		}
+	// Mechanisms only says a service is there; logind may still refuse the
+	// lock (polkit refuses it outside a login session, as on CI runners), so
+	// take and release a real one.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hold, err := power.New().Acquire(ctx, power.Options{Reason: "keepalive integration test"})
+	if err != nil {
+		t.Skipf("nothing can keep this machine awake here: %v", err)
 	}
-	t.Skip("nothing can keep this machine awake (no logind, no desktop session bus)")
+	if err := hold.Release(); err != nil {
+		t.Fatalf("release the probe hold: %v", err)
+	}
 }
 
 // keepalive runs the binary in the test's isolated environment.

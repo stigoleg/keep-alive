@@ -563,11 +563,30 @@ func TestStartWarningsFollowTheStart(t *testing.T) {
 func (h *harness) poll(pct int) Event {
 	h.t.Helper()
 	h.batt.set(pct, nil)
-	h.clk.Advance(BatteryPollInterval)
+	// A tick that was already queued (for example by a clock jump) can be
+	// handled before the new level is set, and the fake ticker drops a tick
+	// while one is pending, as time.Ticker does; advance until a poll sees
+	// the new level.
+	deadline := time.After(waitTimeout)
 	for {
-		ev := h.waitFor(EventBattery)
-		if ev.Snapshot.Battery.Percent == pct {
-			return ev
+		h.clk.Advance(BatteryPollInterval)
+		retry := time.After(200 * time.Millisecond)
+	wait:
+		for {
+			select {
+			case ev, ok := <-h.events:
+				if !ok {
+					h.t.Fatalf("event stream closed while polling %d%% (seen %v)", pct, h.types())
+				}
+				h.seen = append(h.seen, ev)
+				if ev.Type == EventBattery && ev.Snapshot.Battery.Percent == pct {
+					return ev
+				}
+			case <-retry:
+				break wait
+			case <-deadline:
+				h.t.Fatalf("timed out polling %d%% (seen %v)", pct, h.types())
+			}
 		}
 	}
 }
