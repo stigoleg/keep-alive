@@ -2,9 +2,13 @@ package cli
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/stigoleg/keep-alive/v2/internal/ipc"
+	"github.com/stigoleg/keep-alive/v2/internal/logging"
 	"github.com/stigoleg/keep-alive/v2/internal/service"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
 )
@@ -184,5 +188,79 @@ func TestServiceStatus(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestServiceInstallMakesLogFileAbsolute(t *testing.T) {
+	ta, m := newServiceApp(t)
+	if code := ta.run("service", "install", "--log-file", "logs/k.log"); code != ExitOK {
+		t.Fatalf("exit %d: %s", code, ta.stderr)
+	}
+	wd, _ := os.Getwd()
+	want := "--log-file=" + filepath.Join(wd, "logs", "k.log")
+	if got := strings.Join(m.installed.Args, " "); !strings.Contains(got, want) {
+		t.Fatalf("args = %q, want %q", got, want)
+	}
+	ta, m = newServiceApp(t)
+	if code := ta.run("service", "install", "--log-file=~/k.log"); code != ExitOK {
+		t.Fatalf("exit %d: %s", code, ta.stderr)
+	}
+	if got := strings.Join(m.installed.Args, " "); !strings.Contains(got, "--log-file=~/k.log") {
+		t.Fatalf("args = %q; ~ is expanded when the service starts", got)
+	}
+}
+
+func TestServiceLogFileRelativeToConfigFile(t *testing.T) {
+	for origin, want := range map[string]string{
+		"service":  "", // set below: next to the config file
+		"terminal": "logs/k.log",
+	} {
+		ta := newTestApp(t)
+		if err := writeConfig(ta, "log_file = \"logs/k.log\"\n"); err != nil {
+			t.Fatal(err)
+		}
+		if want == "" {
+			want = filepath.Join(filepath.Dir(ta.configPath), "logs", "k.log")
+		}
+		if code := ta.run("--plain", "--origin", origin); code != ExitOK {
+			t.Fatalf("%s: exit %d: %s", origin, code, ta.stderr)
+		}
+		if ta.plan.Logging.Path != want {
+			t.Errorf("%s: log path %q, want %q", origin, ta.plan.Logging.Path, want)
+		}
+	}
+}
+
+func TestServiceLogFileFallsBackToTheDefault(t *testing.T) {
+	ta := newTestApp(t)
+	n := &recordingNotifier{}
+	ta.Notifier = n
+	var tried []string
+	ta.logSetup = func(o logging.Options) (string, func() error, error) {
+		tried = append(tried, o.Path)
+		if o.Path != "" {
+			return "", nil, errors.New("permission denied")
+		}
+		return "/default/keepalive.log", func() error { return nil }, nil
+	}
+	p := &Plan{Origin: ipc.OriginService, Notify: true, Logging: logging.Options{Enabled: true, Path: "/locked/k.log"}}
+	for range 2 { // a restarted service
+		closeLog, err := ta.startLogging(p)
+		if err != nil {
+			t.Fatalf("startLogging = %v; a service must not fail (and restart) over its log", err)
+		}
+		closeLog()
+	}
+	if strings.Join(tried, ",") != "/locked/k.log,,/locked/k.log," {
+		t.Fatalf("log paths tried: %q", tried)
+	}
+	if len(n.sent) != 1 || !strings.Contains(n.sent[0], "/locked/k.log") || !strings.Contains(n.sent[0], "/default/keepalive.log") {
+		t.Fatalf("notifications = %q, want one naming both files", n.sent)
+	}
+
+	// In a terminal it stays an error.
+	p.Origin = ipc.OriginTerminal
+	if _, err := ta.startLogging(p); err == nil {
+		t.Fatal("terminal: no error for an unwritable log file")
 	}
 }

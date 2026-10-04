@@ -42,7 +42,9 @@ func (a *App) execute(ctx context.Context, p *Plan) error {
 // startLogging sets up the log file the plan asks for and says where it is.
 func (a *App) startLogging(p *Plan) (func() error, error) {
 	logPath, closeLog, err := a.logSetup(p.Logging)
-	if err != nil {
+	if err != nil && p.Origin == ipc.OriginService {
+		logPath, closeLog = a.fallbackLog(p, err)
+	} else if err != nil {
 		return nil, runtimeErr(fmt.Errorf("open log file: %w", err), "pass --log-file to choose another location")
 	}
 	if logPath != "" && p.Origin != ipc.OriginService {
@@ -51,6 +53,31 @@ func (a *App) startLogging(p *Plan) (func() error, error) {
 	slog.Info("keepalive starting", "version", a.Version, "origin", p.Origin, "tui", p.TUI, "json", p.JSON,
 		"notify", p.Notify, "config", p.Config.Path)
 	return closeLog, nil
+}
+
+// fallbackLog keeps a login service running when its log file cannot be
+// opened: exiting would make the service manager restart it in a loop. It
+// logs to the default file instead, or nowhere, and says so once.
+func (a *App) fallbackLog(p *Plan, cause error) (string, func() error) {
+	var logPath, msg string
+	var closeLog func() error
+	err := cause
+	if failed := p.Logging.Path; failed != "" { // try the default file
+		o := p.Logging
+		o.Path = ""
+		if logPath, closeLog, err = a.logSetup(o); err == nil {
+			msg = fmt.Sprintf("cannot write the log file %s (%v); logging to %s instead", failed, cause, logPath)
+		}
+	}
+	if err != nil {
+		logPath, closeLog, _ = a.logSetup(logging.Options{}) // logging off
+		msg = fmt.Sprintf("cannot write a log file (%v); running without one", err)
+	}
+	slog.Warn("service: " + msg)
+	if p.Notify {
+		a.notifyService("log", "Keep-Alive service: no log file", msg)
+	}
+	return logPath, closeLog
 }
 
 // deps are the production session dependencies for p.

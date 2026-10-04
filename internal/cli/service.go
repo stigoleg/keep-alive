@@ -104,13 +104,19 @@ func serviceArgs(fs *pflag.FlagSet) ([]string, error) {
 		switch f.Name {
 		case "plain", "help":
 			return
-		case "config":
-			p, aerr := filepath.Abs(f.Value.String())
-			if aerr != nil {
-				err = aerr
-				return
+		case "config", "log-file":
+			// The service starts elsewhere: paths must not depend on the
+			// working directory ("~" is expanded when it starts).
+			p := f.Value.String()
+			if !strings.HasPrefix(p, "~") {
+				abs, aerr := filepath.Abs(p)
+				if aerr != nil {
+					err = aerr
+					return
+				}
+				p = abs
 			}
-			args = append(args, "--config="+p)
+			args = append(args, "--"+f.Name+"="+p)
 			return
 		}
 		if sv, ok := f.Value.(pflag.SliceValue); ok {

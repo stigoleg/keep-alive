@@ -388,6 +388,11 @@ func (a *App) plan(cmd *cobra.Command, f *sessionFlags, forRun bool) (*Plan, err
 	if origin == ipc.OriginService && res.Sources["log"] == config.SourceDefault {
 		p.Logging.Enabled, p.Logging.Debug = true, false // a service always keeps an info log
 	}
+	if origin == ipc.OriginService && res.Sources["log_file"] == config.SourceFile && res.Path != "" &&
+		p.Logging.Path != "" && !filepath.IsAbs(p.Logging.Path) {
+		// A service has no meaningful working directory.
+		p.Logging.Path = filepath.Join(filepath.Dir(res.Path), p.Logging.Path)
+	}
 	return p, nil
 }
 
