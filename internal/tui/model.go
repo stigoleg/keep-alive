@@ -44,7 +44,6 @@ type Model struct {
 	Clock              time.Time
 	ShowHelp           bool
 	ShowDependencyInfo bool
-	DependencyWarning  string
 	ActivityWarning    string
 	version            string
 	Keys               KeyMap
@@ -98,7 +97,6 @@ func New(o Options) Model {
 		textInput:          newMinutesTextInput(),
 		ShowHelp:           false,
 		ShowDependencyInfo: false,
-		DependencyWarning:  "",
 		ActivityWarning:    "",
 		version:            o.Version,
 		Keys:               DefaultKeys(),
@@ -259,11 +257,7 @@ func (m Model) Version() string {
 	return m.version
 }
 
-// SetDependencyWarning sets the dependency warning message
-func (m *Model) SetDependencyWarning(message string) {
-	m.DependencyWarning = message
-}
-
+// SetActivityWarning shows why activity simulation will not work.
 func (m *Model) SetActivityWarning(message string) {
 	m.ActivityWarning = message
 }

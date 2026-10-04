@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os/signal"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/stigoleg/keep-alive/v2/internal/activity"
 	"github.com/stigoleg/keep-alive/v2/internal/cli/output"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
-	"github.com/stigoleg/keep-alive/v2/internal/platform"
 	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
 	"github.com/stigoleg/keep-alive/v2/internal/tui"
@@ -27,9 +28,6 @@ func (a *App) execute(ctx context.Context, p *Plan) error {
 		fmt.Fprintf(a.Stderr, "keepalive: logging to %s\n", logPath)
 	}
 	slog.Info("keepalive starting", "version", a.Version, "tui", p.TUI, "json", p.JSON, "config", p.Config.Path)
-	if dep := platform.GetDependencyMessage(); dep != "" {
-		slog.Warn("missing dependencies", "detail", dep)
-	}
 
 	ctx, stop := signal.NotifyContext(ctx, stopSignals()...)
 	defer stop()
@@ -89,12 +87,9 @@ func (a *App) runTUI(ctx context.Context, p *Plan, deps session.Deps) error {
 		Base:    p.Session,
 		Start:   p.AutoStart,
 	})
-	if dep := platform.GetDependencyMessage(); dep != "" {
-		model.SetDependencyWarning(dep)
-	}
 	if p.Session.Active {
-		if st := platform.GetActivitySimulationStatus(); !st.Available {
-			model.SetActivityWarning(st.Message)
+		if reason, hint := activity.Diagnose().Problem(); reason != "" {
+			model.SetActivityWarning(strings.TrimSpace(reason + " " + hint))
 		}
 	}
 

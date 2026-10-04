@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +15,12 @@ import (
 )
 
 var errDenied = errors.New("denied")
+
+func TestMain(m *testing.M) {
+	// Never probe the real input backends from the TUI tests.
+	activityProblem = func() string { return "" }
+	os.Exit(m.Run())
+}
 
 type fakePower struct {
 	acquires, releases atomic.Int32

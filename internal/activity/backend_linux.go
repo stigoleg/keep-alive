@@ -65,13 +65,43 @@ func newBackend(keys bool) *backend {
 		b.idle = b.sources[0]
 	}
 	b.lock = newLinuxLock(sys, sess)
+	switch b.lock.(type) {
+	case logindLock:
+		b.lockName = "logind LockedHint"
+	case screensaverLock:
+		b.lockName = "org.freedesktop.ScreenSaver"
+	}
 	b.open = func() (Injector, error) { return openLinux(env, keys) }
+	b.candidates = func() []Injector { return linuxCandidates(env, keys) }
+	b.env = env.describe()
 	return b
+}
+
+// describe is the desktop as doctor shows it.
+func (e linuxEnv) describe() []string {
+	server := "none (no DISPLAY or WAYLAND_DISPLAY)"
+	switch {
+	case e.wayland != "" && e.display != "":
+		server = "Wayland (with XWayland)"
+	case e.wayland != "":
+		server = "Wayland"
+	case e.display != "":
+		server = "X11"
+	}
+	desktop := e.desktop
+	if desktop == "" {
+		desktop = "unknown (XDG_CURRENT_DESKTOP is not set)"
+	}
+	return []string{"display server: " + server, "desktop: " + desktop}
+}
+
+func linuxCandidates(env linuxEnv, keys bool) []Injector {
+	return []Injector{newUinput(keys), newYdotool(), newXdotool(env)}
 }
 
 // openLinux tries uinput, then ydotool 1.x, then xdotool (X11 only).
 func openLinux(env linuxEnv, keys bool) (Injector, error) {
-	candidates := []Injector{newUinput(keys), newYdotool(), newXdotool(env)}
+	candidates := linuxCandidates(env, keys)
 	var reasons []string
 	hint := uinputPermissionHint
 	for i, inj := range candidates {

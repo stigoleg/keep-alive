@@ -116,6 +116,9 @@ func newBackend(keys bool) *backend {
 		sources: []IdleSource{idle},
 		lock:    wtsLock{},
 		open:    openSendInput,
+
+		candidates: func() []Injector { return []Injector{sendInput{}} },
+		lockName:   "WTS session state",
 	}
 }
 

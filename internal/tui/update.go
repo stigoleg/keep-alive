@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -128,7 +129,7 @@ func handleMenuKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 		m.ShowHelp = true
 		m = syncHelpViewport(m)
 	case key.Matches(msg, m.Keys.ToggleDependencyInfo):
-		if m.DependencyWarning != "" || m.ActivityWarning != "" {
+		if m.ActivityWarning != "" {
 			m.ShowDependencyInfo = true
 		}
 	case key.Matches(msg, m.Keys.Up):
@@ -498,7 +499,7 @@ func handleRunningKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 		m.ShowHelp = true
 		m = syncHelpViewport(m)
 	case key.Matches(msg, m.Keys.ToggleDependencyInfo):
-		if m.DependencyWarning != "" || m.ActivityWarning != "" {
+		if m.ActivityWarning != "" {
 			m.ShowDependencyInfo = true
 		}
 	case key.Matches(msg, m.Keys.Stop):
@@ -507,15 +508,18 @@ func handleRunningKeyMsg(msg tea.KeyMsg, m Model) (Model, tea.Cmd) {
 	return m, nil
 }
 
+// activityProblem explains, from the static activity diagnostics, why
+// simulation cannot work here; "" when it can. Tests replace it.
+var activityProblem = sync.OnceValue(func() string {
+	reason, hint := activity.Diagnose().Problem()
+	return strings.TrimSpace(reason + " " + hint)
+})
+
 func activityWarningFor(enabled bool) string {
 	if !enabled {
 		return ""
 	}
-	status := platform.GetActivitySimulationStatus()
-	if status.Available {
-		return ""
-	}
-	return strings.TrimSpace(status.Message)
+	return activityProblem()
 }
 
 // cleanup stops the session and resets the model state. The state is reset

@@ -23,6 +23,13 @@ type backend struct {
 	open func() (Injector, error)
 	// noIdleHint explains how to get idle-aware simulation.
 	noIdleHint string
+	// candidates lists the input methods open tries, unopened, for
+	// Diagnose; nil when open has no side effects.
+	candidates func() []Injector
+	// lockName describes the lock source for Diagnose.
+	lockName string
+	// env describes the desktop for Diagnose.
+	env []string
 	// release frees OS resources (D-Bus connections).
 	release func()
 }

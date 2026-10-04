@@ -150,6 +150,9 @@ func newBackend(keys bool) *backend {
 		sources: []IdleSource{hid, combined},
 		lock:    sessionLock{},
 		open:    openCoreGraphics,
+
+		candidates: func() []Injector { return []Injector{cgInjector{}} },
+		lockName:   "session dictionary, polled every 2 s",
 	}
 }
 
@@ -270,6 +273,11 @@ func (cgInjector) Diagnose() (string, string) {
 }
 
 func (cgInjector) Close() error { return nil }
+
+// Detail names the app that holds the Accessibility permission.
+func (cgInjector) Detail() string {
+	return "Accessibility granted to " + quotedApp(responsibleApp())
+}
 
 func accessibilityMissing() *Unavailable {
 	return &Unavailable{

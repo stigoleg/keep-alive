@@ -646,16 +646,13 @@ Press 'i' or 'Esc' to close this view.
 }
 
 func hasInfoWarning(m Model) bool {
-	return m.DependencyWarning != "" || m.ActivityWarning != ""
+	return m.ActivityWarning != ""
 }
 
 func infoMessage(m Model) string {
 	var parts []string
 	if m.ActivityWarning != "" {
 		parts = append(parts, m.ActivityWarning)
-	}
-	if m.DependencyWarning != "" {
-		parts = append(parts, m.DependencyWarning)
 	}
 	return strings.Join(parts, "\n\n")
 }
