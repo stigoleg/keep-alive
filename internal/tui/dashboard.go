@@ -495,7 +495,10 @@ func (m Model) hero(c *canvas, s session.Snapshot, now time.Time) {
 			line = "Resumes " + session.ClockText(now, s.NextChange)
 		}
 	case s.Paused == session.PauseBattery && !ended:
-		line = fmt.Sprintf("Resumes at %d%% or when charging", s.Battery.Threshold+session.BatteryResumeMargin)
+		line = "Resumes when charging"
+		if at := session.BatteryResumeAt(s.Battery.Threshold); at > 0 {
+			line = fmt.Sprintf("Resumes at %d%% or when charging", at)
+		}
 	case !s.EndsAt.IsZero():
 		rest := max(s.EndsAt.Sub(now), 0)
 		until := session.ClockText(now, s.EndsAt)
@@ -675,7 +678,10 @@ func (m Model) batteryRow(c *canvas, b session.Battery, paused bool) {
 	if b.Pause {
 		right = fmt.Sprintf("pauses at %d%%", b.Threshold)
 		if paused {
-			right = fmt.Sprintf("paused — resumes at %d%%", b.Threshold+session.BatteryResumeMargin)
+			right = "paused — resumes when charging"
+			if at := session.BatteryResumeAt(b.Threshold); at > 0 {
+				right = fmt.Sprintf("paused — resumes at %d%%", at)
+			}
 		}
 	}
 	right = st.Muted.Render(st.text(right))

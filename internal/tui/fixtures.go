@@ -279,6 +279,13 @@ func Fixtures() []Fixture {
 			s.PowerHold, s.Paused = "", session.PauseBattery
 			return s
 		}),
+		dashFixture("dash_battery_paused_until_charging", func() session.Snapshot {
+			// -b 100 in a service: no level ends the pause, only charging.
+			s := indefiniteFixture(activity.Status{State: activity.StateOff})()
+			s.Battery = session.Battery{Percent: 97, Available: true, Threshold: 100, Pause: true}
+			s.PowerHold, s.Paused = "", session.PauseBattery
+			return s
+		}),
 		dashFixture("dash_power_lost", func() session.Snapshot {
 			s := indefiniteFixture(activity.Status{State: activity.StateWaitingIdle, Idle: 5 * time.Second})()
 			s.PowerHold = ""
