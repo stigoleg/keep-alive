@@ -148,11 +148,37 @@ func linuxBatteryPercent(root string) (int, error) {
 	return aggregateLinuxBatteries(batteries)
 }
 
+// linuxOnExternalPower reports whether a mains or USB supply is online, or
+// a system battery says it is charging.
+func linuxOnExternalPower(root string) bool {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		read := func(file string) string {
+			b, _ := os.ReadFile(filepath.Join(root, entry.Name(), file))
+			return strings.TrimSpace(string(b))
+		}
+		switch read("type") {
+		case "Mains", "USB":
+			if read("online") == "1" {
+				return true
+			}
+		case "Battery":
+			if !strings.EqualFold(read("scope"), "Device") && read("status") == "Charging" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // GetBatteryStatus reads the system batteries from sysfs.
 func GetBatteryStatus() (BatteryStatus, error) {
 	percentage, err := linuxBatteryPercent(powerSupplyRoot)
 	if err != nil {
 		return BatteryStatus{}, err
 	}
-	return BatteryStatus{Percentage: percentage, Available: true}, nil
+	return BatteryStatus{Percentage: percentage, Available: true, Charging: linuxOnExternalPower(powerSupplyRoot)}, nil
 }

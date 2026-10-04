@@ -151,3 +151,24 @@ func writePowerSupply(t *testing.T, root, name string, files map[string]string) 
 		}
 	}
 }
+
+func TestLinuxOnExternalPower(t *testing.T) {
+	for name, tt := range map[string]struct {
+		supplies map[string]map[string]string
+		want     bool
+	}{
+		"mains online":     {map[string]map[string]string{"AC0": {"type": "Mains", "online": "1"}, "BAT0": {"type": "Battery", "status": "Not charging"}}, true},
+		"usb-c online":     {map[string]map[string]string{"ucsi-source-psy-USBC000:001": {"type": "USB", "online": "1\n"}}, true},
+		"battery charging": {map[string]map[string]string{"BAT0": {"type": "Battery", "status": "Charging"}}, true},
+		"on battery":       {map[string]map[string]string{"AC0": {"type": "Mains", "online": "0"}, "BAT0": {"type": "Battery", "status": "Discharging"}}, false},
+		"mouse charging":   {map[string]map[string]string{"hidpp_battery_0": {"type": "Battery", "scope": "Device", "status": "Charging"}}, false},
+	} {
+		root := t.TempDir()
+		for n, files := range tt.supplies {
+			writePowerSupply(t, root, n, files)
+		}
+		if got := linuxOnExternalPower(root); got != tt.want {
+			t.Errorf("%s: linuxOnExternalPower = %v", name, got)
+		}
+	}
+}

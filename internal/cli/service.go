@@ -57,7 +57,10 @@ func (a *App) serviceInstallCommand() *cobra.Command {
 session flags as keepalive itself; they are checked the same way and stored in
 the service. Settings you do not pass here are read from the config file each
 time the service starts, so later "keepalive config" edits apply from its next
-start. Installing again replaces the previous service.
+start. Installing again replaces the previous service. Limits that end a
+session for good (-d, -c, --pid, --while) cannot be used; with --battery the
+service pauses at the threshold and resumes 5 points above it or when the
+machine is plugged in.
 
 Only one keepalive runs at a time, so the service cannot start while one
 started elsewhere runs: on a terminal install offers to stop it, and
@@ -67,7 +70,10 @@ started elsewhere runs: on a terminal install offers to stop it, and
   keepalive service install --schedule "weekdays 08:00-16:00" --battery 20`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if _, err := a.plan(cmd, &sf, false); err != nil {
+			if err := refuseOneShot(cmd.Flags()); err != nil {
+				return err
+			}
+			if _, err := a.plan(cmd, &sf, ipc.OriginService); err != nil {
 				return err
 			}
 			args, err := serviceArgs(cmd.Flags())
@@ -156,6 +162,23 @@ func originPhrase(origin string) string {
 		return "by the login service"
 	}
 	return "in a terminal"
+}
+
+// refuseOneShot rejects limits that end a session for good: the service
+// would stop and stay stopped until the next login.
+func refuseOneShot(fs *pflag.FlagSet) error {
+	for _, f := range []struct{ name, label string }{
+		{"duration", "-d/--duration"},
+		{"clock", "-c/--clock/--until"},
+		{"pid", "--pid"},
+		{"while", "--while"},
+	} {
+		if fs.Changed(f.name) {
+			return usageErr(fmt.Errorf(`%s cannot be used with "keepalive service install"`, f.label),
+				"a service runs at every login; use --schedule for work hours")
+		}
+	}
+	return nil
 }
 
 // serviceArgs serializes the flags given on the command line, and only

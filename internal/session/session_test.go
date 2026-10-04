@@ -96,10 +96,11 @@ func (f *fakeSim) next(t *testing.T) *simRun {
 }
 
 type fakeBattery struct {
-	mu   sync.Mutex
-	pct  int
-	err  error
-	read atomic.Int32
+	mu       sync.Mutex
+	pct      int
+	charging bool
+	err      error
+	read     atomic.Int32
 }
 
 func (b *fakeBattery) set(pct int, err error) {
@@ -115,7 +116,13 @@ func (b *fakeBattery) status() (platform.BatteryStatus, error) {
 	if b.err != nil {
 		return platform.BatteryStatus{}, b.err
 	}
-	return platform.BatteryStatus{Percentage: b.pct, Available: true}, nil
+	return platform.BatteryStatus{Percentage: b.pct, Available: true, Charging: b.charging}, nil
+}
+
+func (b *fakeBattery) setCharging(on bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.charging = on
 }
 
 // ---- harness ----

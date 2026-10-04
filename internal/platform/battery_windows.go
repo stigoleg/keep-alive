@@ -42,9 +42,15 @@ func GetBatteryStatus() (BatteryStatus, error) {
 		return BatteryStatus{}, err
 	}
 
+	return batteryStatusFromWindows(status)
+}
+
+// batteryStatusFromWindows converts SYSTEM_POWER_STATUS; ACLineStatus 1
+// means on external power.
+func batteryStatusFromWindows(status systemPowerStatus) (BatteryStatus, error) {
 	percentage, err := batteryPercentageFromWindowsStatus(status)
 	if err != nil {
 		return BatteryStatus{}, err
 	}
-	return BatteryStatus{Percentage: percentage, Available: true}, nil
+	return BatteryStatus{Percentage: percentage, Available: true, Charging: status.ACLineStatus == 1}, nil
 }

@@ -146,6 +146,12 @@ func TestGoldenDashboard(t *testing.T) {
 			s.NextChange = time.Date(2026, 10, 6, 8, 0, 0, 0, time.UTC)
 			return s
 		}(),
+		"dash_battery_paused": func() session.Snapshot {
+			s := indefinite(activity.Status{State: activity.StateOff})
+			s.Battery = session.Battery{Percent: 18, Available: true, Threshold: 20, Pause: true}
+			s.PowerHold, s.Paused = "", session.PauseBattery
+			return s
+		}(),
 		"dash_power_lost": func() session.Snapshot {
 			s := indefinite(activity.Status{State: activity.StateWaitingIdle, Idle: 5 * time.Second})
 			s.PowerHold = ""

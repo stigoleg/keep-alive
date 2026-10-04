@@ -320,10 +320,11 @@ func (a *App) origin(cmd *cobra.Command) (string, error) {
 }
 
 // plan turns flags, env and config into a session request and validates it.
-// forRun plans `keepalive run`: headless, never a TUI.
-func (a *App) plan(cmd *cobra.Command, f *sessionFlags, forRun bool) (*Plan, error) {
-	origin := originRun
-	if !forRun {
+// origin is who runs it: originRun plans `keepalive run` (headless, never a
+// TUI), ipc.OriginService checks what `service install` stores, and ""
+// takes it from --origin and KEEPALIVE_ORIGIN.
+func (a *App) plan(cmd *cobra.Command, f *sessionFlags, origin string) (*Plan, error) {
+	if origin == "" {
 		var err error
 		if origin, err = a.origin(cmd); err != nil {
 			return nil, err
@@ -366,7 +367,10 @@ func (a *App) plan(cmd *cobra.Command, f *sessionFlags, forRun bool) (*Plan, err
 	}
 
 	if s.BatteryThreshold > 0 {
-		if err := a.checkBattery(s.BatteryThreshold); err != nil {
+		// The login service pauses at the threshold instead of stopping,
+		// so it may start below it.
+		s.BatteryPause = origin == ipc.OriginService
+		if err := a.checkBattery(s.BatteryThreshold, s.BatteryPause); err != nil {
 			return nil, err
 		}
 	}
@@ -428,7 +432,7 @@ func processListCommand() string {
 	return "ps"
 }
 
-func (a *App) checkBattery(threshold int) error {
+func (a *App) checkBattery(threshold int, pause bool) error {
 	st, err := a.Battery()
 	if err != nil || !st.Available {
 		if err == nil {
@@ -437,7 +441,7 @@ func (a *App) checkBattery(threshold int) error {
 		return usageErr(fmt.Errorf("battery threshold %d%% set, but no battery was found (%v)", threshold, err),
 			"--battery only works on machines with a battery; remove it (or the battery setting)")
 	}
-	if st.Percentage <= threshold {
+	if st.Percentage <= threshold && !pause {
 		return usageErr(fmt.Errorf("battery threshold must be below the current level (current %d%%, threshold %d%%)", st.Percentage, threshold),
 			"choose a lower --battery value")
 	}

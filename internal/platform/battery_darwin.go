@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 var darwinBatteryPercent = regexp.MustCompile(`(\d+)%`)
@@ -39,5 +40,10 @@ func GetBatteryStatus() (BatteryStatus, error) {
 		return BatteryStatus{}, err
 	}
 
-	return BatteryStatus{Percentage: percentage, Available: true}, nil
+	return BatteryStatus{Percentage: percentage, Available: true, Charging: darwinOnExternalPower(string(out))}, nil
+}
+
+// darwinOnExternalPower reads pmset's "Now drawing from 'AC Power'".
+func darwinOnExternalPower(output string) bool {
+	return strings.Contains(output, "drawing from 'AC Power'")
 }

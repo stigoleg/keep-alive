@@ -57,7 +57,7 @@ func fixtures() map[string]session.Event {
 	burst.Activity = activity.Status{State: activity.StateSimulating, Method: "CoreGraphics mouse events", LastBurst: start.Add(5 * time.Minute)}
 
 	paused := snap
-	paused.Schedule, paused.InWindow, paused.PowerHold = "Mon-Fri 08:00-16:00", false, ""
+	paused.Schedule, paused.InWindow, paused.PowerHold, paused.Paused = "Mon-Fri 08:00-16:00", false, "", session.PauseSchedule
 	paused.NextChange = time.Date(2026, 3, 2, 8, 0, 0, 0, time.UTC)
 
 	stopped := snap

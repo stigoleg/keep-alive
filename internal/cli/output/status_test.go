@@ -20,7 +20,7 @@ func TestStatusGolden(t *testing.T) {
 	paused := runningSnap()
 	paused.Mode, paused.EndsAt, paused.Remaining = session.ModeIndefinite, time.Time{}, 0
 	paused.Battery = session.Battery{}
-	paused.Schedule, paused.InWindow, paused.PowerHold = "Mon-Fri 08:00-16:00", false, ""
+	paused.Schedule, paused.InWindow, paused.PowerHold, paused.Paused = "Mon-Fri 08:00-16:00", false, "", session.PauseSchedule
 	paused.NextChange = time.Date(2026, 3, 2, 8, 0, 0, 0, time.UTC)
 	paused.Watching = "zoom"
 
@@ -70,5 +70,65 @@ func TestFollowPrinter(t *testing.T) {
 	}
 	if strings.Count(buf.String(), "simulating input") != 1 {
 		t.Fatalf("repeated burst printed:\n%s", buf.String())
+	}
+}
+
+// batteryPaused is a login service paused below its battery threshold.
+func batteryPaused() session.Snapshot {
+	snap := runningSnap()
+	snap.Mode, snap.EndsAt, snap.Remaining = session.ModeIndefinite, time.Time{}, 0
+	snap.Battery = session.Battery{Percent: 18, Available: true, Threshold: 20, Pause: true}
+	snap.PowerHold, snap.Paused = "", session.PauseBattery
+	snap.Activity = activity.Status{State: activity.StateOff}
+	return snap
+}
+
+func TestStatusBatteryPause(t *testing.T) {
+	out := StatusText(StatusInfo{PID: 4242, Version: "2.0.0", Origin: "service", Snapshot: NewJSONSnapshot(batteryPaused())}, start.Add(time.Hour))
+	for _, want := range []string{
+		"  activity    on; resumes when the battery recovers\n",
+		"  power       released while the battery is low\n",
+		"  battery     18% · pauses at 20%, resumes at 25% or when charging\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestBatteryPauseEvents(t *testing.T) {
+	running := runningSnap()
+	running.Battery = session.Battery{Percent: 30, Available: true, Threshold: 20, Pause: true}
+	paused := batteryPaused()
+	resumed := running
+	resumed.Battery.Percent = 25
+	events := []session.Event{
+		{Time: start, Type: session.EventStarted, Snapshot: running},
+		{Time: start.Add(time.Minute), Type: session.EventBattery, Snapshot: paused, Message: "battery at 18%: paused until it is back at 25% or charging"},
+		{Time: start.Add(2 * time.Minute), Type: session.EventBattery, Snapshot: paused},
+		{Time: start.Add(3 * time.Minute), Type: session.EventBattery, Snapshot: resumed, Message: "battery at 25%: keeping awake again"},
+	}
+	var human, follow bytes.Buffer
+	h, f := NewHuman(&human, false), NewFollow(&follow, false)
+	for _, ev := range events {
+		h.Print(ev)
+		f.Print(NewJSONEvent(ev))
+	}
+	want := "10:02:11 keeping system and display awake for 2h0m (until 12:02), pausing at 20% battery, simulating activity\n" +
+		"10:03:11 battery at 18%: paused until it is back at 25% or charging\n" +
+		"10:05:11 battery at 25%: keeping awake again\n"
+	if human.String() != want {
+		t.Errorf("human:\n%s\nwant:\n%s", human.String(), want)
+	}
+	if follow.String() != want {
+		t.Errorf("follow:\n%s\nwant:\n%s", follow.String(), want)
+	}
+
+	js := NewJSONSnapshot(paused)
+	if js.Paused != "battery" || !js.Battery.Pause {
+		t.Fatalf("JSON snapshot: %+v", js)
+	}
+	if back := SnapshotFromJSON(js); back.Paused != session.PauseBattery || !back.Battery.Pause {
+		t.Fatalf("round trip: %+v", back)
 	}
 }

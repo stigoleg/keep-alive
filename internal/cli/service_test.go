@@ -10,6 +10,7 @@ import (
 
 	"github.com/stigoleg/keep-alive/v2/internal/ipc"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
+	"github.com/stigoleg/keep-alive/v2/internal/platform"
 	"github.com/stigoleg/keep-alive/v2/internal/service"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
 )
@@ -65,12 +66,12 @@ func TestServiceInstallSerializesChangedFlags(t *testing.T) {
 
 	ta, m = newServiceApp(t)
 	code = ta.run("service", "install", "-a", "--schedule", "Mon-Fri 08:00-16:00", "--keep-display=false",
-		"--pid", "12", "--pid", "34", "--until", "17:00", "--active-idle", "3m", "--log")
+		"-b", "20", "--active-idle", "3m", "--log")
 	if code != ExitOK {
 		t.Fatalf("exit %d: %s", code, ta.stderr)
 	}
 	got := strings.Join(m.installed.Args, " ")
-	want := "--active --active-idle=3m0s --clock=17:00 --keep-display=false --log --pid=12 --pid=34 --schedule=Mon-Fri 08:00-16:00 --origin service"
+	want := "--active --active-idle=3m0s --battery=20 --keep-display=false --log --schedule=Mon-Fri 08:00-16:00 --origin service"
 	if got != want {
 		t.Fatalf("args = %q\nwant   %q", got, want)
 	}
@@ -105,7 +106,7 @@ func TestServiceInstallValidatesLikeRoot(t *testing.T) {
 	for _, args := range [][]string{
 		{"-d", "0"},
 		{"--schedule", "Mnday 08:00-16:00"},
-		{"-b", "100"},
+		{"-b", "101"}, // a service may start below the threshold: it pauses
 		{"--while", "nothing"},
 		{"extra"},
 	} {
@@ -328,5 +329,53 @@ func TestServiceInstallNextToARunningKeepalive(t *testing.T) {
 	if code := ta.run("service", "install"); code != ExitOK || stopped(f) || ta.stderr.Len() != 0 ||
 		strings.Contains(ta.stdout.String(), "[y/N]") {
 		t.Fatalf("service instance: exit %d, stopped %v, stderr %q", code, stopped(f), ta.stderr)
+	}
+}
+
+func TestServiceInstallRefusesOneShotLimits(t *testing.T) {
+	for _, args := range [][]string{
+		{"-d", "2h"}, {"--duration=30m"}, {"-c", "17:00"}, {"--clock", "17:00"}, {"--until", "17:00"},
+		{"--pid", "12"}, {"--while", "zoom"},
+	} {
+		ta, m := newServiceApp(t)
+		if code := ta.run(append([]string{"service", "install"}, args...)...); code != ExitUsage {
+			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+		errOut := ta.stderr.String()
+		if m.installed != nil || !strings.Contains(errOut, `cannot be used with "keepalive service install"`) ||
+			!strings.Contains(errOut, "hint: a service runs at every login; use --schedule for work hours") {
+			t.Errorf("%v: installed %v, stderr %q", args, m.installed != nil, errOut)
+		}
+	}
+}
+
+func TestServiceRunPausesAtTheBatteryThreshold(t *testing.T) {
+	// The service starts at login even below the threshold (it pauses
+	// then); a terminal run refuses, as before.
+	ta := newTestApp(t)
+	ta.Battery = func() (platform.BatteryStatus, error) {
+		return platform.BatteryStatus{Percentage: 15, Available: true}, nil
+	}
+	if code := ta.run("--plain", "--origin", "service", "-b", "20"); code != ExitOK {
+		t.Fatalf("service: exit %d: %s", code, ta.stderr)
+	}
+	if !ta.plan.Session.BatteryPause || ta.plan.Session.BatteryThreshold != 20 {
+		t.Fatalf("service plan: %+v", ta.plan.Session)
+	}
+	ta = newTestApp(t)
+	ta.Battery = func() (platform.BatteryStatus, error) {
+		return platform.BatteryStatus{Percentage: 15, Available: true}, nil
+	}
+	if code := ta.run("--plain", "-b", "20"); code != ExitUsage {
+		t.Fatalf("terminal below the threshold: exit %d", code)
+	}
+	sa, m := newServiceApp(t)
+	sa.Battery = ta.Battery
+	if code := sa.run("service", "install", "-b", "20"); code != ExitOK || m.installed == nil {
+		t.Fatalf("install below the threshold: exit %d: %s", code, sa.stderr)
+	}
+	ta = newTestApp(t)
+	if code := ta.run("--plain", "-b", "20"); code != ExitOK || ta.plan.Session.BatteryPause {
+		t.Fatalf("terminal: exit %d, pause %v", code, ta.plan.Session.BatteryPause)
 	}
 }

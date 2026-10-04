@@ -85,7 +85,7 @@ func (a *App) Command() *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			p, err := a.plan(cmd, &sf, false)
+			p, err := a.plan(cmd, &sf, "")
 			if err != nil {
 				return err
 			}
@@ -230,7 +230,7 @@ also works next to a keepalive that is already running.`,
 			if dash != 0 || len(args) == 0 {
 				return usageErr(errors.New(runUsage), `put the command after "--", e.g. keepalive run -- make release`)
 			}
-			p, err := a.plan(cmd, &sf, true)
+			p, err := a.plan(cmd, &sf, originRun)
 			if err != nil {
 				return err
 			}

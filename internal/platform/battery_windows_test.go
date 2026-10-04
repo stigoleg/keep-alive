@@ -19,3 +19,12 @@ func TestBatteryPercentageFromWindowsStatusRejectsUnknown(t *testing.T) {
 		t.Fatal("batteryPercentageFromWindowsStatus() expected error")
 	}
 }
+
+func TestBatteryStatusFromWindowsCharging(t *testing.T) {
+	for line, want := range map[byte]bool{0: false, 1: true, 255: false} {
+		st, err := batteryStatusFromWindows(systemPowerStatus{ACLineStatus: line, BatteryLifePercent: 40})
+		if err != nil || st.Charging != want || st.Percentage != 40 || !st.Available {
+			t.Errorf("ACLineStatus %d: %+v, %v", line, st, err)
+		}
+	}
+}

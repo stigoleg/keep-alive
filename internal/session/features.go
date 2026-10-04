@@ -48,10 +48,10 @@ func (l *loop) checkSchedule() {
 	now := l.clk.Now().Round(0) // wall clock, like EndsAt
 	in := sched.In(now)
 	changed := in != l.inWindow
-	if changed && in {
-		l.enterWindow()
-	} else if changed {
-		l.leaveWindow()
+	if changed {
+		wasAwake := l.awake()
+		l.inWindow, l.snap.InWindow = in, in
+		l.wake(wasAwake)
 	}
 	l.armSchedule(now)
 	if changed {
@@ -61,8 +61,41 @@ func (l *loop) checkSchedule() {
 	}
 }
 
-func (l *loop) enterWindow() {
-	l.inWindow, l.snap.InWindow = true, true
+// awake reports whether the session keeps the machine awake now: inside
+// the work hours and not paused by the battery.
+func (l *loop) awake() bool { return l.inWindow && !l.batteryLow }
+
+// paused is Snapshot.Paused.
+func (l *loop) paused() Pause {
+	switch {
+	case !l.inWindow:
+		return PauseSchedule
+	case l.batteryLow:
+		return PauseBattery
+	}
+	return ""
+}
+
+// setBatteryLow pauses or resumes for the battery.
+func (l *loop) setBatteryLow(low bool) {
+	wasAwake := l.awake()
+	l.batteryLow = low
+	l.wake(wasAwake)
+}
+
+// wake resumes or pauses after the work hours or the battery changed what
+// awake reports.
+func (l *loop) wake(wasAwake bool) {
+	switch now := l.awake(); {
+	case now && !wasAwake:
+		l.resume()
+	case !now && wasAwake:
+		l.pause()
+	}
+}
+
+// resume acquires the power hold and restarts simulated activity.
+func (l *loop) resume() {
 	hold, err := l.s.deps.Power.Acquire(l.ctx, l.powerOptions())
 	if err != nil {
 		l.warn(fmt.Sprintf("could not keep the system awake (%v); retrying", err))
@@ -78,9 +111,8 @@ func (l *loop) enterWindow() {
 	}
 }
 
-// leaveWindow pauses the session: no simulated activity, no power hold.
-func (l *loop) leaveWindow() {
-	l.inWindow, l.snap.InWindow = false, false
+// pause stops simulated activity and releases the power hold.
+func (l *loop) pause() {
 	l.stopActivity()
 	l.snap.Activity = activity.Status{State: activity.StateOff}
 	if l.powerRetry != nil {

@@ -542,3 +542,100 @@ func TestNotifyLimiterDecides(t *testing.T) {
 		}
 	}
 }
+
+// ---- battery pause (login service) ----
+
+// poll moves to the next battery poll and returns its event.
+func (h *harness) poll(pct int) Event {
+	h.t.Helper()
+	h.batt.set(pct, nil)
+	h.clk.Advance(BatteryPollInterval)
+	for {
+		ev := h.waitFor(EventBattery)
+		if ev.Snapshot.Battery.Percent == pct {
+			return ev
+		}
+	}
+}
+
+func TestBatteryPausesInsteadOfStopping(t *testing.T) {
+	h := newHarness(t, Config{BatteryThreshold: 20, BatteryPause: true, Active: true})
+	h.start()
+	run := h.sim.next(t)
+	if ev := h.waitFor(EventBattery); ev.Snapshot.Paused != "" || !ev.Snapshot.Battery.Pause {
+		t.Fatalf("first poll: %+v", ev.Snapshot)
+	}
+
+	ev := h.poll(18)
+	if ev.Snapshot.Paused != PauseBattery || ev.Snapshot.PowerHold != "" || !ev.Snapshot.Running ||
+		ev.Message != "battery at 18%: paused until it is back at 25% or charging" {
+		t.Fatalf("pause event: %q %+v", ev.Message, ev.Snapshot)
+	}
+	h.assertCounts(1, 1)
+	exited(t, run)
+	if st := h.s.Snapshot(); st.Paused != PauseBattery || st.Activity.State != activity.StateOff || !st.Active {
+		t.Fatalf("paused snapshot: %+v", st)
+	}
+
+	if ev := h.poll(24); ev.Snapshot.Paused != PauseBattery || ev.Message != "" {
+		t.Fatalf("below the resume level: %q %+v", ev.Message, ev.Snapshot)
+	}
+	h.s.SetActive(true)
+	h.noSimulator()
+	h.assertCounts(1, 1)
+
+	ev = h.poll(25)
+	if ev.Snapshot.Paused != "" || ev.Snapshot.PowerHold == "" || ev.Message != "battery at 25%: keeping awake again" {
+		t.Fatalf("resume event: %q %+v", ev.Message, ev.Snapshot)
+	}
+	h.assertCounts(2, 1)
+	h.sim.next(t)
+
+	h.s.Stop(ReasonUser)
+	h.finish(ReasonUser)
+	h.assertCounts(2, 2)
+}
+
+func TestBatteryPauseEndsWhenCharging(t *testing.T) {
+	h := newHarness(t, Config{BatteryThreshold: 20, BatteryPause: true})
+	h.start()
+	h.waitFor(EventBattery)
+	h.poll(15)
+	h.batt.setCharging(true)
+	ev := h.poll(16)
+	if ev.Snapshot.Paused != "" || ev.Message != "charging: keeping awake again" {
+		t.Fatalf("resume on charging: %q %+v", ev.Message, ev.Snapshot)
+	}
+	// Low but charging: no pause.
+	if ev := h.poll(14); ev.Snapshot.Paused != "" {
+		t.Fatalf("paused while charging: %+v", ev.Snapshot)
+	}
+	h.assertCounts(2, 1)
+	h.s.Stop(ReasonUser)
+	h.finish(ReasonUser)
+}
+
+func TestBatteryPauseOutsideWorkHours(t *testing.T) {
+	// t0 (Sunday 10:00) is outside the work hours. A low battery pauses as
+	// well, and entering the work hours keeps the battery pause.
+	h := newHarness(t, Config{BatteryThreshold: 20, BatteryPause: true, Schedule: mustSchedule(t, "daily 11:00-23:00")})
+	h.start()
+	h.waitFor(EventBattery)
+	h.poll(15)
+	if st := h.s.Snapshot(); st.Paused != PauseSchedule || st.InWindow {
+		t.Fatalf("outside the work hours: %+v", st)
+	}
+	h.clk.Set(t0.Add(time.Hour))
+	h.waitFor(EventSchedule)
+	if st := h.s.Snapshot(); st.Paused != PauseBattery || !st.InWindow || st.PowerHold != "" {
+		t.Fatalf("work hours with a low battery: %+v", st)
+	}
+	h.assertCounts(0, 0)
+	h.poll(30)
+	h.assertCounts(1, 0)
+	if st := h.s.Snapshot(); st.Paused != "" || st.PowerHold == "" {
+		t.Fatalf("after the battery recovered: %+v", st)
+	}
+	h.s.Stop(ReasonUser)
+	h.finish(ReasonUser)
+}
