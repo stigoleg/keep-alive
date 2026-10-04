@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"runtime"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/config"
 	"github.com/stigoleg/keep-alive/v2/internal/ipc"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
+	"github.com/stigoleg/keep-alive/v2/internal/notify"
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
 	"github.com/stigoleg/keep-alive/v2/internal/proc"
 	"github.com/stigoleg/keep-alive/v2/internal/schedule"
@@ -41,6 +43,11 @@ type App struct {
 	DefaultConfigPath              func() (string, error)
 	// Processes checks --pid and --while targets during planning.
 	Processes proc.Lister
+	// Notifier reports a service that cannot start; nil means notify.New().
+	Notifier notify.Notifier
+
+	// logSetup is logging.Setup; tests replace it.
+	logSetup func(logging.Options) (string, func() error, error)
 
 	// runSession executes a resolved plan; tests replace it.
 	runSession func(ctx context.Context, p *Plan) error
@@ -107,7 +114,54 @@ func (a *App) Execute(args []string) int {
 	if err != nil {
 		printError(a.Stderr, err, a.color())
 	}
-	return ExitCode(err)
+	code := ExitCode(err)
+	if code == ExitUsage && a.isServiceRun(cmd, args) {
+		// The service manager restarts on failure; a broken config would
+		// loop forever. Report it once and exit cleanly instead.
+		a.reportServiceFailure(err)
+		return ExitOK
+	}
+	return code
+}
+
+// isServiceRun reports whether the login service started this root command.
+func (a *App) isServiceRun(root *cobra.Command, args []string) bool {
+	if c, _, err := root.Find(args); err != nil || c != root {
+		return false
+	}
+	for i, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "--origin="+ipc.OriginService || (arg == "--origin" && i+1 < len(args) && args[i+1] == ipc.OriginService) {
+			return true
+		}
+	}
+	v, ok := a.LookupEnv(ipc.EnvOrigin)
+	return ok && v == ipc.OriginService
+}
+
+// reportServiceFailure logs a service start failure and shows one
+// notification; failures to do either are ignored.
+func (a *App) reportServiceFailure(err error) {
+	msg := err.Error()
+	var ee *ExitError
+	if errors.As(err, &ee) && ee.Hint != "" {
+		msg += " (" + ee.Hint + ")"
+	}
+	if _, closeLog, lerr := a.logSetup(logging.Options{Enabled: true}); lerr == nil {
+		slog.Error("service: could not start", "err", msg)
+		_ = closeLog()
+	}
+	n := a.Notifier
+	if n == nil {
+		n = notify.New()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), notify.Timeout)
+	defer cancel()
+	if nerr := n.Notify(ctx, "Keep-Alive service could not start", msg); nerr != nil {
+		slog.Debug("service: notification failed", "err", nerr)
+	}
 }
 
 func (a *App) color() bool {

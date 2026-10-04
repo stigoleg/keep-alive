@@ -78,6 +78,9 @@ type Options struct {
 	Base session.Config
 	// Start begins a session from Base immediately.
 	Start bool
+	// OnSession, when set, is told about every session the TUI starts, and
+	// nil when it stops one (the CLI's control socket follows it).
+	OnSession func(*session.Session)
 }
 
 // InitialModel returns the initial model for the TUI.
@@ -109,7 +112,7 @@ func New(o Options) Model {
 		ctx:                ctx,
 		deps:               o.Deps,
 		base:               o.Base,
-		sessions:           &sessionSlot{},
+		sessions:           &sessionSlot{notify: o.OnSession},
 	}
 	if o.Start {
 		dur := o.Base.Duration
@@ -135,14 +138,18 @@ func (m Model) Shutdown() error {
 
 // sessionSlot holds the session the TUI is currently running.
 type sessionSlot struct {
-	mu  sync.Mutex
-	cur *runner
+	mu     sync.Mutex
+	cur    *runner
+	notify func(*session.Session) // Options.OnSession
 }
 
 func (s *sessionSlot) set(r *runner) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cur = r
+	if s.notify != nil {
+		s.notify(r.sess)
+	}
 }
 
 func (s *sessionSlot) current() *runner {
@@ -162,6 +169,9 @@ func (s *sessionSlot) stop() error {
 	s.mu.Lock()
 	r := s.cur
 	s.cur = nil
+	if r != nil && s.notify != nil {
+		s.notify(nil)
+	}
 	s.mu.Unlock()
 	if r == nil {
 		return nil

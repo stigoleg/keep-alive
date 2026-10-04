@@ -195,38 +195,41 @@ func remainingText(snap session.Snapshot) string {
 }
 
 func activityText(snap session.Snapshot) string {
-	st := snap.Activity
+	return "active: " + ActivityText(snap.Activity, true)
+}
+
+// ActivityText describes an activity state, e.g. "simulating input via
+// CoreGraphics" or "unavailable (reason)"; withFix appends "; hint".
+func ActivityText(st activity.Status, withFix bool) string {
 	var s string
 	switch st.State {
 	case activity.StateOff:
-		return "active: off"
+		return "off"
 	case activity.StateWaitingIdle:
-		s = "active: waiting for idle"
+		s = "waiting for idle"
 	case activity.StateSimulating:
-		s = "active: simulating input"
+		s = "simulating input"
 		if st.Method != "" {
 			s += " via " + st.Method
 		}
-		return withHint(s, st)
+		return withHint(s, st, withFix)
 	case activity.StatePausedUser:
-		s = "active: paused while you use the computer"
-		return withHint(s, st)
+		return withHint("paused while you use the computer", st, withFix)
 	case activity.StatePausedLocked:
-		s = "active: paused while the screen is locked"
-		return withHint(s, st)
+		return withHint("paused while the screen is locked", st, withFix)
 	case activity.StateDegraded:
-		s = "active: unavailable"
+		s = "unavailable"
 	default:
-		s = "active: " + string(st.State)
+		s = string(st.State)
 	}
 	if st.Reason != "" {
 		s += " (" + st.Reason + ")"
 	}
-	return withHint(s, st)
+	return withHint(s, st, withFix)
 }
 
-func withHint(s string, st activity.Status) string {
-	if st.Hint != "" {
+func withHint(s string, st activity.Status, withFix bool) string {
+	if withFix && st.Hint != "" {
 		s += "; " + st.Hint
 	}
 	return s

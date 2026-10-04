@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -40,21 +41,53 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// keepalive runs the binary with an isolated config and cache directory.
-func keepalive(t *testing.T, args ...string) *exec.Cmd {
+var (
+	envMu sync.Mutex
+	envs  = map[*testing.T][]string{}
+)
+
+// testEnv is the environment every keepalive of one test shares: its own
+// config, cache and control-socket directories, so instances see each other
+// but nothing outside the test.
+func testEnv(t *testing.T) []string {
 	t.Helper()
-	cmd := exec.Command(binary, args...)
-	home := t.TempDir()
-	cmd.Env = append(os.Environ(),
-		"XDG_CONFIG_HOME="+filepath.Join(home, "config"),
-		"XDG_CACHE_HOME="+filepath.Join(home, "cache"),
-		"NO_COLOR=1",
-	)
+	envMu.Lock()
+	defer envMu.Unlock()
+	if env, ok := envs[t]; ok {
+		return env
+	}
 	for _, kv := range os.Environ() {
 		if strings.HasPrefix(kv, "KEEPALIVE_") {
 			t.Fatalf("test environment sets %s; unset it", kv)
 		}
 	}
+	home := t.TempDir()
+	// Socket paths are limited to ~104 bytes, so the runtime dir is short.
+	rt, err := os.MkdirTemp("", "ka")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		os.RemoveAll(rt)
+		envMu.Lock()
+		delete(envs, t)
+		envMu.Unlock()
+	})
+	env := append(os.Environ(),
+		"XDG_CONFIG_HOME="+filepath.Join(home, "config"),
+		"XDG_CACHE_HOME="+filepath.Join(home, "cache"),
+		"KEEPALIVE_RUNTIME_DIR="+rt,
+		"NO_COLOR=1",
+	)
+	envs[t] = env
+	return env
+}
+
+// keepalive runs the binary in the test's isolated environment.
+func keepalive(t *testing.T, args ...string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command(binary, args...)
+	cmd.Env = testEnv(t)
 	return cmd
 }
 

@@ -13,7 +13,6 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/cli/output"
 	"github.com/stigoleg/keep-alive/v2/internal/clock"
 	"github.com/stigoleg/keep-alive/v2/internal/ipc"
-	"github.com/stigoleg/keep-alive/v2/internal/logging"
 	"github.com/stigoleg/keep-alive/v2/internal/notify"
 	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
@@ -31,15 +30,19 @@ func (a *App) execute(ctx context.Context, p *Plan) error {
 	ctx, stop := signal.NotifyContext(ctx, stopSignals()...)
 	defer stop()
 
-	if p.TUI {
-		return a.runTUI(ctx, p, a.deps(p))
+	srv, err := a.claimInstance(ctx, p)
+	if err != nil {
+		return err
 	}
-	return a.runHeadless(ctx, p, a.deps(p))
+	if p.TUI {
+		return a.runTUI(ctx, p, a.deps(p), srv)
+	}
+	return a.runHeadless(ctx, p, a.deps(p), srv)
 }
 
 // startLogging sets up the log file the plan asks for and says where it is.
 func (a *App) startLogging(p *Plan) (func() error, error) {
-	logPath, closeLog, err := logging.Setup(p.Logging)
+	logPath, closeLog, err := a.logSetup(p.Logging)
 	if err != nil {
 		return nil, runtimeErr(fmt.Errorf("open log file: %w", err), "pass --log-file to choose another location")
 	}
@@ -66,11 +69,13 @@ func (a *App) deps(p *Plan) session.Deps {
 	return d
 }
 
-// runHeadless runs the session and prints its events until it ends.
-func (a *App) runHeadless(ctx context.Context, p *Plan, deps session.Deps) error {
+// runHeadless runs the session and prints its events until it ends; srv
+// (may be nil) controls it.
+func (a *App) runHeadless(ctx context.Context, p *Plan, deps session.Deps, srv *ipc.Server) error {
 	s := session.New(p.Session, deps)
 	events, unsub := s.Subscribe()
 	defer unsub()
+	defer serve(ctx, srv, s)()
 
 	var pr output.Printer = output.NewHuman(a.Stdout, a.StdoutTTY && a.colorAllowed())
 	if p.JSON {
@@ -106,14 +111,17 @@ func (a *App) colorAllowed() bool {
 }
 
 // runTUI runs the interactive UI. Signals stop the running session (through
-// ctx) and quit the program.
-func (a *App) runTUI(ctx context.Context, p *Plan, deps session.Deps) error {
+// ctx) and quit the program. srv (may be nil) controls whichever session the
+// UI runs; a stop request without one quits the UI.
+func (a *App) runTUI(ctx context.Context, p *Plan, deps session.Deps, srv *ipc.Server) error {
+	ctrl := &switchController{}
 	model := tui.New(tui.Options{
-		Version: a.Version,
-		Context: ctx,
-		Deps:    deps,
-		Base:    p.Session,
-		Start:   p.AutoStart,
+		Version:   a.Version,
+		Context:   ctx,
+		Deps:      deps,
+		Base:      p.Session,
+		Start:     p.AutoStart,
+		OnSession: ctrl.set,
 	})
 	if p.Session.Active {
 		if reason, hint := activity.Diagnose().Problem(); reason != "" {
@@ -128,6 +136,10 @@ func (a *App) runTUI(ctx context.Context, p *Plan, deps session.Deps) error {
 		tea.WithInput(a.Stdin),
 		tea.WithOutput(a.Stdout),
 	)
+	ctrl.mu.Lock()
+	ctrl.quit = prog.Quit
+	ctrl.mu.Unlock()
+	defer serve(ctx, srv, ctrl)()
 	finished := make(chan struct{})
 	defer close(finished)
 	go func() {

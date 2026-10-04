@@ -29,6 +29,18 @@ func (f fakeProcs) FindByName(name string) ([]proc.Process, error) { return f.na
 
 var now = time.Date(2024, 1, 1, 10, 0, 0, 0, time.Local)
 
+func TestMain(m *testing.M) {
+	// Control commands must never reach a real keepalive.
+	dir, err := os.MkdirTemp("", "ka-cli")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("KEEPALIVE_RUNTIME_DIR", dir)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 type testApp struct {
 	*App
 	stdout, stderr *bytes.Buffer
@@ -74,6 +86,10 @@ func newTestApp(t *testing.T) *testApp {
 }
 
 func (ta *testApp) run(args ...string) int { return ta.Execute(args) }
+
+func writeConfig(ta *testApp, body string) error {
+	return os.WriteFile(ta.configPath, []byte(body), 0o600)
+}
 
 // TestFlagCompatibility pins the v1.5.3 meaning of every documented flag
 // combination.
@@ -474,9 +490,6 @@ func TestStubsExit1(t *testing.T) {
 	for _, args := range [][]string{
 		{"doctor"},
 		{"doctor", "--probe", "--json"},
-		{"status"},
-		{"status", "--json"},
-		{"stop"},
 		{"service", "install", "-d", "2h"},
 		{"service", "uninstall"},
 		{"service", "status"},

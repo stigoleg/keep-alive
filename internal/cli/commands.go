@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/stigoleg/keep-alive/v2/internal/config"
+	"github.com/stigoleg/keep-alive/v2/internal/logging"
 )
 
 const rootLong = `keepalive keeps your computer awake, and optionally your chat status
@@ -38,6 +39,9 @@ func (a *App) Command() *cobra.Command {
 	}
 	if a.runChild == nil {
 		a.runChild = a.executeRun
+	}
+	if a.logSetup == nil {
+		a.logSetup = logging.Setup
 	}
 	var sf sessionFlags
 	root := &cobra.Command{
@@ -82,10 +86,10 @@ func (a *App) Command() *cobra.Command {
 			fs.Bool("probe", false, "briefly exercise power and input to verify them")
 			fs.Bool("json", false, "print the report as JSON")
 		}),
-		stubCommand("status", "Show the running keepalive session", "5", func(fs *pflag.FlagSet) {
-			fs.Bool("json", false, "print the status as JSON")
-		}),
-		stubCommand("stop", "Stop the running keepalive session", "5", nil),
+		a.statusCommand(),
+		a.stopCommand(),
+		a.activeCommand(),
+		a.extendCommand(),
 		a.serviceCommand(),
 		a.configCommand(),
 		&cobra.Command{

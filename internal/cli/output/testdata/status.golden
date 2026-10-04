@@ -1,0 +1,24 @@
+keepalive 2.0.0 · pid 4242 · started in a terminal at 10:02
+  session     1h12m left (until 12:02); keeps the system and display awake
+  activity    simulating input via CoreGraphics
+  power       caffeinate -dims
+  battery     80% · stops at 20%
+--
+keepalive 2.0.0 · pid 4242 · started by the login service at 10:02
+  session     until stopped (running for 48m); keeps the system and display awake
+  work hours  Mon-Fri 08:00-16:00 · paused until Mon 08:00
+  watching    zoom
+  activity    on; resumes with the work hours
+  power       released while outside the work hours
+--
+keepalive 2.0.0 · pid 4242 · started by keepalive run at 10:02
+  session     until stopped (running for 48m); keeps the system and display awake
+  work hours  daily 08:00-16:00 · in work hours until 16:00
+  activity    unavailable (Accessibility permission is missing)
+              fix: Grant Accessibility to "Ghostty"
+  power       caffeinate -dims
+  battery     64%
+--
+keepalive 2.0.0 · pid 4242 · started in a terminal
+  session     none (the interactive UI is open; nothing is kept awake)
+--

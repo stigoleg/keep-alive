@@ -31,9 +31,14 @@ func (a *App) executeRun(ctx context.Context, p *Plan, argv []string) error {
 	signal.Notify(sigs, runSignals()...)
 	defer signal.Stop(sigs)
 
+	srv, err := a.claimInstance(ctx, p)
+	if err != nil {
+		return err
+	}
 	s := session.New(p.Session, a.deps(p))
 	events, unsub := s.Subscribe()
 	defer unsub()
+	defer serve(ctx, srv, s)()
 	var pr output.Printer = output.NewRun(a.Stderr, a.StderrTTY && a.colorAllowed())
 	if p.JSON {
 		pr = output.NewJSON(a.Stderr)
