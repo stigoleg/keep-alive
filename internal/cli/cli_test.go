@@ -33,6 +33,7 @@ type testApp struct {
 	*App
 	stdout, stderr *bytes.Buffer
 	plan           *Plan
+	argv           []string
 	env            map[string]string
 	configPath     string
 }
@@ -63,6 +64,10 @@ func newTestApp(t *testing.T) *testApp {
 	}
 	ta.App.runSession = func(_ context.Context, p *Plan) error {
 		ta.plan = p
+		return nil
+	}
+	ta.App.runChild = func(_ context.Context, p *Plan, argv []string) error {
+		ta.plan, ta.argv = p, argv
 		return nil
 	}
 	return ta
@@ -184,7 +189,6 @@ func TestUsageErrorsExit2(t *testing.T) {
 		{"--while", "nothing"},
 		{"--bogus"},
 		{"-x"},
-		{"extra"},
 		{"--config", "/nonexistent/keepalive.toml"},
 	}
 	for _, args := range tests {
@@ -364,9 +368,110 @@ func TestEnvAndFilePrecedence(t *testing.T) {
 	}
 }
 
+func TestRootRejectsACommand(t *testing.T) {
+	ta := newTestApp(t)
+	if code := ta.run("-d", "1h", "make", "release"); code != ExitUsage {
+		t.Fatalf("exit %d", code)
+	}
+	want := "keepalive: error: unexpected argument \"make\"\nhint: did you mean \"keepalive run -- make release\"?\n"
+	if got := ta.stderr.String(); got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestRunParsesTheCommand(t *testing.T) {
+	ta := newTestApp(t)
+	ta.StdinTTY, ta.StdoutTTY = true, true
+	if code := ta.run("run", "-d", "2h", "-a", "--", "make", "-j", "8", "--", "x"); code != ExitOK {
+		t.Fatalf("exit %d: %s", code, ta.stderr)
+	}
+	if strings.Join(ta.argv, " ") != "make -j 8 -- x" {
+		t.Fatalf("argv = %q", ta.argv)
+	}
+	p := ta.plan
+	if p.TUI || p.Session.Duration != 2*time.Hour || !p.Session.Active || p.Session.Command != "make" {
+		t.Fatalf("plan = %+v", p)
+	}
+	if !p.Notify {
+		t.Fatal("notifications off by default for run")
+	}
+}
+
+func TestRunNeedsDashDash(t *testing.T) {
+	for _, args := range [][]string{
+		{"run"},
+		{"run", "make"},
+		{"run", "-d", "1h", "make", "--", "x"},
+		{"run", "--"},
+	} {
+		ta := newTestApp(t)
+		if code := ta.run(args...); code != ExitUsage {
+			t.Fatalf("%v: exit %d", args, code)
+		}
+		if got := ta.stderr.String(); !strings.Contains(got, "usage: keepalive run [flags] -- command [args…]") {
+			t.Fatalf("%v: stderr = %q", args, got)
+		}
+		if ta.argv != nil {
+			t.Fatalf("%v: ran %q", args, ta.argv)
+		}
+	}
+}
+
+func TestNotifyDefaults(t *testing.T) {
+	for _, tt := range []struct {
+		args []string
+		env  map[string]string
+		tty  bool
+		want bool
+	}{
+		{nil, nil, true, false},                 // TUI
+		{nil, nil, false, true},                 // headless
+		{[]string{"--plain"}, nil, true, true},  // headless on a terminal
+		{[]string{"--notify"}, nil, true, true}, // explicit wins
+		{[]string{"--notify=false"}, nil, false, false},
+		{nil, map[string]string{"KEEPALIVE_NOTIFY": "false"}, false, false},
+		{[]string{"--origin", "service"}, nil, true, true},
+	} {
+		ta := newTestApp(t)
+		ta.StdinTTY, ta.StdoutTTY = tt.tty, tt.tty
+		for k, v := range tt.env {
+			ta.env[k] = v
+		}
+		if code := ta.run(tt.args...); code != ExitOK {
+			t.Fatalf("%v: exit %d: %s", tt.args, code, ta.stderr)
+		}
+		if ta.plan.Notify != tt.want {
+			t.Errorf("%v %v tty=%v: Notify = %v, want %v", tt.args, tt.env, tt.tty, ta.plan.Notify, tt.want)
+		}
+	}
+}
+
+func TestServiceOriginDefaults(t *testing.T) {
+	ta := newTestApp(t)
+	ta.StdinTTY, ta.StdoutTTY = true, true
+	if code := ta.run("--origin", "service", "-a"); code != ExitOK {
+		t.Fatalf("exit %d: %s", code, ta.stderr)
+	}
+	p := ta.plan
+	if p.Origin != "service" || p.TUI || !p.Logging.Enabled || p.Logging.Debug || !p.Notify {
+		t.Fatalf("plan = %+v", p)
+	}
+
+	ta = newTestApp(t)
+	ta.env["KEEPALIVE_ORIGIN"] = "service"
+	ta.run("--log=false")
+	if ta.plan.Origin != "service" || ta.plan.Logging.Enabled {
+		t.Fatalf("explicit --log=false ignored: %+v", ta.plan.Logging)
+	}
+
+	ta = newTestApp(t)
+	if code := ta.run("--origin", "cron"); code != ExitUsage {
+		t.Fatalf("--origin cron: exit %d", code)
+	}
+}
+
 func TestStubsExit1(t *testing.T) {
 	for _, args := range [][]string{
-		{"run", "--", "sleep", "1"},
 		{"doctor"},
 		{"doctor", "--probe", "--json"},
 		{"status"},

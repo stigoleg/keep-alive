@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -18,9 +19,9 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/activity"
 	"github.com/stigoleg/keep-alive/v2/internal/clock"
 	"github.com/stigoleg/keep-alive/v2/internal/config"
+	"github.com/stigoleg/keep-alive/v2/internal/ipc"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
-	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/proc"
 	"github.com/stigoleg/keep-alive/v2/internal/schedule"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
@@ -43,6 +44,8 @@ type App struct {
 
 	// runSession executes a resolved plan; tests replace it.
 	runSession func(ctx context.Context, p *Plan) error
+	// runChild executes `keepalive run`; tests replace it.
+	runChild func(ctx context.Context, p *Plan, argv []string) error
 }
 
 // Plan is a fully resolved request to run a session.
@@ -51,10 +54,19 @@ type Plan struct {
 	TUI       bool // interactive UI instead of headless output
 	JSON      bool // NDJSON events (headless only)
 	AutoStart bool // TUI: start the session right away, as v1 did for -d/-c/-b
-	Notify    bool // phase 4
-	Logging   logging.Options
-	Config    config.Resolved
+	// Notify shows desktop notifications for unusual stops and problems:
+	// on by default except in the TUI; an explicit setting wins.
+	Notify  bool
+	Logging logging.Options
+	Config  config.Resolved
+	// Origin is who started this process: "terminal", "service" or "run".
+	Origin string
+	// Replace stops another running instance instead of failing.
+	Replace bool
 }
+
+// originRun marks `keepalive run` in the control socket's status.
+const originRun = "run"
 
 // Main runs the CLI against the real process environment and returns the exit
 // code.
@@ -109,16 +121,6 @@ func isTerminal(f *os.File) bool {
 	return isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())
 }
 
-// realDeps are the production session dependencies.
-func realDeps() session.Deps {
-	return session.Deps{
-		Clock:    clock.Real(),
-		Power:    power.New(),
-		Activity: activity.New(),
-		Battery:  platform.GetBatteryStatus,
-	}
-}
-
 // sessionFlags holds the flag values that are not config keys; config keys
 // are read back from the flag set by config.Resolve.
 type sessionFlags struct {
@@ -128,6 +130,7 @@ type sessionFlags struct {
 	while    string
 	json     bool
 	plain    bool
+	replace  bool
 }
 
 // addSessionFlags defines the session flags shared by the root command,
@@ -174,13 +177,43 @@ func (a *App) resolveConfig(cmd *cobra.Command) (config.Resolved, error) {
 	}
 	res, err := config.Resolve(config.Options{Path: path, PathExplicit: explicit, Env: a.LookupEnv, Flags: cmd.Flags()})
 	if err != nil {
-		return res, usageErr(err, "check the value, or run 'keepalive config show'")
+		hint := "check the value, or run 'keepalive config show'"
+		if strings.Contains(err.Error(), "schedule") || strings.Contains(err.Error(), "window") {
+			hint = `example: --schedule "Mon-Fri 08:00-16:00" (days Mon-Sun, weekdays, weekends or daily; 24-hour times)`
+		}
+		return res, usageErr(err, hint)
 	}
 	return res, nil
 }
 
+// origin reports who started this process: the hidden --origin flag (the
+// login service passes it, since a Windows task cannot set the environment),
+// else KEEPALIVE_ORIGIN.
+func (a *App) origin(cmd *cobra.Command) (string, error) {
+	if f := cmd.Flags().Lookup("origin"); f != nil && f.Changed {
+		switch v := f.Value.String(); v {
+		case ipc.OriginService, ipc.OriginTerminal:
+			return v, nil
+		default:
+			return "", usageErr(fmt.Errorf("--origin: unknown origin %q", v), `use "service" or "terminal"`)
+		}
+	}
+	if v, ok := a.LookupEnv(ipc.EnvOrigin); ok && v == ipc.OriginService {
+		return ipc.OriginService, nil
+	}
+	return ipc.OriginTerminal, nil
+}
+
 // plan turns flags, env and config into a session request and validates it.
-func (a *App) plan(cmd *cobra.Command, f *sessionFlags) (*Plan, error) {
+// forRun plans `keepalive run`: headless, never a TUI.
+func (a *App) plan(cmd *cobra.Command, f *sessionFlags, forRun bool) (*Plan, error) {
+	origin := originRun
+	if !forRun {
+		var err error
+		if origin, err = a.origin(cmd); err != nil {
+			return nil, err
+		}
+	}
 	res, err := a.resolveConfig(cmd)
 	if err != nil {
 		return nil, err
@@ -223,15 +256,24 @@ func (a *App) plan(cmd *cobra.Command, f *sessionFlags) (*Plan, error) {
 		}
 	}
 
-	return &Plan{
+	p := &Plan{
 		Session:   s,
-		TUI:       a.StdinTTY && a.StdoutTTY && !f.plain && !f.json,
+		TUI:       a.StdinTTY && a.StdoutTTY && !f.plain && !f.json && origin == ipc.OriginTerminal,
 		JSON:      f.json,
 		AutoStart: s.Duration > 0 || !s.Until.IsZero() || s.BatteryThreshold > 0,
-		Notify:    res.Notify,
 		Logging:   logging.Options{Enabled: res.Log, Debug: res.Log, Path: res.LogFile},
 		Config:    res,
-	}, nil
+		Origin:    origin,
+		Replace:   f.replace,
+	}
+	p.Notify = res.Notify
+	if res.Sources["notify"] == config.SourceDefault {
+		p.Notify = !p.TUI
+	}
+	if origin == ipc.OriginService && res.Sources["log"] == config.SourceDefault {
+		p.Logging.Enabled, p.Logging.Debug = true, false // a service always keeps an info log
+	}
+	return p, nil
 }
 
 // checkWatch fails planning when nothing to watch is running, so a typo is

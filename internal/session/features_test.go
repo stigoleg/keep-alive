@@ -313,16 +313,18 @@ func TestWatchedNameExitStops(t *testing.T) {
 
 func TestWatchDescriptions(t *testing.T) {
 	for _, tt := range []struct {
-		pids []int
-		name string
-		want string
+		command string
+		pids    []int
+		name    string
+		want    string
 	}{
-		{[]int{42}, "", "pid 42"},
-		{[]int{11, 10}, "", "pids 10, 11"},
-		{nil, "zoom", "zoom"},
-		{[]int{42}, "zoom", "zoom, pid 42"},
+		{"", []int{42}, "", "pid 42"},
+		{"", []int{11, 10}, "", "pids 10, 11"},
+		{"", nil, "zoom", "zoom"},
+		{"", []int{42}, "zoom", "zoom, pid 42"},
+		{"make", nil, "", "make"},
 	} {
-		if got := watchDescription(tt.pids, tt.name); got != tt.want {
+		if got := watchDescription(tt.command, tt.pids, tt.name); got != tt.want {
 			t.Errorf("watchDescription(%v, %q) = %q, want %q", tt.pids, tt.name, got, tt.want)
 		}
 	}

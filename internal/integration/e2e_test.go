@@ -131,9 +131,14 @@ func TestCompletionZsh(t *testing.T) {
 	}
 }
 
-func TestStubCommandExit1(t *testing.T) {
-	err := keepalive(t, "doctor").Run()
-	if code := exitCode(err); code != 1 {
-		t.Fatalf("doctor exit %d, want 1", code)
+func TestRootWithACommandIsUsageError(t *testing.T) {
+	cmd := keepalive(t, "make", "release")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if code := exitCode(cmd.Run()); code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), `hint: did you mean "keepalive run -- make release"?`) {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

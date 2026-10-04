@@ -11,7 +11,10 @@ import (
 
 	"github.com/stigoleg/keep-alive/v2/internal/activity"
 	"github.com/stigoleg/keep-alive/v2/internal/cli/output"
+	"github.com/stigoleg/keep-alive/v2/internal/clock"
+	"github.com/stigoleg/keep-alive/v2/internal/ipc"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
+	"github.com/stigoleg/keep-alive/v2/internal/notify"
 	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
 	"github.com/stigoleg/keep-alive/v2/internal/tui"
@@ -19,23 +22,48 @@ import (
 
 // execute runs a planned session in the TUI or headless.
 func (a *App) execute(ctx context.Context, p *Plan) error {
-	logPath, closeLog, err := logging.Setup(p.Logging)
+	closeLog, err := a.startLogging(p)
 	if err != nil {
-		return runtimeErr(fmt.Errorf("open log file: %w", err), "pass --log-file to choose another location")
+		return err
 	}
 	defer closeLog()
-	if logPath != "" {
-		fmt.Fprintf(a.Stderr, "keepalive: logging to %s\n", logPath)
-	}
-	slog.Info("keepalive starting", "version", a.Version, "tui", p.TUI, "json", p.JSON, "config", p.Config.Path)
 
 	ctx, stop := signal.NotifyContext(ctx, stopSignals()...)
 	defer stop()
 
 	if p.TUI {
-		return a.runTUI(ctx, p, realDeps())
+		return a.runTUI(ctx, p, a.deps(p))
 	}
-	return a.runHeadless(ctx, p, realDeps())
+	return a.runHeadless(ctx, p, a.deps(p))
+}
+
+// startLogging sets up the log file the plan asks for and says where it is.
+func (a *App) startLogging(p *Plan) (func() error, error) {
+	logPath, closeLog, err := logging.Setup(p.Logging)
+	if err != nil {
+		return nil, runtimeErr(fmt.Errorf("open log file: %w", err), "pass --log-file to choose another location")
+	}
+	if logPath != "" && p.Origin != ipc.OriginService {
+		fmt.Fprintf(a.Stderr, "keepalive: logging to %s\n", logPath)
+	}
+	slog.Info("keepalive starting", "version", a.Version, "origin", p.Origin, "tui", p.TUI, "json", p.JSON,
+		"notify", p.Notify, "config", p.Config.Path)
+	return closeLog, nil
+}
+
+// deps are the production session dependencies for p.
+func (a *App) deps(p *Plan) session.Deps {
+	d := session.Deps{
+		Clock:     clock.Real(),
+		Power:     power.New(),
+		Activity:  activity.New(),
+		Battery:   a.Battery,
+		Processes: a.Processes,
+	}
+	if p.Notify {
+		d.Notifier = notify.New()
+	}
+	return d
 }
 
 // runHeadless runs the session and prints its events until it ends.

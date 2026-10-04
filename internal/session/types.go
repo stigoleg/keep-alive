@@ -32,6 +32,9 @@ type Config struct {
 	// none of the processes is running.
 	WatchPIDs    []int
 	WatchProcess string
+	// Command names the command `keepalive run` waits for; it only shows up
+	// in Snapshot.Watching (the CLI stops the session when it exits).
+	Command string
 }
 
 // Deps are the session's collaborators; tests pass fakes.

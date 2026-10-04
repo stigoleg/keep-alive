@@ -3,7 +3,9 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -34,18 +36,21 @@ func (a *App) Command() *cobra.Command {
 	if a.runSession == nil {
 		a.runSession = a.execute
 	}
+	if a.runChild == nil {
+		a.runChild = a.executeRun
+	}
 	var sf sessionFlags
 	root := &cobra.Command{
 		Use:           "keepalive",
 		Short:         "Keep your computer awake and your chat status active",
 		Long:          rootLong,
 		Example:       rootExample,
-		Args:          cobra.NoArgs,
+		Args:          rootArgs,
 		Version:       a.Version,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			p, err := a.plan(cmd, &sf)
+			p, err := a.plan(cmd, &sf, false)
 			if err != nil {
 				return err
 			}
@@ -65,6 +70,9 @@ func (a *App) Command() *cobra.Command {
 	root.SetVersionTemplate("keepalive {{.Version}}\n")
 	root.SetFlagErrorFunc(flagError)
 	addSessionFlags(root.Flags(), &sf)
+	root.Flags().BoolVar(&sf.replace, "replace", false, "stop a keepalive that is already running and take over")
+	root.Flags().String("origin", "", "who started keepalive: terminal or service (set by the login service)")
+	_ = root.Flags().MarkHidden("origin")
 	root.Flags().BoolP("version", "v", false, "print the version and exit")
 	root.PersistentFlags().String("config", "", "config file (default: see 'keepalive config path')")
 
@@ -90,6 +98,15 @@ func (a *App) Command() *cobra.Command {
 		},
 	)
 	return root
+}
+
+// rootArgs turns a command given to the root into a pointer to `run`.
+func rootArgs(_ *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return usageErr(fmt.Errorf("unexpected argument %q", args[0]),
+		fmt.Sprintf(`did you mean "keepalive run -- %s"?`, strings.Join(args, " ")))
 }
 
 // flagError turns a pflag error into a concise usage error.
@@ -125,15 +142,25 @@ func stubCommand(name, short, phase string, flags func(*pflag.FlagSet)) *cobra.C
 	return cmd
 }
 
+const runUsage = "usage: keepalive run [flags] -- command [args…]"
+
 func (a *App) runCommand() *cobra.Command {
 	var sf sessionFlags
 	cmd := &cobra.Command{
 		Use:   "run [flags] -- COMMAND [ARGS...]",
 		Short: "Keep the machine awake while a command runs",
 		Args:  cobra.ArbitraryArgs,
-		RunE: func(*cobra.Command, []string) error {
-			// Phase 4 runs the child and returns &ExitError{Code: childCode}.
-			return notImplemented("run", "phase 4")
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dash := cmd.ArgsLenAtDash()
+			if dash != 0 || len(args) == 0 {
+				return usageErr(errors.New(runUsage), `put the command after "--", e.g. keepalive run -- make release`)
+			}
+			p, err := a.plan(cmd, &sf, true)
+			if err != nil {
+				return err
+			}
+			p.Session.Command = filepath.Base(args[0])
+			return a.runChild(cmd.Context(), p, args)
 		},
 	}
 	addSessionFlags(cmd.Flags(), &sf)

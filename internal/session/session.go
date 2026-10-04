@@ -147,7 +147,7 @@ func initialSnapshot(cfg Config) Snapshot {
 		Battery:     Battery{Threshold: cfg.BatteryThreshold},
 		KeepDisplay: cfg.KeepDisplay,
 		InWindow:    cfg.Schedule == nil,
-		Watching:    watchDescription(cfg.WatchPIDs, cfg.WatchProcess),
+		Watching:    watchDescription(cfg.Command, cfg.WatchPIDs, cfg.WatchProcess),
 	}
 	if cfg.Schedule != nil {
 		snap.Schedule = cfg.Schedule.String()

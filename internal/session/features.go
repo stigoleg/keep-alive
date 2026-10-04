@@ -165,9 +165,13 @@ func (l *loop) exitMessage(ex proc.Exit) string {
 	return ex.Reason
 }
 
-// watchDescription is Snapshot.Watching: "zoom", "pid 42", "zoom, pids 1, 2".
-func watchDescription(pids []int, name string) string {
+// watchDescription is Snapshot.Watching: "make", "zoom", "pid 42",
+// "zoom, pids 1, 2".
+func watchDescription(command string, pids []int, name string) string {
 	var parts []string
+	if command != "" {
+		parts = append(parts, command)
+	}
 	if name != "" {
 		parts = append(parts, name)
 	}

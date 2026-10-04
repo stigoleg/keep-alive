@@ -254,3 +254,34 @@ func TestFormatDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestRunPrinterIsQuiet(t *testing.T) {
+	f := fixtures()
+	degraded := f["activity"]
+	degraded.Snapshot.Activity = activity.Status{State: activity.StateDegraded, Reason: "no input method works"}
+	commandDone := f["stopped"]
+	commandDone.Reason, commandDone.Message = session.ReasonCommandExited, "command exited"
+	started := f["started"]
+	started.Snapshot.Watching = "make"
+	started.Snapshot.Mode, started.Snapshot.EndsAt, started.Snapshot.Battery.Threshold = session.ModeIndefinite, time.Time{}, 0
+
+	var buf bytes.Buffer
+	p := NewRun(&buf, false)
+	for _, ev := range []session.Event{started, f["battery"], f["activity"], f["warning"], degraded, degraded, f["snapshot"], f["burst"], f["stopping"], commandDone} {
+		if err := p.Print(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "keepalive: keeping system and display awake while make runs, simulating activity\n" +
+		"keepalive: warning: battery status unavailable: no battery\n" +
+		"keepalive: active: unavailable (no input method works)\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+
+	buf.Reset()
+	NewRun(&buf, false).Print(f["stopped"])
+	if got := buf.String(); got != "keepalive: stopped: duration reached\n" {
+		t.Fatalf("unusual stop = %q", got)
+	}
+}

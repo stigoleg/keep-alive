@@ -1,0 +1,132 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"os"
+	"os/exec"
+	"os/signal"
+
+	"github.com/stigoleg/keep-alive/v2/internal/cli/output"
+	"github.com/stigoleg/keep-alive/v2/internal/session"
+)
+
+// executeRun keeps the machine awake while argv runs. The child inherits
+// stdin, stdout and stderr; keepalive's own few lines go to stderr. Signals
+// are passed on to the child, and the session ends when it exits. The exit
+// code is the child's (128+N when a signal killed it).
+func (a *App) executeRun(ctx context.Context, p *Plan, argv []string) error {
+	closeLog, err := a.startLogging(p)
+	if err != nil {
+		return err
+	}
+	defer closeLog()
+
+	// From here on signals are ours: before the command starts they cancel
+	// the run, afterwards they are forwarded to it.
+	sigs := make(chan os.Signal, 4)
+	signal.Notify(sigs, runSignals()...)
+	defer signal.Stop(sigs)
+
+	s := session.New(p.Session, a.deps(p))
+	events, unsub := s.Subscribe()
+	defer unsub()
+	var pr output.Printer = output.NewRun(a.Stderr, a.StderrTTY && a.colorAllowed())
+	if p.JSON {
+		pr = output.NewJSON(a.Stderr)
+	}
+	started := make(chan bool, 1) // true once the session runs, false if it ended first
+	printed := make(chan struct{})
+	go func() {
+		defer close(printed)
+		first := true
+		for ev := range events {
+			if first && (ev.Type == session.EventStarted || ev.Type == session.EventStopped) {
+				started <- ev.Type == session.EventStarted
+				first = false
+			}
+			if err := pr.Print(ev); err != nil {
+				slog.Warn("cannot write event", "err", err)
+			}
+		}
+		if first {
+			started <- false
+		}
+	}()
+
+	result := make(chan session.Result, 1)
+	go func() { result <- s.Run(context.WithoutCancel(ctx)) }()
+	finish := func(r session.Reason) session.Result {
+		s.Stop(r)
+		res := <-result
+		<-printed
+		return res
+	}
+
+	select {
+	case ok := <-started:
+		if !ok {
+			res := finish(session.ReasonError)
+			if err := resultError(res); err != nil {
+				return err
+			}
+			return runtimeErr(errors.New("the session ended before the command could start"), "")
+		}
+	case sig := <-sigs:
+		finish(session.ReasonSignal)
+		return &ExitError{Code: signalExitCode(sig)}
+	}
+
+	child := exec.Command(argv[0], argv[1:]...)
+	child.Stdin, child.Stdout, child.Stderr = a.Stdin, a.Stdout, a.Stderr
+	if err := child.Start(); err != nil {
+		finish(session.ReasonCommandExited)
+		return startError(argv[0], err)
+	}
+	slog.Info("run: command started", "pid", child.Process.Pid, "argv", argv)
+
+	forwarded := make(chan struct{})
+	waited := make(chan struct{})
+	go func() {
+		defer close(forwarded)
+		for {
+			select {
+			case sig := <-sigs:
+				if forwardSignal(sig) {
+					slog.Debug("run: forwarding signal", "signal", sig)
+					_ = child.Process.Signal(sig)
+				}
+			case <-waited:
+				return
+			}
+		}
+	}()
+	waitErr := child.Wait()
+	close(waited)
+	<-forwarded
+
+	code := childExitCode(child.ProcessState)
+	slog.Info("run: command exited", "code", code, "err", waitErr)
+	if res := finish(session.ReasonCommandExited); res.Err != nil {
+		slog.Warn("run: session ended with an error", "err", res.Err)
+	}
+	if code == 0 {
+		return nil
+	}
+	return &ExitError{Code: code}
+}
+
+// startError maps a command that could not be started to the shell's exit
+// codes: 127 not found, 126 not executable.
+func startError(name string, err error) error {
+	switch {
+	case errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist):
+		return &ExitError{Code: 127, Err: fmt.Errorf("command not found: %s", name), Hint: "check the spelling, or give the full path"}
+	case errors.Is(err, fs.ErrPermission):
+		return &ExitError{Code: 126, Err: fmt.Errorf("cannot run %s: permission denied", name), Hint: "check that the file is executable"}
+	}
+	return &ExitError{Code: 126, Err: fmt.Errorf("cannot run %s: %w", name, err)}
+}
