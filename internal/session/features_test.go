@@ -418,7 +418,7 @@ func TestNotifyOnUnusualStop(t *testing.T) {
 }
 
 func TestNoNotifyOnNormalStops(t *testing.T) {
-	for _, reason := range []Reason{ReasonUser, ReasonSignal, ReasonIPC} {
+	for _, reason := range []Reason{ReasonUser, ReasonSignal, ReasonIPC, ReasonCommandExited} {
 		h, n := newNotifyHarness(t, Config{})
 		h.start()
 		h.s.Stop(reason)

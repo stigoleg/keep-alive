@@ -395,7 +395,8 @@ func (l *loop) finish(reason Reason, err error) Result {
 	ev := l.emit(EventStopped, reason, msg)
 	l.s.bus.close()
 	switch reason {
-	case ReasonUser, ReasonSignal, ReasonIPC:
+	case ReasonUser, ReasonSignal, ReasonIPC, ReasonCommandExited:
+		// The user (or their command) ended it; nothing to tell them.
 	default:
 		l.notify(notifyStopped, "Keep-Alive stopped", msg)
 	}
