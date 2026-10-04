@@ -179,6 +179,10 @@ type loop struct {
 	heartbeat   clock.Ticker
 	batteryTick clock.Ticker
 
+	powerLost    <-chan error // the hold's power.Watcher channel; nil when not watched
+	powerRetry   clock.Timer  // armed while the hold is lost
+	powerRetries int          // re-acquire attempts since the loss
+
 	batteryBusy    bool
 	batteryFailing bool
 	batteryResults chan batteryResult
@@ -210,7 +214,7 @@ func (l *loop) run() Result {
 	}
 
 	l.s.running.Store(true)
-	hold, err := l.s.deps.Power.Acquire(l.ctx, power.Options{KeepDisplay: cfg.KeepDisplay, Reason: "keepalive session"})
+	hold, err := l.s.deps.Power.Acquire(l.ctx, l.powerOptions())
 	if err != nil {
 		if l.ctx.Err() != nil {
 			return l.finish(ReasonSignal, nil)
@@ -218,6 +222,7 @@ func (l *loop) run() Result {
 		return l.finish(ReasonError, fmt.Errorf("keep the system awake: %w", err))
 	}
 	l.hold = hold
+	l.watchPower()
 	now := l.clk.Now()
 	l.snap.StartedAt = now
 	l.snap.Running = true
@@ -275,6 +280,10 @@ func (l *loop) loop() Result {
 			l.handleActivityStatus(m)
 		case e := <-l.actExit:
 			l.handleActivityExit(e)
+		case err := <-l.powerLost:
+			l.handlePowerLost(err)
+		case <-timerC(l.powerRetry):
+			l.reacquirePower()
 		}
 	}
 }
@@ -309,6 +318,9 @@ func (l *loop) stop(reason Reason, err error) Result {
 	l.heartbeat.Stop()
 	if l.batteryTick != nil {
 		l.batteryTick.Stop()
+	}
+	if l.powerRetry != nil {
+		l.powerRetry.Stop()
 	}
 	l.stopActivity()
 	l.waitForActivity()
@@ -512,6 +524,60 @@ func (l *loop) handleActivityExit(e activityExit) {
 func sameActivity(a, b activity.Status) bool {
 	return a.State == b.State && a.Method == b.Method && a.Reason == b.Reason &&
 		a.Hint == b.Hint && a.LastBurst.Equal(b.LastBurst)
+}
+
+// ---- power hold loss ----
+
+// powerRetryBackoff is the wait before each re-acquire attempt after the
+// power hold is lost; the last value repeats.
+var powerRetryBackoff = []time.Duration{time.Second, 2 * time.Second, 5 * time.Second, 30 * time.Second}
+
+func (l *loop) powerOptions() power.Options {
+	return power.Options{KeepDisplay: l.s.cfg.KeepDisplay, Reason: "keeping the system awake"}
+}
+
+// watchPower watches the current hold if the OS can take it away.
+func (l *loop) watchPower() {
+	l.powerLost = nil
+	if w, ok := l.hold.(power.Watcher); ok {
+		l.powerLost = w.Lost()
+	}
+}
+
+// handlePowerLost keeps the lost hold (whatever is left of it stays held
+// until a new one replaces it) and starts re-acquiring.
+func (l *loop) handlePowerLost(err error) {
+	l.powerLost = nil
+	l.powerRetries = 0
+	l.snap.PowerHold = ""
+	l.warn(fmt.Sprintf("power hold lost (%v); re-acquiring", err))
+	l.schedulePowerRetry()
+}
+
+func (l *loop) schedulePowerRetry() {
+	d := powerRetryBackoff[min(l.powerRetries, len(powerRetryBackoff)-1)]
+	l.powerRetries++
+	if l.powerRetry == nil {
+		l.powerRetry = l.clk.NewTimer(d)
+		return
+	}
+	l.powerRetry.Reset(d)
+}
+
+func (l *loop) reacquirePower() {
+	hold, err := l.s.deps.Power.Acquire(l.ctx, l.powerOptions())
+	if err != nil {
+		slog.Warn("session: re-acquiring the power hold failed", "attempt", l.powerRetries, "err", err)
+		l.schedulePowerRetry()
+		return
+	}
+	if rerr := l.hold.Release(); rerr != nil {
+		slog.Warn("session: releasing the lost power hold failed", "err", rerr)
+	}
+	l.hold = hold
+	l.watchPower()
+	l.snap.PowerHold = hold.Describe()
+	l.warn(fmt.Sprintf("power hold re-acquired (%s)", l.snap.PowerHold))
 }
 
 // ---- battery ----
