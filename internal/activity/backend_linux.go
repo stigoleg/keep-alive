@@ -82,7 +82,8 @@ func newBackend(ctx context.Context, keys bool) *backend {
 	if lock := newLinuxLock(ctx, sys, sess); len(lock) > 0 {
 		b.lock, b.lockName = lock, lock.String()
 	}
-	b.open = func() (Injector, error) { return openLinux(ctx, env, keys) }
+	b.open = func() (Injector, error) { return openLinux(ctx, env, keys, nil) }
+	b.next = func(skip func(string) bool) (Injector, error) { return openLinux(ctx, env, keys, skip) }
 	b.candidates = func() []Injector { return linuxCandidates(ctx, env, keys) }
 	b.env = env.describe()
 	b.notes = desktopNotes(env)
@@ -121,12 +122,20 @@ func linuxCandidates(ctx context.Context, env linuxEnv, keys bool) []Injector {
 	return []Injector{newUinput(keys), newYdotool(ctx), newXdotool(ctx, env)}
 }
 
-// openLinux tries uinput, then ydotool 1.x, then xdotool (X11 only).
-func openLinux(ctx context.Context, env linuxEnv, keys bool) (Injector, error) {
-	candidates := linuxCandidates(ctx, env, keys)
+// openLinux tries uinput, then ydotool 1.x, then xdotool (X11 only),
+// leaving out the methods skip rejects.
+func openLinux(ctx context.Context, env linuxEnv, keys bool, skip func(string) bool) (Injector, error) {
+	return firstAvailable(linuxCandidates(ctx, env, keys), env, skip)
+}
+
+func firstAvailable(candidates []Injector, env linuxEnv, skip func(string) bool) (Injector, error) {
 	var reasons []string
 	hint := uinputPermissionHint
 	for i, inj := range candidates {
+		if skip != nil && skip(inj.Name()) {
+			reasons = append(reasons, inj.Name()+": failed recently")
+			continue
+		}
 		err := inj.Available()
 		if err == nil {
 			return inj, nil

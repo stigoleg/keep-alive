@@ -6,10 +6,12 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -78,16 +80,21 @@ func TestYdotoolSocketSearchOrder(t *testing.T) {
 	env := map[string]string{"YDOTOOL_SOCKET": "/custom/sock", "XDG_RUNTIME_DIR": "/run/user/1000"}
 	getenv := func(k string) string { return env[k] }
 	exists := map[string]bool{}
-	isSock := func(p string) bool { return exists[p] }
+	dial := func(p string) error {
+		if exists[p] {
+			return nil
+		}
+		return syscall.ENOENT
+	}
 
-	sock, candidates := ydotoolSocket(getenv, isSock)
+	sock, candidates, err := ydotoolSocket(getenv, dial)
 	want := []string{"/custom/sock", "/run/user/1000/.ydotool_socket", "/tmp/.ydotool_socket"}
-	if sock != "" || !reflect.DeepEqual(candidates, want) {
-		t.Fatalf("got %q %v, want none of %v", sock, candidates, want)
+	if sock != "" || err != nil || !reflect.DeepEqual(candidates, want) {
+		t.Fatalf("got %q %v %v, want none of %v", sock, candidates, err, want)
 	}
 	for i := len(want) - 1; i >= 0; i-- {
 		exists[want[i]] = true
-		if sock, _ := ydotoolSocket(getenv, isSock); sock != want[i] {
+		if sock, _, _ := ydotoolSocket(getenv, dial); sock != want[i] {
 			t.Fatalf("with %s present got %q", want[i], sock)
 		}
 	}
@@ -131,7 +138,13 @@ func TestYdotoolAvailability(t *testing.T) {
 		for _, s := range sockets {
 			set[s] = true
 		}
-		return &ydotool{run: r.run, lookPath: found, getenv: func(string) string { return "" }, isSocket: func(p string) bool { return set[p] }}, r
+		dial := func(p string) error {
+			if set[p] {
+				return nil
+			}
+			return syscall.ENOENT
+		}
+		return &ydotool{run: r.run, lookPath: found, getenv: func(string) string { return "" }, dial: dial}, r
 	}
 	var un *Unavailable
 
@@ -428,3 +441,109 @@ func TestScreensaverServicesMatchChromium(t *testing.T) {
 		}
 	}
 }
+
+func TestYdotoolConnectsToTheDaemonSocket(t *testing.T) {
+	dir := t.TempDir()
+	live := filepath.Join(dir, "live")
+	daemon, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: live, Net: "unixgram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	stale := filepath.Join(dir, "stale")
+	dead, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: stale, Net: "unixgram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = dead.Close() // the socket file stays, nobody reads it: ydotoold died
+
+	if err := dialYdotoold(live); err != nil {
+		t.Fatalf("live daemon: %v", err)
+	}
+	if err := dialYdotoold(stale); !errors.Is(err, syscall.ECONNREFUSED) {
+		t.Fatalf("stale socket: %v, want connection refused", err)
+	}
+	if err := dialYdotoold(filepath.Join(dir, "missing")); !errors.Is(err, syscall.ENOENT) {
+		t.Fatalf("missing socket: %v, want ENOENT", err)
+	}
+
+	r := &fakeRunner{reply: func(call) (string, string, error) { return ydotool104Help, "", nil }}
+	newY := func(sock string, dial func(string) error) *ydotool {
+		env := map[string]string{"YDOTOOL_SOCKET": sock}
+		return &ydotool{run: r.run, lookPath: found, getenv: func(k string) string { return env[k] }, dial: dial}
+	}
+	if err := newY(live, dialYdotoold).Available(); err != nil {
+		t.Fatalf("live daemon: %v", err)
+	}
+	var un *Unavailable
+	if err := newY(stale, dialYdotoold).Available(); !errors.As(err, &un) ||
+		!strings.Contains(un.Reason, "connection refused") || !strings.Contains(un.Hint, "systemctl --user") {
+		t.Fatalf("stale socket: %v", err)
+	}
+	denied := func(string) error {
+		return &net.OpError{Op: "dial", Net: "unixgram", Err: os.NewSyscallError("connect", syscall.EACCES)}
+	}
+	if err := newY(live, denied).Available(); !errors.As(err, &un) ||
+		!strings.Contains(un.Reason, "permission denied") || !strings.Contains(un.Hint, "another user") {
+		t.Fatalf("socket of another user: %v", err)
+	}
+}
+
+func TestUinputProbeOpensTheDevice(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "uinput")
+	if err := probeUinput(path); !errors.Is(err, syscall.ENOENT) {
+		t.Fatalf("missing device: %v", err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := probeUinput(path); err != nil {
+		t.Fatalf("writable device: %v", err)
+	}
+
+	u := newUinput(false)
+	var probed []string
+	var un *Unavailable
+	for errno, want := range map[syscall.Errno]string{
+		syscall.EACCES: "no write access",
+		syscall.EPERM:  "no write access",
+		syscall.ENODEV: "uinput module",
+		syscall.EBUSY:  "cannot open /dev/uinput",
+	} {
+		u.probe = func(p string) error { probed = append(probed, p); return errno }
+		if err := u.Available(); !errors.As(err, &un) || !strings.Contains(un.Reason, want) {
+			t.Errorf("%v: %v, want a reason with %q", errno, err, want)
+		}
+	}
+	if len(probed) == 0 || probed[0] != "/dev/uinput" {
+		t.Fatalf("probed %v", probed)
+	}
+}
+
+func TestFirstAvailableSkipsFailedMethods(t *testing.T) {
+	a := unavailableInjector{err: nil}
+	b := unavailableInjector{err: &Unavailable{Reason: "not installed", Hint: "install it"}}
+	named := func(name string, u unavailableInjector) Injector { return renamed{u, name} }
+	cands := []Injector{named("uinput", a), named("ydotool", b), named("xdotool", a)}
+
+	inj, err := firstAvailable(cands, linuxEnv{}, nil)
+	if err != nil || inj.Name() != "uinput" {
+		t.Fatalf("no skip: %v, %v", inj, err)
+	}
+	inj, err = firstAvailable(cands, linuxEnv{}, func(n string) bool { return n == "uinput" })
+	if err != nil || inj.Name() != "xdotool" {
+		t.Fatalf("uinput skipped: %v, %v", inj, err)
+	}
+	_, err = firstAvailable(cands, linuxEnv{}, func(n string) bool { return n != "ydotool" })
+	var un *Unavailable
+	if !errors.As(err, &un) || !strings.Contains(un.Reason, "uinput: failed recently") || !strings.Contains(un.Reason, "ydotool: not installed") {
+		t.Fatalf("all skipped or unavailable: %v", err)
+	}
+}
+
+type renamed struct {
+	unavailableInjector
+	name string
+}
+
+func (r renamed) Name() string { return r.name }

@@ -4,11 +4,14 @@ package activity
 
 import (
 	"context"
+	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -16,6 +19,8 @@ import (
 const ydotoolStep = 40 * time.Millisecond
 
 const ydotoolDaemonHint = "start the ydotool daemon, e.g. systemctl --user enable --now ydotool"
+
+const ydotoolSocketHint = "ydotoold runs as another user; run it as yours (systemctl --user enable --now ydotool) or make its socket writable for you"
 
 // ydotool drives ydotoold's virtual device through the ydotool 1.x client.
 // 0.1.x (Ubuntu 22.04/24.04, Debian 12) has an incompatible command line
@@ -27,19 +32,25 @@ type ydotool struct {
 	run      cmdRunner
 	lookPath func(string) (string, error)
 	getenv   func(string) string
-	isSocket func(string) bool
+	dial     func(path string) error
 
 	versionOK bool
 	socket    string
 }
 
 func newYdotool(ctx context.Context) *ydotool {
-	return &ydotool{ctx: ctx, run: runCmd, lookPath: exec.LookPath, getenv: os.Getenv, isSocket: isSocket}
+	return &ydotool{ctx: ctx, run: runCmd, lookPath: exec.LookPath, getenv: os.Getenv, dial: dialYdotoold}
 }
 
-func isSocket(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.Mode()&os.ModeSocket != 0
+// dialYdotoold connects to the daemon the way the ydotool 1.x client does,
+// with a datagram socket. A socket file left by a daemon that died refuses
+// the connection; one owned by another user denies it.
+func dialYdotoold(path string) error {
+	c, err := net.DialUnix("unixgram", nil, &net.UnixAddr{Name: path, Net: "unixgram"})
+	if err != nil {
+		return err
+	}
+	return c.Close()
 }
 
 func (y *ydotool) Name() string { return "ydotool" }
@@ -64,15 +75,20 @@ func (y *ydotool) Available() error {
 			return &Unavailable{Reason: "cannot tell which ydotool version is installed", Hint: "install ydotool 1.x"}
 		}
 	}
-	sock, candidates := ydotoolSocket(y.getenv, y.isSocket)
-	if sock == "" {
-		return &Unavailable{
-			Reason: "ydotoold is not running (no socket at " + strings.Join(candidates, ", ") + ")",
-			Hint:   ydotoolDaemonHint,
-		}
+	sock, candidates, err := ydotoolSocket(y.getenv, y.dial)
+	switch {
+	case sock != "":
+		y.socket = sock
+		return nil
+	case errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM):
+		return &Unavailable{Reason: "cannot connect to ydotoold at " + err.Error(), Hint: ydotoolSocketHint}
+	case err != nil:
+		return &Unavailable{Reason: "ydotoold is not running (cannot connect to " + err.Error() + ")", Hint: ydotoolDaemonHint}
 	}
-	y.socket = sock
-	return nil
+	return &Unavailable{
+		Reason: "ydotoold is not running (no socket at " + strings.Join(candidates, ", ") + ")",
+		Hint:   ydotoolDaemonHint,
+	}
 }
 
 // ydotoolGeneration reads `ydotool help`: 0.1.x lists recorder, 1.x lists
@@ -87,10 +103,11 @@ func ydotoolGeneration(help string) int {
 	return -1
 }
 
-// ydotoolSocket finds the daemon socket where the 1.x client looks for it:
-// $YDOTOOL_SOCKET, $XDG_RUNTIME_DIR/.ydotool_socket, /tmp/.ydotool_socket.
-func ydotoolSocket(getenv func(string) string, isSocket func(string) bool) (string, []string) {
-	var candidates []string
+// ydotoolSocket finds a daemon that accepts connections where the 1.x
+// client looks for it: $YDOTOOL_SOCKET, $XDG_RUNTIME_DIR/.ydotool_socket,
+// /tmp/.ydotool_socket. Without one, err is the first socket that exists
+// but refused ("path: reason"); nil when none exists.
+func ydotoolSocket(getenv func(string) string, dial func(string) error) (sock string, candidates []string, err error) {
 	if s := getenv("YDOTOOL_SOCKET"); s != "" {
 		candidates = append(candidates, s)
 	}
@@ -99,12 +116,29 @@ func ydotoolSocket(getenv func(string) string, isSocket func(string) bool) (stri
 	}
 	candidates = append(candidates, "/tmp/.ydotool_socket")
 	for _, c := range candidates {
-		if isSocket(c) {
-			return c, candidates
+		derr := dial(c)
+		if derr == nil {
+			return c, candidates, nil
+		}
+		if err == nil && !errors.Is(derr, os.ErrNotExist) {
+			var errno syscall.Errno
+			if errors.As(derr, &errno) {
+				derr = errno
+			}
+			err = &socketError{path: c, err: derr}
 		}
 	}
-	return "", candidates
+	return "", candidates, err
 }
+
+// socketError is a daemon socket that exists but cannot be used.
+type socketError struct {
+	path string
+	err  error
+}
+
+func (e *socketError) Error() string { return e.path + ": " + e.err.Error() }
+func (e *socketError) Unwrap() error { return e.err }
 
 func (y *ydotool) env() []string { return []string{"YDOTOOL_SOCKET=" + y.socket} }
 
@@ -120,7 +154,7 @@ func (y *ydotool) Tap() error {
 }
 
 func (y *ydotool) Diagnose() (string, string) {
-	if sock, _ := ydotoolSocket(y.getenv, y.isSocket); sock == "" {
+	if sock, _, _ := ydotoolSocket(y.getenv, y.dial); sock == "" {
 		return "ydotoold stopped", ydotoolDaemonHint
 	}
 	return "ydotool input did not reset the idle timer",

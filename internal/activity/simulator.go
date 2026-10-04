@@ -26,6 +26,9 @@ type backend struct {
 	lock          LockSource
 	// open picks the input backend.
 	open func() (Injector, error)
+	// next is open without the methods skip rejects, for falling through
+	// after one fails; nil when there is only one method.
+	next func(skip func(name string) bool) (Injector, error)
 	// noIdleHint explains how to get idle-aware simulation.
 	noIdleHint string
 	// candidates lists the input methods open tries, unopened, for
@@ -69,6 +72,7 @@ func (simulator) Run(ctx context.Context, cfg Config, report func(Status)) error
 		verify:        b.verify,
 		lock:          b.lock,
 		open:          b.open,
+		next:          b.next,
 		rnd:           newRand(),
 		sleep:         realSleep,
 		noIdleHint:    b.noIdleHint,

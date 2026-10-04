@@ -633,3 +633,146 @@ func TestControllerNoXWaylandHintWhenItFollows(t *testing.T) {
 		}
 	}
 }
+
+// namedInjector is a fakeInjector with its own name whose bursts fail
+// while broken is set.
+type namedInjector struct {
+	fakeInjector
+	name   string
+	broken *bool
+	tries  *int
+}
+
+func (n namedInjector) Name() string { return n.name }
+func (n namedInjector) Play(ctx context.Context, ox, oy float64, p Path) error {
+	n.m.mu.Lock()
+	*n.tries++
+	broken := *n.broken
+	n.m.mu.Unlock()
+	if broken {
+		return errors.New(n.name + " broke")
+	}
+	return n.fakeInjector.Play(ctx, ox, oy, p)
+}
+
+// methods is an ordered list of input methods for deps.next.
+type methods struct {
+	m      *machine
+	names  []string
+	broken map[string]*bool
+	tries  map[string]*int
+	absent map[string]bool
+}
+
+func newMethods(m *machine, names ...string) *methods {
+	ms := &methods{m: m, names: names, broken: map[string]*bool{}, tries: map[string]*int{}, absent: map[string]bool{}}
+	for _, n := range names {
+		ms.broken[n], ms.tries[n] = new(bool), new(int)
+	}
+	return ms
+}
+
+func (ms *methods) next(skip func(string) bool) (Injector, error) {
+	ms.m.mu.Lock()
+	defer ms.m.mu.Unlock()
+	for _, n := range ms.names {
+		if ms.absent[n] || (skip != nil && skip(n)) {
+			continue
+		}
+		ms.m.opens++
+		return namedInjector{fakeInjector{ms.m}, n, ms.broken[n], ms.tries[n]}, nil
+	}
+	return nil, &Unavailable{Reason: "no input method works"}
+}
+
+func (ms *methods) set(f func()) {
+	ms.m.mu.Lock()
+	f()
+	ms.m.mu.Unlock()
+}
+
+func withMethods(ms **methods, names ...string) func(m *machine, d *controllerDeps) {
+	return func(m *machine, d *controllerDeps) {
+		*ms = newMethods(m, names...)
+		d.next = (*ms).next
+		d.open = func() (Injector, error) { return (*ms).next(nil) }
+	}
+}
+
+func TestControllerFallsThroughAfterTwoFailures(t *testing.T) {
+	var ms *methods
+	h := newHarness(t, testCfg, withMethods(&ms, "uinput", "ydotool"))
+	ms.set(func() { *ms.broken["uinput"] = true })
+	h.runFor(2*time.Minute + 2*time.Second)
+	if st := h.last(); st.State != StateSimulating || st.Method != "uinput" {
+		t.Fatalf("after one failure: %+v", st)
+	}
+	h.runFor(41 * time.Second)
+	if *ms.tries["uinput"] != 2 || *ms.tries["ydotool"] != 1 {
+		t.Fatalf("tries uinput %d, ydotool %d; want 2 then the same burst on ydotool", *ms.tries["uinput"], *ms.tries["ydotool"])
+	}
+	if st := h.last(); st.State != StateSimulating || st.Method != "ydotool" || st.LastBurst.IsZero() {
+		t.Fatalf("after falling through: %+v", st)
+	}
+	for _, s := range h.states() {
+		if s == StateDegraded {
+			t.Fatal("reported degraded although the next method worked")
+		}
+	}
+	if h.m.closed != 1 {
+		t.Fatalf("closed %d injectors, want the failed one", h.m.closed)
+	}
+
+	// A minute later the failed method is tried again: one failure sends
+	// the same burst back to ydotool at once.
+	before := *ms.tries["uinput"]
+	h.runFor(3 * time.Minute)
+	retries := *ms.tries["uinput"] - before
+	if retries < 2 || retries > 4 {
+		t.Fatalf("uinput retried %d times in 3 minutes, want about one a minute", retries)
+	}
+	if st := h.last(); st.Method != "ydotool" || st.State != StateSimulating {
+		t.Fatalf("after retries: %+v", st)
+	}
+	for _, s := range h.states() {
+		if s == StateDegraded {
+			t.Fatal("a retry of the failed method reported degraded")
+		}
+	}
+
+	// Fixed: the next retry keeps it.
+	ms.set(func() { *ms.broken["uinput"] = false })
+	h.runFor(2 * time.Minute)
+	if st := h.last(); st.Method != "uinput" || st.State != StateSimulating {
+		t.Fatalf("not back on uinput after it was fixed: %+v", st)
+	}
+	n := *ms.tries["ydotool"]
+	h.runFor(3 * time.Minute)
+	if *ms.tries["ydotool"] != n || h.last().Method != "uinput" {
+		t.Fatal("left uinput again although it works")
+	}
+}
+
+func TestControllerStaysDegradedWithoutAnotherMethod(t *testing.T) {
+	var ms *methods
+	h := newHarness(t, testCfg, withMethods(&ms, "uinput", "ydotool"))
+	ms.set(func() {
+		*ms.broken["uinput"] = true
+		ms.absent["ydotool"] = true
+	})
+	h.runFor(2*time.Minute + 2*time.Second + 41*time.Second)
+	st := h.last()
+	if st.State != StateDegraded || st.Method != "uinput" {
+		t.Fatalf("status = %+v, want degraded on uinput", st)
+	}
+	h.runFor(5 * time.Minute)
+	if *ms.tries["uinput"] < 10 {
+		t.Fatalf("stopped trying uinput (%d bursts) although nothing else works", *ms.tries["uinput"])
+	}
+	// ydotool shows up (daemon started): the next failure falls through.
+	ms.set(func() { ms.absent["ydotool"] = false })
+	h.runFor(41 * time.Second)
+	if st := h.last(); st.State != StateSimulating || st.Method != "ydotool" {
+		t.Fatalf("status = %+v, want simulating via ydotool", st)
+	}
+}

@@ -59,7 +59,7 @@ func newRecordedUinput(keys bool, rec *uinputRecorder) (*uinputInjector, *[]time
 		opens++
 		return rec, nil
 	}
-	u.access = func(string) error { return nil }
+	u.probe = func(string) error { return nil }
 	u.sleep = func(d time.Duration) { slept = append(slept, d) }
 	return u, &slept, &opens
 }
@@ -260,12 +260,12 @@ func TestUinputOtherSetupErrorsFail(t *testing.T) {
 
 func TestUinputAvailabilityHints(t *testing.T) {
 	u := newUinput(false)
-	u.access = func(string) error { return syscall.ENOENT }
+	u.probe = func(string) error { return syscall.ENOENT }
 	var un *Unavailable
 	if err := u.Available(); !errors.As(err, &un) || un.Hint == "" || !bytes.Contains([]byte(un.Hint), []byte("modprobe uinput")) {
 		t.Fatalf("missing device: %v", err)
 	}
-	u.access = func(string) error { return syscall.EACCES }
+	u.probe = func(string) error { return syscall.EACCES }
 	if err := u.Available(); !errors.As(err, &un) || un.Hint != uinputPermissionHint {
 		t.Fatalf("no permission: %v", err)
 	}

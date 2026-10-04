@@ -27,6 +27,9 @@ const (
 	settleDelay = 200 * time.Millisecond
 	// ineffectiveLimit consecutive bursts without effect mean degraded.
 	ineffectiveLimit = 2
+	// failLimit consecutive bursts that an input method fails to play mark
+	// it failed; the next available method takes over.
+	failLimit = 2
 	// cadenceJitter spreads bursts uniformly over Interval ±35 %.
 	cadenceJitter = 0.35
 )
@@ -43,7 +46,10 @@ type controllerDeps struct {
 	// lock pauses simulation; nil means never locked.
 	lock LockSource
 	// open picks an injector; while it fails it is retried every minute.
-	open  func() (Injector, error)
+	open func() (Injector, error)
+	// next opens the first available input method that skip does not
+	// reject, in the same order as open; nil when the OS has only one.
+	next  func(skip func(name string) bool) (Injector, error)
 	rnd   *rand.Rand
 	sleep sleepFunc
 	// noIdleHint explains how to get an idle source on this desktop.
@@ -71,11 +77,14 @@ type controller struct {
 	lastBurst time.Time // end of the last burst since arming
 	nextBurst time.Time
 	misses    int
-	secMisses int    // bursts in a row the secondary counter missed
-	secWarned bool   // secondaryHint is shown from now on
-	lastErr   error  // error of the last fixed-schedule burst
-	status    Status // last published
-	armedSt   Status // status between bursts while armed
+	errs      int                  // bursts in a row the injector failed to play
+	failed    map[string]time.Time // input methods marked failed, and when
+	recheck   time.Time            // when failed methods get another chance
+	secMisses int                  // bursts in a row the secondary counter missed
+	secWarned bool                 // secondaryHint is shown from now on
+	lastErr   error                // error of the last fixed-schedule burst
+	status    Status               // last published
+	armedSt   Status               // status between bursts while armed
 }
 
 func newController(cfg Config, d controllerDeps, report func(Status)) *controller {
@@ -85,7 +94,7 @@ func newController(cfg Config, d controllerDeps, report func(Status)) *controlle
 	if d.sleep == nil {
 		d.sleep = realSleep
 	}
-	return &controller{cfg: cfg, deps: d, report: report}
+	return &controller{cfg: cfg, deps: d, report: report, failed: map[string]time.Time{}}
 }
 
 // init decides between idle-gated and fixed-schedule mode. Without an idle
@@ -154,6 +163,7 @@ func (c *controller) step(ctx context.Context) time.Duration {
 		slog.Info("activity: input method", "method", inj.Name())
 		c.inj = inj
 	}
+	c.recheckFailed(now)
 	method := c.inj.Name()
 
 	if c.deps.lock != nil {
@@ -344,7 +354,81 @@ func (c *controller) untilNextBurst() time.Duration {
 	return min(tickInterval, d)
 }
 
+// play plays one burst. When the input method fails to play it, the
+// failure is counted, and a method that takes over plays the same burst.
 func (c *controller) play(ctx context.Context) error {
+	for {
+		err := c.playOnce(ctx)
+		if err == nil {
+			c.errs = 0
+			delete(c.failed, c.inj.Name())
+			return nil
+		}
+		if ctx.Err() != nil || !c.failover() {
+			return err
+		}
+	}
+}
+
+// failover counts a failed burst. After failLimit failures in a row (one,
+// for a method that failed before) it marks the method failed and switches
+// to the next available one; it reports whether it switched. Without
+// another method the failed one stays in use.
+func (c *controller) failover() bool {
+	c.errs++
+	name := c.inj.Name()
+	_, failedBefore := c.failed[name]
+	if c.deps.next == nil || (c.errs < failLimit && !failedBefore) {
+		return false
+	}
+	now := c.deps.clock.Now()
+	c.failed[name] = now
+	c.recheck = now.Add(reprobeInterval)
+	inj, err := c.deps.next(c.recentlyFailed(now))
+	if err != nil {
+		return false
+	}
+	slog.Warn("activity: input method failed; trying the next one", "failed", name, "method", inj.Name())
+	c.switchTo(inj)
+	return true
+}
+
+// recheckFailed gives methods that failed a minute ago another chance: the
+// first available method that has not failed since takes over if it is
+// not the current one. A retried method that fails once more is dropped
+// again at once.
+func (c *controller) recheckFailed(now time.Time) {
+	if c.deps.next == nil || len(c.failed) == 0 || now.Before(c.recheck) {
+		return
+	}
+	c.recheck = now.Add(reprobeInterval)
+	inj, err := c.deps.next(c.recentlyFailed(now))
+	if err != nil {
+		return
+	}
+	if inj.Name() == c.inj.Name() {
+		_ = inj.Close()
+		return
+	}
+	slog.Info("activity: trying an input method again", "method", inj.Name())
+	c.switchTo(inj)
+}
+
+func (c *controller) recentlyFailed(now time.Time) func(string) bool {
+	return func(name string) bool {
+		t, ok := c.failed[name]
+		return ok && now.Sub(t) < reprobeInterval
+	}
+}
+
+func (c *controller) switchTo(inj Injector) {
+	c.close()
+	c.inj = inj
+	c.errs, c.misses = 0, 0
+	c.armedSt.Method = inj.Name()
+}
+
+func (c *controller) playOnce(ctx context.Context) error {
 	err := playBurst(ctx, c.inj, NewPath(c.deps.rnd), c.deps.sleep)
 	if err == nil && c.cfg.Keys {
 		if terr := c.inj.Tap(); terr != nil {
