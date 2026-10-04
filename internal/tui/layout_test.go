@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestSpan(t *testing.T) {
@@ -51,5 +54,42 @@ func TestHoldSummary(t *testing.T) {
 		if got := holdSummary(hold); got != want {
 			t.Errorf("holdSummary(%q) = %q, want %q", hold, got, want)
 		}
+	}
+}
+
+func TestCanvasWidths(t *testing.T) {
+	st := NewStyles(nil, Look{})
+	for _, tc := range []struct {
+		term          int
+		frame, framed bool
+		total, width  int
+	}{
+		{0, true, true, 64, 60},
+		{100, true, true, 64, 60},
+		{64, true, true, 64, 60},
+		{48, true, true, 48, 44},
+		{47, true, false, 47, 45},
+		{40, true, false, 40, 38},
+		{64, false, false, 64, 61},
+	} {
+		c := newCanvas(st, tc.term, fitFull, tc.frame)
+		if c.framed != tc.framed || c.total != tc.total || c.width != tc.width {
+			t.Errorf("terminal %d frame %v: framed %v total %d width %d", tc.term, tc.frame, c.framed, c.total, c.width)
+		}
+		c.add(strings.Repeat("x", 200))
+		c.keyHints(keyHint{"a", strings.Repeat("y", 200), ""})
+		for _, l := range strings.Split(c.String(), "\n") {
+			if lipgloss.Width(l) > c.total {
+				t.Errorf("terminal %d: %q is %d wide", tc.term, l, lipgloss.Width(l))
+			}
+		}
+		if got := strings.Count(c.String(), "\n") + 1; got != c.height() {
+			t.Errorf("terminal %d: %d lines, height says %d", tc.term, got, c.height())
+		}
+	}
+	c := newCanvas(st, 64, fitNoSpacers, true)
+	c.spacer()
+	if len(c.lines) != 0 {
+		t.Fatal("a spacer on a short terminal")
 	}
 }
