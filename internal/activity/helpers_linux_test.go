@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/godbus/dbus/v5"
 )
 
 func TestMutterIdleIsTypedMilliseconds(t *testing.T) {
@@ -366,6 +368,63 @@ func TestXWaylandNoteOnlyOnWaylandWithXWayland(t *testing.T) {
 	for _, env := range []linuxEnv{{display: ":0"}, {wayland: "wayland-0"}} {
 		if n := desktopNotes(env); len(n) != 0 {
 			t.Fatalf("%+v: %v", env, n)
+		}
+	}
+}
+
+type fakeLockSource struct {
+	locked bool
+	err    error
+}
+
+func (f fakeLockSource) Locked() (bool, error) { return f.locked, f.err }
+
+func TestAnyLockIsLockedWhenAnySourceSaysSo(t *testing.T) {
+	notSupported := errors.New("org.freedesktop.DBus.Error.NotSupported")
+	src := func(name string, locked bool, err error) namedLock {
+		return namedLock{name: name, LockSource: fakeLockSource{locked, err}}
+	}
+	tests := []struct {
+		name    string
+		lock    anyLock
+		locked  bool
+		wantErr bool
+	}{
+		{"logind unlocked, GNOME locked", anyLock{src("logind", false, nil), src("gnome", true, nil)}, true, false},
+		{"logind locked, screensaver unlocked", anyLock{src("logind", true, nil), src("fdo", false, nil)}, true, false},
+		{"NotSupported is ignored", anyLock{src("fdo", false, notSupported), src("gnome", false, nil)}, false, false},
+		{"NotSupported next to a locked source", anyLock{src("fdo", false, notSupported), src("mate", true, nil)}, true, false},
+		{"every source failing is unknown", anyLock{src("logind", false, errors.New("gone")), src("fdo", false, notSupported)}, false, true},
+	}
+	for _, tt := range tests {
+		locked, err := tt.lock.Locked()
+		if locked != tt.locked || (err != nil) != tt.wantErr {
+			t.Errorf("%s: Locked() = %v, %v; want %v, error %v", tt.name, locked, err, tt.locked, tt.wantErr)
+		}
+	}
+	if got := (anyLock{src("logind LockedHint", false, nil), src("org.gnome.ScreenSaver", false, nil)}).String(); got != "logind LockedHint, org.gnome.ScreenSaver" {
+		t.Errorf("String() = %q", got)
+	}
+}
+
+func TestScreensaverServicesMatchChromium(t *testing.T) {
+	want := map[string]dbus.ObjectPath{
+		"org.freedesktop.ScreenSaver": "/org/freedesktop/ScreenSaver",
+		"org.gnome.ScreenSaver":       "/org/gnome/ScreenSaver",
+		"org.mate.ScreenSaver":        "/org/mate/ScreenSaver",
+		"org.cinnamon.ScreenSaver":    "/org/cinnamon/ScreenSaver",
+		"org.xfce.ScreenSaver":        "/org/xfce/ScreenSaver",
+	}
+	got := map[string]dbus.ObjectPath{}
+	for _, s := range screensaverServices {
+		got[s.name] = s.path
+		if s.iface == "" {
+			t.Errorf("%s has no interface", s.name)
+		}
+	}
+	for name, path := range want {
+		if got[name] != path {
+			t.Errorf("%s at %q, want %q", name, got[name], path)
 		}
 	}
 }

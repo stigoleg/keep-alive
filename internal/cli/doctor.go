@@ -284,7 +284,7 @@ func activitySection(s *doctorSection, d activity.Diagnostics) {
 	switch {
 	case d.Lock.Method == "":
 		s.add("screen lock", checkWarn, "cannot tell when the screen is locked",
-			"activity keeps running while the screen is locked; on Linux this needs logind or org.freedesktop.ScreenSaver")
+			"activity keeps running while the screen is locked; on Linux this needs logind or a desktop screensaver (GNOME, KDE, MATE, Cinnamon, XFCE)")
 	case !d.Lock.Known:
 		s.add("screen lock", checkWarn, d.Lock.Method+": "+orDefault(d.Lock.Err, "state unknown"),
 			"activity may keep running while the screen is locked")

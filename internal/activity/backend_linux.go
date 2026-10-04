@@ -79,12 +79,8 @@ func newBackend(ctx context.Context, keys bool) *backend {
 	if idle.xwayland != nil {
 		b.secondary, b.secondaryNote = idle.xwayland, xwaylandNote
 	}
-	b.lock = newLinuxLock(ctx, sys, sess)
-	switch b.lock.(type) {
-	case logindLock:
-		b.lockName = "logind LockedHint"
-	case screensaverLock:
-		b.lockName = "org.freedesktop.ScreenSaver"
+	if lock := newLinuxLock(ctx, sys, sess); len(lock) > 0 {
+		b.lock, b.lockName = lock, lock.String()
 	}
 	b.open = func() (Injector, error) { return openLinux(ctx, env, keys) }
 	b.candidates = func() []Injector { return linuxCandidates(ctx, env, keys) }
