@@ -81,7 +81,7 @@ python3 - <<'EOF'
 import json
 
 artifacts = json.load(open("dist/artifacts.json"))
-for a in artifacts:
+for a in sorted(artifacts, key=lambda a: a["name"]):
     if a["type"] in ("Archive", "Linux Package", "Checksum"):
         note = "  (macOS binary signed and notarized)" if "darwin" in a["name"] else ""
         print(f"    {a['name']}{note}")
