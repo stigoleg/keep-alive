@@ -486,6 +486,7 @@ func playBurst(ctx context.Context, inj Injector, p Path, sleep sleepFunc) error
 		}
 		return nil
 	case RelativeInjector:
+		p = p.ForUnknownPosition()
 		var minStep time.Duration
 		if m, ok := inj.(minStepper); ok {
 			minStep = m.MinStep()

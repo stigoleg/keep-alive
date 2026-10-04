@@ -19,6 +19,15 @@ const (
 	minOvershoot    = 0.05
 	maxOvershoot    = 0.12
 
+	// Hot corners (GNOME Activities, Plasma Overview, macOS) fire when the
+	// pointer reaches a display corner, so bursts keep cornerSize px away
+	// from each corner and edgeInset px off every edge.
+	edgeInset  = 3.0
+	cornerSize = 24.0
+	// unknownReach bounds moves up and left, as a share of the burst's
+	// radius, when the pointer position is unknown.
+	unknownReach = 0.4
+
 	minStepDelay  = 8 * time.Millisecond
 	maxStepDelay  = 16 * time.Millisecond
 	meanStepDelay = 12 * time.Millisecond
@@ -188,8 +197,11 @@ func (p Path) Duration() time.Duration {
 
 // Fit keeps the burst on screen when the pointer at (ox, oy) is near an
 // edge of b: it mirrors an axis when that fits, otherwise shrinks the path
-// (to no less than a quarter) and clamps what still sticks out. Empty bounds
-// or an origin outside them leave the path unchanged.
+// (to no less than a quarter) and clamps what still sticks out. It stays
+// edgeInset px off every edge and out of the cornerSize square at each
+// corner (see awayFromCorners); a pointer already closer than that is not
+// moved any closer. Empty bounds or an origin outside them leave the path
+// unchanged.
 func (p Path) Fit(b Rect, ox, oy float64) Path {
 	if len(p) == 0 || b.W <= 0 || b.H <= 0 || !b.Contains(ox, oy) {
 		return p
@@ -199,22 +211,119 @@ func (p Path) Fit(b Rect, ox, oy float64) Path {
 		minX, maxX = math.Min(minX, s.X), math.Max(maxX, s.X)
 		minY, maxY = math.Min(minY, s.Y), math.Max(maxY, s.Y)
 	}
-	left, right := ox-b.X, b.X+b.W-1-ox
-	up, down := oy-b.Y, b.Y+b.H-1-oy
+	inset := edgeInset
+	if b.W <= 2*inset || b.H <= 2*inset {
+		inset = 0
+	}
+	// Room on each side up to the inset, none for a pointer already in it.
+	left, right := max(ox-b.X-inset, 0), max(b.X+b.W-1-inset-ox, 0)
+	up, down := max(oy-b.Y-inset, 0), max(b.Y+b.H-1-inset-oy, 0)
 	sx, kx := orient(minX, maxX, left, right)
 	sy, ky := orient(minY, maxY, up, down)
-	k := max(min(kx, ky), 0.25)
-	if sx == 1 && sy == 1 && k >= 1 {
-		return p
-	}
+	k := min(max(min(kx, ky), 0.25), 1)
 	out := make(Path, len(p))
 	for i, s := range p {
-		x := s.X * sx * min(k, 1)
-		y := s.Y * sy * min(k, 1)
-		out[i] = Step{
-			X:     min(max(x, -left), right),
-			Y:     min(max(y, -up), down),
-			Delay: s.Delay,
+		out[i] = Step{X: s.X * sx * k, Y: s.Y * sy * k, Delay: s.Delay}
+	}
+	out.awayFromCorners(b, ox, oy)
+	for i, s := range out {
+		out[i].X = min(max(s.X, -left), right)
+		out[i].Y = min(max(s.Y, -up), down)
+	}
+	return out
+}
+
+// awayFromCorners folds the path, in place, away from every corner of b it
+// would get into: a path from outside a corner's square never enters it,
+// and one from inside never moves deeper. Folding an axis (taking the
+// absolute value of its offsets) keeps the path continuous and its return
+// to the origin exact.
+func (p Path) awayFromCorners(b Rect, ox, oy float64) {
+	if b.W < 2*cornerSize || b.H < 2*cornerSize {
+		return
+	}
+	right, bottom := b.X+b.W-1, b.Y+b.H-1
+	// away is the direction from each corner into the display.
+	for _, c := range []struct{ x, y, awayX, awayY float64 }{
+		{b.X, b.Y, 1, 1}, {right, b.Y, -1, 1}, {b.X, bottom, 1, -1}, {right, bottom, -1, -1},
+	} {
+		// Depth is the distance from the corner along each axis.
+		odx, ody := (ox-c.x)*c.awayX, (oy-c.y)*c.awayY
+		trouble := false
+		for _, s := range p {
+			dx, dy := odx+s.X*c.awayX, ody+s.Y*c.awayY
+			if dx < cornerSize && dy < cornerSize && (odx >= cornerSize || ody >= cornerSize || dx < odx || dy < ody) {
+				trouble = true
+				break
+			}
+		}
+		if !trouble {
+			continue
+		}
+		// Folding an axis on which the origin lies outside the square keeps
+		// the whole path out of it; with both outside, fold away from the
+		// nearer edge. Inside the square, fold both.
+		foldX, foldY := odx >= cornerSize, ody >= cornerSize
+		switch {
+		case foldX && foldY:
+			foldX = odx <= ody
+			foldY = !foldX
+		case !foldX && !foldY:
+			foldX, foldY = true, true
+		}
+		for i := range p {
+			if foldX {
+				p[i].X = math.Abs(p[i].X) * c.awayX
+			}
+			if foldY {
+				p[i].Y = math.Abs(p[i].Y) * c.awayY
+			}
+		}
+	}
+}
+
+// ForUnknownPosition adapts a burst for relative input, where the pointer
+// position is unknown. Hot corners sit at the top left on GNOME and Plasma,
+// so the burst is mirrored to set off right and down, and its moves up and
+// left are scaled to at most unknownReach of its radius. The scaling is
+// continuous, so the path keeps its shape and still returns to (0, 0).
+func (p Path) ForUnknownPosition() Path {
+	var r float64
+	sx, sy := 1.0, 1.0
+	decided := false
+	for _, s := range p {
+		d := math.Hypot(s.X, s.Y)
+		r = math.Max(r, d)
+		if !decided && d >= 5 {
+			decided = true
+			if s.X < 0 {
+				sx = -1
+			}
+			if s.Y < 0 {
+				sy = -1
+			}
+		}
+	}
+	out := make(Path, len(p))
+	var minX, minY float64
+	for i, s := range p {
+		out[i] = Step{X: s.X * sx, Y: s.Y * sy, Delay: s.Delay}
+		minX, minY = math.Min(minX, out[i].X), math.Min(minY, out[i].Y)
+	}
+	limit := unknownReach * r
+	kx, ky := 1.0, 1.0
+	if minX < -limit {
+		kx = limit / -minX
+	}
+	if minY < -limit {
+		ky = limit / -minY
+	}
+	for i := range out {
+		if out[i].X < 0 {
+			out[i].X *= kx
+		}
+		if out[i].Y < 0 {
+			out[i].Y *= ky
 		}
 	}
 	return out

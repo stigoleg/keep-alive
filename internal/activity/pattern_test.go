@@ -147,3 +147,112 @@ func TestMinimumJerkProfile(t *testing.T) {
 		prev = s
 	}
 }
+
+// cornerTrouble explains why (x, y) is a bad place for a burst from (ox,
+// oy) on b: within 3 px of an edge the pointer was not already at, inside
+// the 24 px square at a corner, or, for a pointer already in that square,
+// closer to the corner than where it started.
+func cornerTrouble(b Rect, ox, oy, x, y float64) string {
+	right, bottom := b.X+b.W-1, b.Y+b.H-1
+	if x < min(b.X+3, ox) || x > max(right-3, ox) || y < min(b.Y+3, oy) || y > max(bottom-3, oy) {
+		return "within 3 px of an edge"
+	}
+	corners := []struct {
+		name string
+		// depth from the corner along each axis
+		dx, dy func(x, y float64) float64
+	}{
+		{"top-left", func(x, _ float64) float64 { return x - b.X }, func(_, y float64) float64 { return y - b.Y }},
+		{"top-right", func(x, _ float64) float64 { return right - x }, func(_, y float64) float64 { return y - b.Y }},
+		{"bottom-left", func(x, _ float64) float64 { return x - b.X }, func(_, y float64) float64 { return bottom - y }},
+		{"bottom-right", func(x, _ float64) float64 { return right - x }, func(_, y float64) float64 { return bottom - y }},
+	}
+	for _, c := range corners {
+		dx, dy := c.dx(x, 0), c.dy(0, y)
+		if dx >= 24 || dy >= 24 {
+			continue
+		}
+		odx, ody := c.dx(ox, 0), c.dy(0, oy)
+		if odx >= 24 || ody >= 24 {
+			return "entered the " + c.name + " corner square"
+		}
+		if dx < odx || dy < ody {
+			return "moved deeper into the " + c.name + " corner square"
+		}
+	}
+	return ""
+}
+
+func TestFitKeepsOutOfHotCornersAndOffEdges(t *testing.T) {
+	displays := []struct {
+		name    string
+		b       Rect
+		origins [][2]float64
+	}{
+		{"main", Rect{0, 0, 1440, 900}, [][2]float64{
+			{3, 3}, {20, 20}, {0, 0}, {30, 5}, {5, 30}, {26, 26}, {40, 12},
+			{1436, 3}, {1420, 20}, {1410, 5}, {1439, 40},
+			{3, 896}, {20, 880}, {5, 870}, {60, 899},
+			{1436, 896}, {1420, 880}, {1400, 895}, {1439, 899},
+			{720, 2}, {1, 450}, {720, 450},
+		}},
+		{"secondary left of main", Rect{-1920, -200, 1920, 1080}, [][2]float64{
+			{-1917, -197}, {-1900, -180}, {-4, -197}, {-20, 870}, {-1917, 877},
+		}},
+	}
+	for _, d := range displays {
+		for _, o := range d.origins {
+			for seed := uint64(0); seed < 2000; seed++ {
+				p := NewPath(seeded(seed)).Fit(d.b, o[0], o[1])
+				for i, s := range p {
+					x, y := o[0]+s.X, o[1]+s.Y
+					if why := cornerTrouble(d.b, o[0], o[1], x, y); why != "" {
+						t.Fatalf("%s from (%v, %v) seed %d step %d: (%.1f, %.1f) %s", d.name, o[0], o[1], seed, i, x, y, why)
+					}
+				}
+				if last := p[len(p)-1]; last.X != 0 || last.Y != 0 {
+					t.Fatalf("%s from (%v, %v) seed %d: ends at (%v, %v)", d.name, o[0], o[1], seed, last.X, last.Y)
+				}
+			}
+		}
+	}
+}
+
+func TestForUnknownPositionHeadsRightAndDown(t *testing.T) {
+	for seed := uint64(0); seed < 2000; seed++ {
+		orig := NewPath(seeded(seed))
+		p := orig.ForUnknownPosition()
+		if len(p) != len(orig) {
+			t.Fatalf("seed %d: %d steps, want %d", seed, len(p), len(orig))
+		}
+		var r float64
+		for _, s := range orig {
+			r = math.Max(r, math.Hypot(s.X, s.Y))
+		}
+		first := true
+		for i, s := range p {
+			if s.Delay != orig[i].Delay {
+				t.Fatalf("seed %d step %d: timing changed", seed, i)
+			}
+			if s.X < -0.4*r-1e-9 || s.Y < -0.4*r-1e-9 {
+				t.Fatalf("seed %d step %d: (%.1f, %.1f) goes more than 40%% of the %.1f px radius up or left", seed, i, s.X, s.Y, r)
+			}
+			if first && math.Hypot(s.X, s.Y) >= 5 {
+				first = false
+				if s.X < 0 || s.Y < 0 {
+					t.Fatalf("seed %d: sets off towards (%.1f, %.1f), want right and down", seed, s.X, s.Y)
+				}
+			}
+		}
+		if last := p[len(p)-1]; last.X != 0 || last.Y != 0 {
+			t.Fatalf("seed %d: ends at (%v, %v)", seed, last.X, last.Y)
+		}
+		var sx, sy int
+		for _, d := range p.Deltas(0) {
+			sx, sy = sx+d.DX, sy+d.DY
+		}
+		if sx != 0 || sy != 0 {
+			t.Fatalf("seed %d: deltas sum to (%d, %d)", seed, sx, sy)
+		}
+	}
+}

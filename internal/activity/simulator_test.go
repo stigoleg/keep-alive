@@ -3,6 +3,7 @@ package activity
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 )
@@ -252,6 +253,27 @@ func TestVirtualDeskAbsolute(t *testing.T) {
 		nx, ny := virtualDeskAbsolute(tt.x, tt.y, tt.desk)
 		if nx != tt.nx || ny != tt.ny {
 			t.Errorf("%s: virtualDeskAbsolute(%v, %v) = (%d, %d), want (%d, %d)", tt.name, tt.x, tt.y, nx, ny, tt.nx, tt.ny)
+		}
+	}
+}
+
+func TestPlayBurstRelativeLimitsMovesUpAndLeft(t *testing.T) {
+	for seed := uint64(0); seed < 300; seed++ {
+		r := &relRecorder{}
+		p := NewPath(seeded(seed))
+		var radius float64
+		for _, s := range p {
+			radius = math.Max(radius, math.Hypot(s.X, s.Y))
+		}
+		if err := playBurst(context.Background(), r, p, noSleep); err != nil {
+			t.Fatal(err)
+		}
+		var x, y int
+		for _, mv := range r.moves {
+			x, y = x+mv[0], y+mv[1]
+			if float64(x) < -0.4*radius-1 || float64(y) < -0.4*radius-1 {
+				t.Fatalf("seed %d: relative pointer at (%d, %d), more than 40%% of %.0f px up or left", seed, x, y, radius)
+			}
 		}
 	}
 }
