@@ -2,7 +2,7 @@ GO      ?= go
 VERSION ?= dev
 BIN     ?= bin/keepalive
 
-.PHONY: check fmt-check vet test build docs
+.PHONY: check fmt-check vet test build docs snapshot release
 
 ## check: formatting, vet for every target OS, and the race-enabled test suite
 check: fmt-check vet test
@@ -24,3 +24,12 @@ build:
 ## docs: man pages in man/ and shell completions in docs/completions/
 docs:
 	$(GO) run ./cmd/gen-docs
+
+## snapshot: every release artifact in dist/; the macOS binary is signed but
+## not notarized, and nothing is published (KEEPALIVE_SIGN=0 skips signing)
+snapshot:
+	KEEPALIVE_NOTARIZE=0 goreleaser release --snapshot --clean
+
+## release: guarded, interactive release of the tagged HEAD; see RELEASING.md
+release:
+	./scripts/release.sh
