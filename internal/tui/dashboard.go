@@ -42,6 +42,8 @@ type dashState struct {
 	ended   string // the final line, once the session has ended
 	endedAt time.Time
 
+	bursts burstLog // for the sparkline
+
 	flash      string
 	flashKind  flashKind
 	flashUntil time.Time
@@ -113,9 +115,9 @@ func (m Model) openDashboard(c Controller, idleNeed time.Duration) Model {
 	m.slot.set(c)
 	m.screen, m.help = screenDashboard, false
 	m.tick++
-	m.dash = dashState{ctrl: c, idleNeed: idleNeed}
+	m.dash = dashState{ctrl: c, idleNeed: idleNeed, bursts: newBurstLog(m.now())}
 	if ic, ok := c.(*ipcController); ok {
-		m.dash.snap = ic.cached()
+		m.dash.setSnap(ic.cached(), m.now())
 	}
 	return m
 }
@@ -142,6 +144,12 @@ func (m Model) toHome() (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// setSnap follows the session's state, and its bursts for the sparkline.
+func (d *dashState) setSnap(s session.Snapshot, now time.Time) {
+	d.snap = s
+	d.bursts.observe(s.Activity.LastBurst, now)
+}
+
 func (m Model) flash(kind flashKind, text string, d time.Duration) Model {
 	m.dash.flash, m.dash.flashKind, m.dash.flashUntil = text, kind, m.now().Add(d)
 	return m
@@ -163,7 +171,7 @@ func (m Model) dashUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(tickCmd(m.tick), snapCmd(d.ctrl))
 	case snapMsg:
 		if msg.c == d.ctrl && d.ended == "" && msg.err == nil {
-			d.snap = msg.snap
+			d.setSnap(msg.snap, m.now())
 		}
 	case eventMsg:
 		if msg.c != d.ctrl || m.screen != screenDashboard || d.ended != "" {
@@ -217,7 +225,7 @@ func (m Model) onEvent(ev session.Event) (tea.Model, tea.Cmd) {
 	if ev.Type == session.EventStopped {
 		return m.ended(ev)
 	}
-	d.snap = ev.Snapshot
+	d.setSnap(ev.Snapshot, m.now())
 	switch ev.Type {
 	case session.EventWarning:
 		m = m.flash(flashWarn, ev.Message, flashTime)

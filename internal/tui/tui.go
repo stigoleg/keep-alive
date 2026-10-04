@@ -112,9 +112,15 @@ type Model struct {
 	slot    *slot
 
 	width  int
+	height int
 	screen screen
 	help   bool
 	tick   int // generation of the dashboard's 1 s tick chain
+
+	// The pulse of the simulating mark: its tick's generation, whether the
+	// tick runs, and whether the mark is dim now.
+	pulseGen          int
+	pulsing, pulseDim bool
 
 	home  homeState
 	input inputState
@@ -203,10 +209,22 @@ func (m Model) Init() tea.Cmd {
 
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	tm, cmd := m.update(msg)
+	mm, ok := tm.(Model)
+	if !ok {
+		return tm, cmd
+	}
+	mm, pulse := mm.syncPulse()
+	return mm, tea.Batch(cmd, pulse)
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+	case pulseMsg:
+		return m.onPulse(msg)
 	case tea.KeyMsg:
 		return m.key(msg)
 	case diagMsg:
