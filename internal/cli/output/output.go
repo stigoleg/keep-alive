@@ -24,8 +24,9 @@ type Human struct {
 	w     io.Writer
 	color bool
 
-	lastBattery session.Battery
-	lastEndsAt  time.Time
+	lastBattery  session.Battery
+	lastEndsAt   time.Time
+	lastActivity activity.Status
 }
 
 // NewHuman returns a human printer; color enables ANSI styling.
@@ -62,6 +63,11 @@ func (h *Human) meaningful(ev session.Event) bool {
 		changed := snap.Battery != h.lastBattery
 		h.lastBattery = snap.Battery
 		return changed
+	case session.EventActivity:
+		// Every burst updates LastBurst; print only real state changes.
+		a, b := snap.Activity, h.lastActivity
+		h.lastActivity = a
+		return a.State != b.State || a.Reason != b.Reason || a.Method != b.Method || a.Hint != b.Hint
 	case session.EventStopping:
 		return false
 	}

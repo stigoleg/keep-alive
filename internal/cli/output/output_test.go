@@ -139,6 +139,21 @@ func TestHumanGolden(t *testing.T) {
 	}
 }
 
+func TestHumanSkipsRepeatedBursts(t *testing.T) {
+	f := fixtures()
+	next := f["burst"]
+	next.Time = next.Time.Add(30 * time.Second)
+	next.Snapshot.Activity.LastBurst = next.Time
+	var buf bytes.Buffer
+	p := NewHuman(&buf, false)
+	for _, ev := range []session.Event{f["started"], f["burst"], next} {
+		p.Print(ev)
+	}
+	if n := strings.Count(buf.String(), "simulating input"); n != 1 {
+		t.Fatalf("burst printed %d times:\n%s", n, buf.String())
+	}
+}
+
 func TestHumanColor(t *testing.T) {
 	var buf bytes.Buffer
 	NewHuman(&buf, true).Print(fixtures()["warning"])
