@@ -9,12 +9,16 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
+// NewLazySystemDLL loads only from System32, so a DLL planted next to
+// keepalive.exe or in the working directory is never picked up.
 var (
-	user32   = syscall.NewLazyDLL("user32.dll")
-	kernel32 = syscall.NewLazyDLL("kernel32.dll")
-	wtsapi32 = syscall.NewLazyDLL("wtsapi32.dll")
+	user32   = windows.NewLazySystemDLL("user32.dll")
+	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
+	wtsapi32 = windows.NewLazySystemDLL("wtsapi32.dll")
 
 	procSendInput                     = user32.NewProc("SendInput")
 	procGetCursorPos                  = user32.NewProc("GetCursorPos")
