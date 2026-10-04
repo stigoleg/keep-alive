@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stigoleg/keep-alive/internal/keepalive"
-	"github.com/stigoleg/keep-alive/internal/platform"
+	"github.com/stigoleg/keep-alive/v2/internal/keepalive"
+	"github.com/stigoleg/keep-alive/v2/internal/platform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

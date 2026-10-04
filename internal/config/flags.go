@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/stigoleg/keep-alive/internal/ui"
-	"github.com/stigoleg/keep-alive/internal/util"
+	"github.com/stigoleg/keep-alive/v2/internal/ui"
+	"github.com/stigoleg/keep-alive/v2/internal/util"
 )
 
 type Config struct {

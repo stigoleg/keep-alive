@@ -1,4 +1,4 @@
-module github.com/stigoleg/keep-alive
+module github.com/stigoleg/keep-alive/v2
 
 go 1.25.0
 

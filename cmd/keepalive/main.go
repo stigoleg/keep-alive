@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stigoleg/keep-alive/internal/config"
-	"github.com/stigoleg/keep-alive/internal/keepalive"
-	"github.com/stigoleg/keep-alive/internal/platform"
-	"github.com/stigoleg/keep-alive/internal/ui"
+	"github.com/stigoleg/keep-alive/v2/internal/config"
+	"github.com/stigoleg/keep-alive/v2/internal/keepalive"
+	"github.com/stigoleg/keep-alive/v2/internal/platform"
+	"github.com/stigoleg/keep-alive/v2/internal/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

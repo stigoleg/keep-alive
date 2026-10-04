@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stigoleg/keep-alive/internal/platform"
+	"github.com/stigoleg/keep-alive/v2/internal/platform"
 )
 
 // Keeper manages the system's keep-alive state

@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/timer"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/stigoleg/keep-alive/internal/platform"
-	"github.com/stigoleg/keep-alive/internal/util"
+	"github.com/stigoleg/keep-alive/v2/internal/platform"
+	"github.com/stigoleg/keep-alive/v2/internal/util"
 )
 
 type batteryStatusMsg struct {

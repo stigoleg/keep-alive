@@ -9,8 +9,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/timer"
 	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/stigoleg/keep-alive/internal/keepalive"
-	"github.com/stigoleg/keep-alive/internal/platform"
+	"github.com/stigoleg/keep-alive/v2/internal/keepalive"
+	"github.com/stigoleg/keep-alive/v2/internal/platform"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
