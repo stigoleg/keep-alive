@@ -1,0 +1,9 @@
+ keepalive 2.0.0                                        ● AWAKE
+
+ Keeping system and display awake
+ running for 48m
+
+ Activity     ○ waiting for idle · 1m 10s of 2m
+ Holding      IOPMAssertion(PreventUserIdleSystemSleep, +2)
+
+ a activity off · s stop · ? help · q quit

@@ -1,0 +1,20 @@
+ keepalive 2.0.0
+
+ Keep this computer awake
+ ▸ Until I stop it
+   For a duration…                     last: 2h
+   Until a time…                       last: 17:00
+   During work hours…                  Mon-Fri 08:00-16:00
+
+ Options
+   [x] Simulate activity  keeps Teams/Slack Active            a
+   [x] Keep display on                                        d
+   [ ] Stop at battery    current 76%                         b
+   [ ] Tap Shift too      only with activity                  k
+
+ ! Activity simulation won't work: Accessibility is off for
+   "Ghostty", so activity can't move the pointer
+   fix: System Settings → Privacy & Security → Accessibility →
+        Ghostty
+
+ ↑↓ choose · enter start · ? help · q quit

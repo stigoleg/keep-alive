@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/stigoleg/keep-alive/v2/internal/ipc"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
+	"github.com/stigoleg/keep-alive/v2/internal/tui"
 )
 
 // replaceTimeout bounds how long --replace waits for the other instance.
@@ -107,6 +109,101 @@ func (a *App) replace(ctx context.Context, info ipc.ServerInfo, other string) (*
 			return nil, runtimeErr(ctx.Err(), "")
 		case <-time.After(100 * time.Millisecond):
 		}
+	}
+}
+
+// tuiInstance is the interactive UI's claim on being the running keepalive.
+// It is taken when the UI starts, or, while another keepalive runs, once
+// that one has stopped; until then the UI follows the other one.
+type tuiInstance struct {
+	ctx    context.Context
+	info   ipc.ServerInfo
+	ctrl   *switchController
+	stderr io.Writer
+
+	mu    sync.Mutex // held for a whole claim, so two never race
+	held  bool
+	stop  func() // stops serving the control socket
+	calls int    // claims so far; only the first, before the UI, may print
+}
+
+// adopt takes srv (nil: run without a control socket) as this UI's claim.
+func (t *tuiInstance) adopt(srv *ipc.Server) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.adoptLocked(srv)
+}
+
+func (t *tuiInstance) adoptLocked(srv *ipc.Server) {
+	t.held = true
+	if srv != nil {
+		t.stop = serve(t.ctx, srv, t.ctrl)
+	}
+}
+
+// claim makes this process the running keepalive. When another one runs a
+// session, it returns a controller attached to it; when another one holds
+// the claim without a session, or cannot be reached, an error with a fix.
+func (t *tuiInstance) claim() (tui.Controller, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.held {
+		return nil, nil
+	}
+	t.calls++
+	srv, err := ipc.Listen(t.info)
+	if errors.Is(err, ipc.ErrAlreadyRunning) {
+		return attachOther(t.ctx, err)
+	}
+	if err != nil {
+		slog.Warn("control socket unavailable", "err", err)
+		if t.calls == 1 {
+			fmt.Fprintf(t.stderr, "keepalive: warning: %v; 'keepalive status' and 'keepalive stop' will not find this instance\n", err)
+		}
+	}
+	t.adoptLocked(srv)
+	return nil, nil
+}
+
+// attachOther follows the keepalive holding the lock (lockErr) when it runs
+// a session.
+func attachOther(ctx context.Context, lockErr error) (tui.Controller, error) {
+	other := describeOther(ctx, lockErr)
+	running := tui.Warning{
+		Text: fmt.Sprintf("Another keepalive is already running (%s).", other),
+		Fix:  `stop it with "keepalive stop", or start with --replace`,
+	}
+	dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	c, err := ipc.Dial(dctx)
+	if err != nil {
+		return nil, running
+	}
+	st, err := c.Status(dctx)
+	if err != nil {
+		return nil, running
+	}
+	if !st.Snapshot.Running {
+		return nil, tui.Warning{
+			Text: fmt.Sprintf("Another keepalive is open (%s) and keeps nothing awake.", other),
+			Fix:  `start from that one or quit it, then press enter here; or run "keepalive stop"`,
+		}
+	}
+	ctrl, err := tui.Attach(ctx, c)
+	if err != nil {
+		return nil, running
+	}
+	return ctrl, nil
+}
+
+// close stops serving the control socket.
+func (t *tuiInstance) close() {
+	t.mu.Lock()
+	stop := t.stop
+	t.stop = nil
+	t.mu.Unlock()
+	if stop != nil {
+		stop()
 	}
 }
 

@@ -1,0 +1,10 @@
+ keepalive 2.0.0                                        ● AWAKE
+ attached to service · pid 812
+
+ Keeping system and display awake
+ ████████████░░░░░░░░░░░░░░░░░░  1h 12m left · until 17:00
+
+ Activity     ● simulating · last move 12s ago · CoreGraphics
+ Holding      IOPMAssertion(PreventUserIdleSystemSleep, +2)
+
+ Stop the running keepalive? y/n

@@ -13,6 +13,7 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/ipc"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
+	"github.com/stigoleg/keep-alive/v2/internal/tui"
 )
 
 // fakeInstance serves the control socket for a fake session.
@@ -262,4 +263,56 @@ func TestServiceUsageErrorExitsZero(t *testing.T) {
 	if len(n.sent) != 1 {
 		t.Fatalf("terminal run notified: %v", n.sent)
 	}
+}
+
+func newTUIInstance() *tuiInstance {
+	return &tuiInstance{ctx: context.Background(), info: ipc.ServerInfo{Version: "2.0.0"}, ctrl: &switchController{}, stderr: &strings.Builder{}}
+}
+
+func TestTUIAttachesToARunningSession(t *testing.T) {
+	startInstance(t, timedSnap())
+	inst := newTUIInstance()
+	defer inst.close()
+	c, err := inst.claim()
+	if err != nil || c == nil {
+		t.Fatalf("claim = %v, %v; want an attached controller", c, err)
+	}
+	defer c.Close()
+	if a := c.Attached(); a == nil || a.Origin != ipc.OriginService {
+		t.Fatalf("attached %+v", a)
+	}
+	if inst.held {
+		t.Fatal("claimed while another keepalive runs")
+	}
+}
+
+func TestTUIClaimNextToAnIdleUI(t *testing.T) {
+	startInstance(t, session.Snapshot{}) // another UI at its menu
+	inst := newTUIInstance()
+	defer inst.close()
+	c, err := inst.claim()
+	var w tui.Warning
+	if c != nil || !errors.As(err, &w) || !strings.Contains(w.Text, "keeps nothing awake") || w.Fix == "" {
+		t.Fatalf("claim = %v, %v", c, err)
+	}
+}
+
+func TestTUIClaimTakesTheLock(t *testing.T) {
+	inst := newTUIInstance()
+	c, err := inst.claim()
+	if c != nil || err != nil || !inst.held {
+		t.Fatalf("claim = %v, %v (held %v)", c, err, inst.held)
+	}
+	if _, err := ipc.Listen(ipc.ServerInfo{}); !errors.Is(err, ipc.ErrAlreadyRunning) {
+		t.Fatalf("second Listen: %v", err)
+	}
+	if c, err := inst.claim(); c != nil || err != nil {
+		t.Fatalf("second claim = %v, %v", c, err)
+	}
+	inst.close()
+	srv, err := ipc.Listen(ipc.ServerInfo{})
+	if err != nil {
+		t.Fatalf("lock not released: %v", err)
+	}
+	srv.Close()
 }

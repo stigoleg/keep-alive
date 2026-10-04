@@ -5,533 +5,545 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"github.com/stigoleg/keep-alive/v2/internal/activity"
+	"github.com/stigoleg/keep-alive/v2/internal/config"
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
+	"github.com/stigoleg/keep-alive/v2/internal/schedule"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
-func TestInitialModel(t *testing.T) {
-	m := InitialModel()
-	if m.State != stateMenu {
-		t.Error("expected initial state to be stateMenu")
-	}
-	if m.Selected != 0 {
-		t.Error("expected initial selected to be 0")
-	}
-	if m.ErrorMessage != "" {
-		t.Error("expected initial error message to be empty")
-	}
-}
-
-func TestMenuView(t *testing.T) {
-	m := InitialModel()
-	view := View(m)
-
-	// Check for menu options
-	expectedOptions := []string{
-		"Keep system awake indefinitely",
-		"Keep system awake for X minutes",
-		"Keep system awake until clock time",
-		"Quit keep-alive",
-		"Battery threshold",
-	}
-
-	for _, opt := range expectedOptions {
-		if !strings.Contains(view, opt) {
-			t.Errorf("expected view to contain option %q", opt)
-		}
-	}
-
-	// Check cursor position
-	lines := strings.Split(view, "\n")
-	foundCursor := false
-	for _, line := range lines {
-		if strings.Contains(line, ">") && strings.Contains(line, "Keep system awake indefinitely") {
-			foundCursor = true
-			break
-		}
-	}
-	if !foundCursor {
-		t.Error("expected cursor to be at first option")
-	}
-}
-
-func TestUpdate(t *testing.T) {
-	tests := []struct {
-		name     string
-		msg      tea.Msg
-		model    Model
-		wantType state
+func TestInputsTakeEveryPrintableKey(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		open []string
 	}{
-		{
-			name:     "up key at top stays at top",
-			msg:      tea.KeyMsg{Type: tea.KeyUp},
-			model:    Model{State: stateMenu, Selected: 0},
-			wantType: stateMenu,
-		},
-		{
-			name:     "down key moves selection",
-			msg:      tea.KeyMsg{Type: tea.KeyDown},
-			model:    Model{State: stateMenu, Selected: 0},
-			wantType: stateMenu,
-		},
-		{
-			name:     "enter on timed input moves to input state",
-			msg:      tea.KeyMsg{Type: tea.KeyEnter},
-			model:    Model{State: stateMenu, Selected: 1},
-			wantType: stateTimedInput,
-		},
-		{
-			name:     "enter on clock option moves to clock input state",
-			msg:      tea.KeyMsg{Type: tea.KeyEnter},
-			model:    Model{State: stateMenu, Selected: 2},
-			wantType: stateClockInput,
-		},
-		{
-			name:     "b key moves to battery input state",
-			msg:      tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}},
-			model:    Model{State: stateMenu, Selected: 0},
-			wantType: stateBatteryInput,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, _ := Update(tt.msg, tt.model)
-			if got.State != tt.wantType {
-				t.Errorf("Update() state = %v, want %v", got.State, tt.wantType)
+		{"duration", []string{"down", "enter"}},
+		{"until", []string{"down", "down", "enter"}},
+		{"work hours", []string{"down", "down", "down", "enter"}},
+		{"battery", []string{"b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &starter{}
+			h := newHarness(t, testOptions(st), 64)
+			h.press(tc.open...)
+			if h.m.screen != screenInput {
+				t.Fatalf("screen %v, want input", h.m.screen)
+			}
+			h.typeText("hq?ak d")
+			if h.quit || h.m.help || h.m.screen != screenInput {
+				t.Fatalf("a key left the input: quit=%v help=%v screen=%v", h.quit, h.m.help, h.m.screen)
+			}
+			if got := h.m.input.fields[h.m.input.kind].Value(); got != "hq?ak d" {
+				t.Fatalf("input = %q", got)
 			}
 		})
 	}
 }
 
-func TestTimedInputView(t *testing.T) {
-	m := Model{
-		State: stateTimedInput,
+func TestDurationWithH(t *testing.T) {
+	st := &starter{}
+	h := newHarness(t, testOptions(st), 64)
+	h.press("down", "enter")
+	h.typeText("2h30m")
+	h.press("enter")
+	if h.m.screen != screenDashboard {
+		t.Fatalf("screen %v, want dashboard", h.m.screen)
 	}
-	m.textInput = newMinutesTextInput()
-	m.textInput.SetValue("5")
-	view := View(m)
-
-	if !strings.Contains(view, "minutes") {
-		t.Error("expected view to contain duration prompt")
+	if got := st.last(t).cfg.Duration; got != 150*time.Minute {
+		t.Fatalf("duration %v", got)
 	}
-	if !strings.Contains(view, "5") {
-		t.Error("expected view to show input value")
-	}
-}
-
-func TestClockInputView(t *testing.T) {
-	m := Model{
-		State: stateClockInput,
-	}
-	m.textInput = newClockTextInput()
-	m.textInput.SetValue("22:00")
-	view := View(m)
-
-	if !strings.Contains(view, "clock time") {
-		t.Error("expected view to contain clock prompt")
-	}
-	if !strings.Contains(view, "22:00") {
-		t.Error("expected view to show input value")
+	if h.m.home.lastDuration != 150*time.Minute {
+		t.Fatalf("last duration %v", h.m.home.lastDuration)
 	}
 }
 
-func TestBatteryInputSetsThreshold(t *testing.T) {
-	restore := stubBatteryStatus(platformBatteryStatus(80), nil)
-	defer restore()
+func TestEscOnEachScreen(t *testing.T) {
+	st := &starter{}
+	h := newHarness(t, testOptions(st), 64)
 
-	m := Model{State: stateBatteryInput}
-	m.textInput = newBatteryTextInput(0)
-	m.textInput.SetValue("65")
+	h.press("esc") // Home: nothing to leave
+	if h.quit || h.m.screen != screenHome {
+		t.Fatalf("esc on Home: quit=%v screen=%v", h.quit, h.m.screen)
+	}
 
-	got, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
-	if got.State != stateMenu {
-		t.Fatalf("Update() state = %v, want %v", got.State, stateMenu)
+	h.press("down", "enter") // input: back to Home, text kept
+	h.typeText("4")
+	h.press("esc")
+	if h.m.screen != screenHome {
+		t.Fatalf("esc on input: screen %v", h.m.screen)
 	}
-	if got.BatteryThreshold != 65 {
-		t.Fatalf("Update() BatteryThreshold = %d, want 65", got.BatteryThreshold)
+	h.press("enter")
+	if got := h.m.input.fields[inputDuration].Value(); got != "4" || h.m.screen != screenInput {
+		t.Fatalf("input after esc = %q (screen %v)", got, h.m.screen)
 	}
-	if got.BatteryPercentage != 80 {
-		t.Fatalf("Update() BatteryPercentage = %d, want 80", got.BatteryPercentage)
+	h.typeText("5")
+	h.press("enter") // 45 minutes
+
+	h.press("?") // help: esc closes it, the session keeps running
+	h.press("esc")
+	if h.m.help || h.m.screen != screenDashboard {
+		t.Fatalf("esc on help: help=%v screen=%v", h.m.help, h.m.screen)
+	}
+
+	c := st.last(t)
+	h.press("esc") // dashboard: stop, back to Home
+	h.settle()
+	if !c.has("stop") || h.m.screen != screenHome || h.quit {
+		t.Fatalf("esc on dashboard: calls=%v screen=%v quit=%v", c.Calls(), h.m.screen, h.quit)
 	}
 }
 
-func TestBatteryInputRejectsThresholdAtCurrentBattery(t *testing.T) {
-	restore := stubBatteryStatus(platformBatteryStatus(65), nil)
-	defer restore()
+func TestCtrlCQuitsEverywhere(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		keys  []string
+		check func(*testing.T, *harness, *starter)
+	}{
+		{"home", nil, nil},
+		{"input", []string{"down", "enter"}, nil},
+		{"help", []string{"?"}, nil},
+		{"dashboard", []string{"enter"}, func(t *testing.T, h *harness, st *starter) {
+			_ = h.m.Shutdown()
+			if c := st.last(t); !c.has("close") {
+				t.Fatalf("calls %v: the session was not stopped", c.Calls())
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &starter{}
+			h := newHarness(t, testOptions(st), 64)
+			h.press(tc.keys...)
+			h.press("ctrl+c")
+			if !h.quit {
+				t.Fatal("ctrl+c did not quit")
+			}
+			if tc.check != nil {
+				tc.check(t, h, st)
+			}
+		})
+	}
 
-	m := Model{State: stateBatteryInput}
-	m.textInput = newBatteryTextInput(0)
-	m.textInput.SetValue("65")
-
-	got, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
-	if got.State != stateBatteryInput {
-		t.Fatalf("Update() state = %v, want %v", got.State, stateBatteryInput)
-	}
-	if got.ErrorMessage == "" {
-		t.Fatal("expected battery validation error")
-	}
-}
-
-func TestTimedInputValidationErrors(t *testing.T) {
-	// Empty input
-	m := Model{State: stateTimedInput}
-	m.textInput = newMinutesTextInput()
-	m.textInput.SetValue("")
-	got, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
-	if got.ErrorMessage == "" {
-		t.Error("expected error for empty input")
-	}
-
-	// Zero minutes
-	m2 := Model{State: stateTimedInput}
-	m2.textInput = newMinutesTextInput()
-	m2.textInput.SetValue("0")
-	got2, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m2)
-	if !strings.Contains(got2.ErrorMessage, "Invalid Input") {
-		t.Error("expected invalid input error for zero")
-	}
-}
-
-func TestRunningView(t *testing.T) {
-	m := Model{
-		State:     stateRunning,
-		StartTime: time.Now(),
-		Duration:  5 * time.Minute,
-	}
-	view := View(m)
-
-	if !strings.Contains(view, "Keep Alive Active") {
-		t.Error("expected view to show active status")
-	}
-	if !strings.Contains(view, "System is being kept awake") {
-		t.Error("expected view to show system status")
-	}
-	if !strings.Contains(view, "remaining") {
-		t.Error("expected view to show remaining time")
-	}
-}
-
-func TestRunningViewBatteryMode(t *testing.T) {
-	m := Model{
-		State:             stateRunning,
-		BatteryThreshold:  20,
-		BatteryPercentage: 42,
-	}
-	view := View(m)
-
-	if !strings.Contains(view, "Battery: 42%") {
-		t.Error("expected view to show current battery percentage")
-	}
-	if !strings.Contains(view, "Stopping at or below: 20%") {
-		t.Error("expected view to show battery threshold")
-	}
-}
-
-func TestRunningViewCombinedLimits(t *testing.T) {
-	m := Model{
-		State:             stateRunning,
-		StartTime:         time.Now(),
-		Duration:          5 * time.Minute,
-		BatteryThreshold:  20,
-		BatteryPercentage: 42,
-	}
-	view := View(m)
-
-	if !strings.Contains(view, "remaining") {
-		t.Error("expected view to show remaining time")
-	}
-	if !strings.Contains(view, "Battery: 42%") {
-		t.Error("expected view to show battery percentage")
-	}
-}
-
-func TestBatteryStoppedEventQuits(t *testing.T) {
-	m, _ := startTestSession(t, Options{Base: session.Config{BatteryThreshold: 20}, Start: true})
-	r := m.sessions.current()
-	stopped := session.Event{Type: session.EventStopped, Reason: session.ReasonBattery}
-
-	got, cmd := Update(sessionEventMsg{r: r, ev: stopped}, m)
-	if got.State != stateMenu {
-		t.Fatalf("Update() state = %v, want %v", got.State, stateMenu)
-	}
-	if cmd == nil {
-		t.Fatal("Update() command is nil, want quit command")
-	}
-	if !strings.Contains(got.ErrorMessage, "20%") {
-		t.Fatalf("ErrorMessage = %q, want the threshold", got.ErrorMessage)
-	}
-}
-
-func TestBatteryEventUpdatesPercentage(t *testing.T) {
-	m, _ := startTestSession(t, Options{Base: session.Config{BatteryThreshold: 20}, Start: true})
-	r := m.sessions.current()
-	ev := session.Event{Type: session.EventBattery, Snapshot: session.Snapshot{Battery: session.Battery{Percent: 21, Available: true, Threshold: 20}}}
-
-	got, cmd := Update(sessionEventMsg{r: r, ev: ev}, m)
-	if got.State != stateRunning {
-		t.Fatalf("Update() state = %v, want %v", got.State, stateRunning)
-	}
-	if got.BatteryPercentage != 21 {
-		t.Fatalf("Update() BatteryPercentage = %d, want 21", got.BatteryPercentage)
-	}
-	if cmd == nil {
-		t.Fatal("Update() command is nil, want to keep waiting for events")
-	}
-	stopTestSession(t, got)
-}
-
-func TestStaleSessionEventIgnored(t *testing.T) {
-	m, _ := startTestSession(t, Options{Start: true})
-	stale := &runner{}
-	got, cmd := Update(sessionEventMsg{r: stale, ev: session.Event{Type: session.EventStopped, Reason: session.ReasonDuration}}, m)
-	if got.State != stateRunning || cmd != nil {
-		t.Fatalf("stale event changed state to %v (cmd %v)", got.State, cmd)
-	}
-	stopTestSession(t, got)
-}
-
-func TestWindowSizeUpdatesModel(t *testing.T) {
-	m := InitialModel()
-	got, _ := Update(tea.WindowSizeMsg{Width: 44, Height: 12}, m)
-
-	if got.Width != 44 {
-		t.Fatalf("Update() Width = %d, want 44", got.Width)
-	}
-	if got.Height != 12 {
-		t.Fatalf("Update() Height = %d, want 12", got.Height)
-	}
-}
-
-func TestHelpViewFitsNarrowWidth(t *testing.T) {
-	m := InitialModel()
-	m.ShowHelp = true
-	m.Width = 40
-	m.Height = 14
-	view := View(m)
-
-	for _, line := range strings.Split(view, "\n") {
-		if got := lipgloss.Width(line); got > m.Width {
-			t.Fatalf("help line width = %d, want <= %d: %q", got, m.Width, line)
+	t.Run("attached confirm", func(t *testing.T) {
+		h, c := attachedHarness(t, timedSnap())
+		h.press("s", "ctrl+c")
+		if !h.quit {
+			t.Fatal("ctrl+c did not quit")
 		}
-	}
-}
-
-func TestHelpPopupHasCompleteBorderAtSmallHeight(t *testing.T) {
-	m := InitialModel()
-	m.ShowHelp = true
-	m.Width = 48
-	m.Height = 10
-	view := View(m)
-
-	if !strings.Contains(view, "╭") {
-		t.Fatalf("expected help popup top border, got:\n%s", view)
-	}
-	if !strings.Contains(view, "╰") {
-		t.Fatalf("expected help popup bottom border, got:\n%s", view)
-	}
-}
-
-func TestCLIHelpRendersFullMenuWithoutScrollFooter(t *testing.T) {
-	m := InitialModel()
-	m.ShowHelp = true
-	m.Width = 80
-	m.Height = 0
-
-	view := View(m)
-	if strings.Contains(view, "pgup/pgdn") || strings.Contains(view, "esc/q close") {
-		t.Fatalf("CLI help should not render scroll footer:\n%s", view)
-	}
-	if !strings.Contains(view, "Examples:") || !strings.Contains(view, "Navigation:") {
-		t.Fatalf("CLI help should render full help content:\n%s", view)
-	}
-}
-
-func TestHelpPopupUsesMoreAvailableSpace(t *testing.T) {
-	width, height := helpPopupSize(120, 40)
-
-	if width != maxHelpPopupWidth {
-		t.Fatalf("helpPopupSize() width = %d, want %d", width, maxHelpPopupWidth)
-	}
-	if height != maxHelpPopupHeight {
-		t.Fatalf("helpPopupSize() height = %d, want %d", height, maxHelpPopupHeight)
-	}
-}
-
-func TestHelpTableBordersFitNormalWidth(t *testing.T) {
-	m := InitialModel()
-	m.Width = 80
-	m.Height = 24
-	content := helpContent(m)
-
-	for _, line := range strings.Split(content, "\n") {
-		if got := lipgloss.Width(line); got > helpBodyWidth(m) {
-			t.Fatalf("help content line width = %d, want <= %d: %q", got, helpBodyWidth(m), line)
+		_ = h.m.Shutdown()
+		if c.has("stop") || !c.has("close") {
+			t.Fatalf("calls %v: want a detach, not a stop", c.Calls())
 		}
+	})
+}
+
+func TestActivityToggle(t *testing.T) {
+	st := &starter{}
+	h := newHarness(t, testOptions(st), 64)
+	h.press("enter")
+	c := st.last(t)
+	h.press("a")
+	h.settle()
+	if !c.has("active true") || !h.m.dash.snap.Active || !h.m.home.opts.active {
+		t.Fatalf("a: calls=%v snap.Active=%v option=%v", c.Calls(), h.m.dash.snap.Active, h.m.home.opts.active)
 	}
-	for _, line := range strings.Split(content, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "─┐" || trimmed == "─┤" || trimmed == "─┘" {
-			t.Fatalf("table border fragment appears on its own line:\n%s", content)
+	if !strings.Contains(h.m.View(), "activity simulation on") {
+		t.Fatalf("no feedback:\n%s", h.m.View())
+	}
+	h.press("a")
+	h.settle()
+	if !c.has("active false") || h.m.home.opts.active {
+		t.Fatalf("a again: calls=%v option=%v", c.Calls(), h.m.home.opts.active)
+	}
+}
+
+func TestExtendAndShorten(t *testing.T) {
+	st := &starter{}
+	h := newHarness(t, testOptions(st), 64)
+	h.press("down", "enter")
+	h.typeText("2h")
+	h.press("enter")
+	c := st.last(t)
+	h.press("+")
+	h.settle()
+	h.press("-")
+	h.settle()
+	calls := strings.Join(c.Calls(), ",")
+	if calls != "extend 15m0s,extend -15m0s" {
+		t.Fatalf("calls %s", calls)
+	}
+	if !strings.Contains(h.m.View(), "now until") {
+		t.Fatalf("no feedback:\n%s", h.m.View())
+	}
+
+	h.press("s")
+	h.settle()
+	h.press("up", "enter") // until stopped: + only explains
+	c = st.last(t)
+	h.press("+")
+	h.settle()
+	if len(c.Calls()) != 0 {
+		t.Fatalf("calls %v on an indefinite session", c.Calls())
+	}
+	if !strings.Contains(h.m.View(), "+/- only change a session with an end") {
+		t.Fatalf("no message:\n%s", h.m.View())
+	}
+}
+
+func TestStopKeepsOptions(t *testing.T) {
+	st := &starter{}
+	h := newHarness(t, testOptions(st), 64)
+	h.press("a", "d", "k", "b")
+	h.typeText("20")
+	h.press("enter")
+	want := options{active: true, display: false, keys: true, battery: 20}
+	if h.m.home.opts != want {
+		t.Fatalf("options %+v", h.m.home.opts)
+	}
+	h.press("enter")
+	cfg := st.last(t).cfg
+	if !cfg.Active || cfg.KeepDisplay || !cfg.Activity.Keys || cfg.BatteryThreshold != 20 {
+		t.Fatalf("session config %+v", cfg)
+	}
+	h.press("s")
+	h.settle()
+	if h.m.screen != screenHome || h.m.home.opts != want {
+		t.Fatalf("after stop: screen %v options %+v", h.m.screen, h.m.home.opts)
+	}
+	if v := h.m.View(); !strings.Contains(v, "[x] Stop at battery 20%") {
+		t.Fatalf("battery option lost:\n%s", v)
+	}
+}
+
+func TestSessionEndsOnItsOwn(t *testing.T) {
+	t.Run("returns to Home", func(t *testing.T) {
+		st := &starter{}
+		h := newHarness(t, testOptions(st), 64)
+		h.press("down", "enter")
+		h.typeText("30")
+		h.press("enter")
+		c := st.last(t)
+		c.end(session.ReasonDuration, "duration reached")
+		h.settle()
+		if v := h.m.View(); !strings.Contains(v, "Stopped: duration reached at 15:48") {
+			t.Fatalf("no final line:\n%s", v)
 		}
+		h.update(returnMsg{c: c})
+		if h.quit || h.m.screen != screenHome {
+			t.Fatalf("quit=%v screen=%v", h.quit, h.m.screen)
+		}
+	})
+	t.Run("autostart quits", func(t *testing.T) {
+		st := &starter{}
+		o := testOptions(st)
+		o.Base.Duration, o.Start = 30*time.Minute, true
+		h := newHarness(t, o, 64)
+		if h.m.screen != screenDashboard {
+			t.Fatalf("screen %v", h.m.screen)
+		}
+		c := st.last(t)
+		c.end(session.ReasonDuration, "duration reached")
+		h.settle()
+		h.update(returnMsg{c: c})
+		if !h.quit {
+			t.Fatal("did not quit")
+		}
+		if got := h.m.FinalMessage(); got != "stopped: duration reached at 15:48" {
+			t.Fatalf("final message %q", got)
+		}
+	})
+	t.Run("keepalive stop quits", func(t *testing.T) {
+		st := &starter{}
+		h := newHarness(t, testOptions(st), 64)
+		h.press("enter")
+		st.last(t).end(session.ReasonIPC, `stopped by "keepalive stop"`)
+		h.settle()
+		if !h.quit {
+			t.Fatal("did not quit")
+		}
+	})
+	t.Run("an error shows on Home", func(t *testing.T) {
+		st := &starter{}
+		h := newHarness(t, testOptions(st), 64)
+		h.press("enter")
+		st.last(t).end(session.ReasonError, "keep the system awake: no inhibitor")
+		h.settle()
+		if h.m.screen != screenHome || h.m.home.problem == nil {
+			t.Fatalf("screen %v problem %v", h.m.screen, h.m.home.problem)
+		}
+		if v := h.m.View(); !strings.Contains(v, "✗ Could not keep awake: keep the system awake: no inhibitor") {
+			t.Fatalf("no error on Home:\n%s", v)
+		}
+	})
+}
+
+func timedSnap() session.Snapshot {
+	s := runningSnap(session.Config{Active: true, KeepDisplay: true, Duration: 2 * time.Hour})
+	s.Activity = activity.Status{State: activity.StateSimulating, Method: "CoreGraphics", LastBurst: testNow.Add(-12 * time.Second)}
+	return s
+}
+
+func attachedHarness(t *testing.T, snap session.Snapshot, width ...int) (*harness, *fakeCtrl) {
+	t.Helper()
+	c := newFakeCtrl(snap, &Instance{PID: 812, Origin: "service", Version: "2.0.0"})
+	st := &starter{}
+	o := testOptions(st)
+	o.Attach = c
+	o.Claim = func() (Controller, error) { return nil, nil }
+	w := 64
+	if len(width) > 0 {
+		w = width[0]
+	}
+	h := newHarness(t, o, w)
+	h.update(snapMsg{c: c, snap: snap})
+	return h, c
+}
+
+func TestAttachQuitDetaches(t *testing.T) {
+	h, c := attachedHarness(t, timedSnap())
+	if v := h.m.View(); !strings.Contains(v, "attached to service · pid 812") || !strings.Contains(v, "q detach") {
+		t.Fatalf("no attach header:\n%s", v)
+	}
+	h.press("q")
+	if !h.quit {
+		t.Fatal("q did not quit")
+	}
+	_ = h.m.Shutdown()
+	if c.has("stop") || !c.has("close") {
+		t.Fatalf("calls %v: q must detach, not stop", c.Calls())
 	}
 }
 
-func TestNavigationRowsRenderOnOneLine(t *testing.T) {
-	content := renderKeyValueRows(navigationHelpRows(), 64)
+func TestAttachStopAsksFirst(t *testing.T) {
+	claims := 0
+	c := newFakeCtrl(timedSnap(), &Instance{PID: 812, Origin: "service"})
+	st := &starter{}
+	o := testOptions(st)
+	o.Attach = c
+	o.Claim = func() (Controller, error) { claims++; return nil, nil }
+	h := newHarness(t, o, 64)
 
-	if !strings.Contains(content, "up/k, down/j  Navigate menu") {
-		t.Fatalf("expected navigation key and description on one line, got:\n%s", content)
+	h.press("s")
+	if v := h.m.View(); !strings.Contains(v, "Stop the running keepalive? y/n") {
+		t.Fatalf("no question:\n%s", v)
 	}
-	if strings.Contains(content, "up/k, down/j\n") {
-		t.Fatalf("navigation key rendered without description on same line:\n%s", content)
+	h.press("n")
+	h.press("esc", "esc") // esc asks too, and esc answers no
+	if c.has("stop") || h.m.dash.confirm {
+		t.Fatalf("stopped without a yes: %v", c.Calls())
+	}
+	h.press("s", "y")
+	h.settle()
+	if !c.has("stop") {
+		t.Fatalf("calls %v", c.Calls())
+	}
+	c.end(session.ReasonIPC, `stopped by "keepalive stop"`)
+	h.settle()
+	if v := h.m.View(); !strings.Contains(v, `Stopped by "keepalive stop" at 15:48`) {
+		t.Fatalf("no final line:\n%s", v)
+	}
+	h.update(returnMsg{c: c})
+	h.settle()
+	if h.m.screen != screenHome || !h.m.claimed || claims != 1 {
+		t.Fatalf("screen %v claimed %v claims %d", h.m.screen, h.m.claimed, claims)
+	}
+	h.press("enter") // now this process runs its own session
+	if h.m.screen != screenDashboard || st.count() != 1 {
+		t.Fatalf("screen %v sessions %d", h.m.screen, st.count())
 	}
 }
 
-func TestHelpViewportScrolls(t *testing.T) {
-	m := InitialModel()
-	m.ShowHelp = true
-	m.Width = 56
-	m.Height = 10
-	m = syncHelpViewport(m)
-
-	if m.HelpViewport.TotalLineCount() <= m.HelpViewport.VisibleLineCount() {
-		t.Fatalf("expected help content to overflow viewport")
+func TestAttachedKeysGoToTheController(t *testing.T) {
+	h, c := attachedHarness(t, timedSnap())
+	h.press("a", "+", "-")
+	h.settle()
+	if got := strings.Join(c.Calls(), ","); got != "active false,extend 15m0s,extend -15m0s" {
+		t.Fatalf("calls %s", got)
 	}
-
-	got, _ := Update(tea.KeyMsg{Type: tea.KeyDown}, m)
-	if got.HelpViewport.YOffset <= m.HelpViewport.YOffset {
-		t.Fatalf("expected help viewport to scroll down, before=%d after=%d", m.HelpViewport.YOffset, got.HelpViewport.YOffset)
+	if h.m.home.opts.active {
+		t.Fatal("an attached toggle changed this UI's own option")
 	}
 }
 
-func TestHelpCloseDoesNotQuit(t *testing.T) {
-	m := InitialModel()
-	m.ShowHelp = true
-	m = syncHelpViewport(m)
-
-	got, cmd := Update(tea.KeyMsg{Type: tea.KeyEsc}, m)
-	if got.ShowHelp {
-		t.Fatalf("expected help to close")
+func TestAttachedInstanceGone(t *testing.T) {
+	h, c := attachedHarness(t, timedSnap())
+	close(c.events)
+	h.settle()
+	if v := h.m.View(); !strings.Contains(v, "Stopped: the running keepalive is gone") {
+		t.Fatalf("no final line:\n%s", v)
 	}
-	if cmd != nil {
-		t.Fatalf("expected no quit command when closing help")
-	}
-}
-
-func TestErrorDisplay(t *testing.T) {
-	m := Model{
-		State:        stateMenu,
-		ErrorMessage: "test error",
-	}
-	view := View(m)
-
-	if !strings.Contains(view, "test error") {
-		t.Error("expected view to show error message")
+	h.press("enter")
+	if h.m.screen != screenHome {
+		t.Fatalf("screen %v", h.m.screen)
 	}
 }
 
-func platformBatteryStatus(percentage int) platform.BatteryStatus {
-	return platform.BatteryStatus{Percentage: percentage, Available: true}
-}
-
-func stubBatteryStatus(status platform.BatteryStatus, err error) func() {
-	original := readBatteryStatus
-	readBatteryStatus = func() (platform.BatteryStatus, error) {
-		return status, err
+func TestClaimWarningAndAttachOnStart(t *testing.T) {
+	other := newFakeCtrl(timedSnap(), &Instance{PID: 812, Origin: "terminal"})
+	var answer Controller
+	st := &starter{}
+	o := testOptions(st)
+	o.Warning = Warning{Text: "Another keepalive is open (pid 812) and keeps nothing awake.", Fix: "quit it"}
+	o.Claim = func() (Controller, error) {
+		if answer != nil {
+			return answer, nil
+		}
+		return nil, Warning{Text: "Another keepalive is open (pid 812) and keeps nothing awake.", Fix: "quit it"}
 	}
-	return func() {
-		readBatteryStatus = original
+	h := newHarness(t, o, 64)
+	if v := h.m.View(); !strings.Contains(v, "! Another keepalive is open (pid 812)") || !strings.Contains(v, "fix: quit it") {
+		t.Fatalf("no warning:\n%s", v)
 	}
-}
-
-func TestStartAndStopThroughSessionEngine(t *testing.T) {
-	m, deps := startTestSession(t, Options{})
-	m.Selected = 0
-
-	m, cmd := Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
-	if m.State != stateRunning || cmd == nil {
-		t.Fatalf("state = %v, cmd = %v; want running with commands", m.State, cmd)
+	h.press("enter")
+	if h.m.screen != screenHome || st.count() != 0 {
+		t.Fatalf("started despite the claim: screen %v", h.m.screen)
 	}
-	ev := nextEvent(t, m)
-	if ev.ev.Type != session.EventStarted {
-		t.Fatalf("first event = %s, want started", ev.ev.Type)
+	answer = other // it started a session meanwhile
+	h.press("enter")
+	if h.m.screen != screenDashboard || h.m.dash.ctrl != other || st.count() != 0 {
+		t.Fatalf("screen %v ctrl %v", h.m.screen, h.m.dash.ctrl)
 	}
-	m, _ = Update(ev, m)
-	if deps.power.acquires.Load() != 1 {
-		t.Fatalf("power acquired %d times, want 1", deps.power.acquires.Load())
-	}
-
-	m, cmd = Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}, m)
-	if m.State != stateMenu || cmd != nil {
-		t.Fatalf("after stop: state = %v, cmd = %v", m.State, cmd)
-	}
-	if r := deps.power.releases.Load(); r != 1 {
-		t.Fatalf("power released %d times, want 1", r)
-	}
-	if m.sessions.current() != nil {
-		t.Fatal("session slot not cleared")
+	if v := h.m.View(); !strings.Contains(v, "Not started: another keepalive is already running") {
+		t.Fatalf("no explanation:\n%s", v)
 	}
 }
 
-func TestTimedSessionEndsAndQuits(t *testing.T) {
-	m, deps := startTestSession(t, Options{Base: session.Config{Active: true}})
-	m.State = stateTimedInput
-	m.textInput = newMinutesTextInput()
-	m.textInput.SetValue("1")
-	m, _ = Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
-	if m.State != stateRunning || m.Duration != time.Minute {
-		t.Fatalf("state = %v duration = %v", m.State, m.Duration)
+func TestAutostartWhileAttached(t *testing.T) {
+	c := newFakeCtrl(timedSnap(), &Instance{PID: 812, Origin: "service"})
+	st := &starter{}
+	o := testOptions(st)
+	o.Attach, o.Start = c, true
+	o.Base.Duration = 30 * time.Minute
+	h := newHarness(t, o, 64)
+	if st.count() != 0 || h.m.dash.ctrl != c {
+		t.Fatal("started a second session")
 	}
-	if snap := m.sessions.current().sess.Snapshot(); snap.Mode != session.ModeDuration || !snap.Active {
-		t.Fatalf("session snapshot = %+v", snap)
-	}
-
-	// Simulate the session reporting the end of its duration.
-	r := m.sessions.current()
-	m, cmd := Update(sessionEventMsg{r: r, ev: session.Event{Type: session.EventStopped, Reason: session.ReasonDuration}}, m)
-	if m.State != stateMenu || cmd == nil {
-		t.Fatalf("state = %v cmd = %v, want menu + quit", m.State, cmd)
-	}
-	if a, rel := deps.power.acquires.Load(), deps.power.releases.Load(); a != rel {
-		t.Fatalf("acquires=%d releases=%d", a, rel)
+	if v := h.m.View(); !strings.Contains(v, "Not started: another keepalive is already running") {
+		t.Fatalf("no explanation:\n%s", v)
 	}
 }
 
-func TestStartFromOptionsAndShutdown(t *testing.T) {
-	until := time.Now().Add(2 * time.Hour)
-	m, deps := startTestSession(t, Options{Base: session.Config{Until: until}, Start: true})
-	if m.State != stateRunning || !m.Clock.Equal(until) {
-		t.Fatalf("state = %v clock = %v", m.State, m.Clock)
-	}
-	if m.Init() == nil {
-		t.Fatal("Init() returned no commands for a running session")
-	}
-	nextEvent(t, m) // started
-	if err := m.Shutdown(); err != nil {
+func TestDefaultsFromConfig(t *testing.T) {
+	sched, err := schedule.Parse("mon-fri 8:00-16:00")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if a, r := deps.power.acquires.Load(), deps.power.releases.Load(); a != 1 || r != 1 {
-		t.Fatalf("acquires=%d releases=%d, want 1/1", a, r)
+	st := &starter{}
+	o := testOptions(st)
+	o.Base = session.Config{Active: true, KeepDisplay: false, Activity: activity.Config{Keys: true}, Duration: 2 * time.Hour,
+		Until: time.Date(2026, 10, 5, 17, 0, 0, 0, time.UTC), Schedule: sched}
+	h := newHarness(t, o, 64)
+	hs := h.m.home
+	if hs.opts != (options{active: true, keys: true}) || hs.cursor != modeSchedule {
+		t.Fatalf("home %+v", hs)
+	}
+	v := h.m.View()
+	for _, want := range []string{"[x] Simulate activity", "[ ] Keep display on", "[x] Tap Shift too", "last: 2h", "last: 17:00", "Mon-Fri 08:00-16:00", "▸ During work hours…"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("Home lacks %q:\n%s", want, v)
+		}
+	}
+	h.press("enter", "enter") // the configured work hours, as they are
+	cfg := st.last(t).cfg
+	if cfg.Schedule == nil || cfg.Schedule.String() != "Mon-Fri 08:00-16:00" || cfg.Duration != 0 || !cfg.Until.IsZero() {
+		t.Fatalf("session config %+v", cfg)
 	}
 }
 
-func TestSessionErrorReturnsToMenu(t *testing.T) {
-	m, deps := startTestSession(t, Options{})
-	deps.power.err = errDenied
-	m, _ = startSession(m, 0, time.Time{})
-	ev := nextEvent(t, m)
-	for ev.ev.Type != session.EventStopped {
-		ev = nextEvent(t, m)
+func TestInputErrorsMatchTheCLI(t *testing.T) {
+	_, durErr := config.ParseDuration("9x")
+	for _, tc := range []struct {
+		name, text, want, fix string
+		open                  []string
+		battery               platform.BatteryStatus
+	}{
+		{"duration", "9x", durErr.Error(), "", []string{"down", "enter"}, platform.BatteryStatus{}},
+		{"short duration", "30s", "duration must be at least 1m (got 30s)", "", []string{"down", "enter"}, platform.BatteryStatus{}},
+		{"until", "25:00", `invalid time "25:00": use 24-hour HH:MM (22:00) or 12-hour HH:MM AM/PM (10:00PM)`, "", []string{"down", "down", "enter"}, platform.BatteryStatus{}},
+		{"work hours", "Mnday 08:00-16:00", `unknown day "Mnday" (use Mon, Tue, … or weekdays/weekends/daily)`, scheduleHint, []string{"up", "down", "down", "down", "enter"}, platform.BatteryStatus{}},
+		{"battery level", "80", "battery threshold must be below the current level (current 76%, threshold 80%)", "choose a lower value", []string{"b"}, platform.BatteryStatus{Percentage: 76, Available: true}},
+		{"battery range", "0", "battery threshold must be between 1 and 100 (got 0)", "", []string{"b"}, platform.BatteryStatus{Percentage: 76, Available: true}},
+		{"no battery", "20", "battery threshold 20% set, but no battery was found (not available)", `"Stop at battery" only works on machines with a battery`, []string{"b"}, platform.BatteryStatus{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &starter{}
+			o := testOptions(st)
+			o.Battery = func() (platform.BatteryStatus, error) { return tc.battery, nil }
+			h := newHarness(t, o, 64)
+			h.m.home.battery = batteryMsg{} // not read yet, so b opens the input
+			h.press(tc.open...)
+			h.typeText(tc.text)
+			h.press("enter")
+			w := h.m.input.errs[h.m.input.kind]
+			if h.m.screen != screenInput || w == nil {
+				t.Fatalf("no error: screen %v", h.m.screen)
+			}
+			if w.Text != tc.want || w.Fix != tc.fix {
+				t.Fatalf("error %q / %q, want %q / %q", w.Text, w.Fix, tc.want, tc.fix)
+			}
+			if st.count() != 0 {
+				t.Fatal("started anyway")
+			}
+		})
 	}
-	m, cmd := Update(ev, m)
-	if m.State != stateMenu || cmd != nil {
-		t.Fatalf("state = %v cmd = %v, want menu without quitting", m.State, cmd)
+}
+
+func TestBatteryOnADesktop(t *testing.T) {
+	st := &starter{}
+	o := testOptions(st)
+	o.Battery = func() (platform.BatteryStatus, error) { return platform.BatteryStatus{}, errNope }
+	h := newHarness(t, o, 64)
+	h.press("b")
+	if h.m.screen != screenHome || h.m.home.opts.battery != 0 {
+		t.Fatalf("screen %v battery %d", h.m.screen, h.m.home.opts.battery)
 	}
-	if !strings.Contains(m.ErrorMessage, "denied") {
-		t.Fatalf("ErrorMessage = %q", m.ErrorMessage)
+	if v := h.m.View(); !strings.Contains(v, "! No battery found") || !strings.Contains(v, "no battery") {
+		t.Fatalf("no warning:\n%s", v)
+	}
+}
+
+func TestWorkHoursPreview(t *testing.T) {
+	st := &starter{}
+	h := newHarness(t, testOptions(st), 64)
+	h.press("down", "down", "down", "enter")
+	h.typeText("weekdays 9:00-17:00")
+	if v := h.m.View(); !strings.Contains(v, "Mon-Fri 09:00-17:00") || !strings.Contains(v, "now: until 17:00") {
+		t.Fatalf("no preview:\n%s", v)
+	}
+	h.press("backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace")
+	h.typeText("6:00-07:00")
+	if v := h.m.View(); !strings.Contains(v, "next: Tue 06:00–07:00") {
+		t.Fatalf("no next window:\n%s", v)
+	}
+}
+
+func TestEnterAloneUsesTheLastValue(t *testing.T) {
+	st := &starter{}
+	o := testOptions(st)
+	o.Base.Duration = 90 * time.Minute
+	h := newHarness(t, o, 64)
+	h.press("down", "enter")
+	if v := h.m.View(); !strings.Contains(v, "enter alone uses 1h30m") {
+		t.Fatalf("no hint:\n%s", v)
+	}
+	h.press("enter")
+	if got := st.last(t).cfg.Duration; got != 90*time.Minute {
+		t.Fatalf("duration %v", got)
+	}
+}
+
+func TestTicksOnlyOnTheDashboard(t *testing.T) {
+	st := &starter{}
+	h := newHarness(t, testOptions(st), 64)
+	h.press("enter")
+	gen := h.m.tick
+	m2, cmd := h.m.Update(tickMsg{gen: gen})
+	if cmd == nil {
+		t.Fatal("no next tick on the dashboard")
+	}
+	h.m = m2.(Model)
+	h.press("s")
+	h.settle()
+	if _, cmd := h.m.Update(tickMsg{gen: gen}); cmd != nil {
+		t.Fatal("ticks continue on Home")
 	}
 }

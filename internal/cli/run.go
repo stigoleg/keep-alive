@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os/signal"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/cli/output"
 	"github.com/stigoleg/keep-alive/v2/internal/clock"
 	"github.com/stigoleg/keep-alive/v2/internal/ipc"
+	"github.com/stigoleg/keep-alive/v2/internal/logging"
 	"github.com/stigoleg/keep-alive/v2/internal/notify"
 	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
@@ -30,12 +30,12 @@ func (a *App) execute(ctx context.Context, p *Plan) error {
 	ctx, stop := signal.NotifyContext(ctx, stopSignals()...)
 	defer stop()
 
+	if p.TUI {
+		return a.runTUI(ctx, p, a.deps(p))
+	}
 	srv, err := a.claimInstance(ctx, p)
 	if err != nil {
 		return err
-	}
-	if p.TUI {
-		return a.runTUI(ctx, p, a.deps(p), srv)
 	}
 	return a.runHeadless(ctx, p, a.deps(p), srv)
 }
@@ -111,27 +111,46 @@ func (a *App) colorAllowed() bool {
 }
 
 // runTUI runs the interactive UI. Signals stop the running session (through
-// ctx) and quit the program. srv (may be nil) controls whichever session the
-// UI runs; a stop request without one quits the UI.
-func (a *App) runTUI(ctx context.Context, p *Plan, deps session.Deps, srv *ipc.Server) error {
+// ctx) and quit the program. When another keepalive is running, the UI
+// attaches to it instead of failing (--replace takes over as before); the
+// control socket follows whichever session the UI runs, and a stop request
+// without one quits the UI.
+func (a *App) runTUI(ctx context.Context, p *Plan, deps session.Deps) error {
 	ctrl := &switchController{}
-	model := tui.New(tui.Options{
-		Version:   a.Version,
-		Context:   ctx,
-		Deps:      deps,
-		Base:      p.Session,
-		Start:     p.AutoStart,
-		OnSession: ctrl.set,
-	})
-	if p.Session.Active {
-		if reason, hint := activity.Diagnose().Problem(); reason != "" {
-			model.SetActivityWarning(strings.TrimSpace(reason + " " + hint))
-		}
+	inst := &tuiInstance{ctx: ctx, info: ipc.ServerInfo{Version: a.Version, Origin: p.Origin}, ctrl: ctrl, stderr: a.Stderr}
+	defer inst.close()
+	logPath := p.Logging.Path
+	if logPath == "" {
+		logPath, _ = logging.DefaultPath()
 	}
+	opts := tui.Options{
+		Version:    a.Version,
+		Context:    ctx,
+		Deps:       deps,
+		Base:       p.Session,
+		Start:      p.AutoStart,
+		OnSession:  ctrl.set,
+		Renderer:   tui.NewRenderer(a.Stdout, a.colorAllowed()),
+		Claim:      inst.claim,
+		LogPath:    logPath,
+		LogEnabled: p.Logging.Enabled,
+		Battery:    a.Battery,
+	}
+	if p.Replace {
+		srv, err := a.claimInstance(ctx, p)
+		if err != nil {
+			return err
+		}
+		inst.adopt(srv)
+		opts.Claimed = true
+	} else {
+		other, err := inst.claim()
+		opts.Attach, opts.Warning, opts.Claimed = other, err, other == nil && err == nil
+	}
+	model := tui.New(opts)
 
 	prog := tea.NewProgram(model,
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 		tea.WithoutSignalHandler(),
 		tea.WithInput(a.Stdin),
 		tea.WithOutput(a.Stdout),
@@ -139,7 +158,6 @@ func (a *App) runTUI(ctx context.Context, p *Plan, deps session.Deps, srv *ipc.S
 	ctrl.mu.Lock()
 	ctrl.quit = prog.Quit
 	ctrl.mu.Unlock()
-	defer serve(ctx, srv, ctrl)()
 	finished := make(chan struct{})
 	defer close(finished)
 	go func() {
@@ -150,8 +168,11 @@ func (a *App) runTUI(ctx context.Context, p *Plan, deps session.Deps, srv *ipc.S
 		}
 	}()
 
-	_, runErr := prog.Run()
+	final, runErr := prog.Run()
 	stopErr := model.Shutdown()
+	if fm, ok := final.(tui.Model); ok && fm.FinalMessage() != "" {
+		fmt.Fprintf(a.Stdout, "keepalive: %s\n", fm.FinalMessage())
+	}
 	if runErr != nil {
 		return runtimeErr(fmt.Errorf("terminal UI: %w", runErr), "use --plain to run without the UI")
 	}
