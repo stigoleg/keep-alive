@@ -25,6 +25,8 @@ var (
 	procSendInput                     = user32.NewProc("SendInput")
 	procGetCursorPos                  = user32.NewProc("GetCursorPos")
 	procSetCursorPos                  = user32.NewProc("SetCursorPos")
+	procMonitorFromRect               = user32.NewProc("MonitorFromRect")
+	procGetMonitorInfoW               = user32.NewProc("GetMonitorInfoW")
 	procOpenInputDesktop              = user32.NewProc("OpenInputDesktop")
 	procCloseDesktop                  = user32.NewProc("CloseDesktop")
 	procGetUserObjectInformationW     = user32.NewProc("GetUserObjectInformationW")
@@ -61,6 +63,7 @@ const (
 
 	desktopSwitchDesktop = 0x0100
 	uoiName              = 2
+	monitorDefaultToNull = 0
 
 	// DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 is the handle value -4.
 	dpiAwarenessPerMonitorV2 = ^uintptr(3)
@@ -111,6 +114,16 @@ type lastInputInfo struct {
 }
 
 type point32 struct{ x, y int32 }
+
+type rect32 struct{ left, top, right, bottom int32 }
+
+// monitorInfo is MONITORINFO.
+type monitorInfo struct {
+	cbSize    uint32
+	rcMonitor rect32
+	rcWork    rect32
+	dwFlags   uint32
+}
 
 // wtsInfoEx is the head of WTSINFOEXW: Level, then the level-1 union, which
 // is 8-byte aligned because it holds LARGE_INTEGERs.
@@ -242,9 +255,32 @@ func (sendInput) Position() (float64, float64, bool) {
 	return float64(p.x), float64(p.y), true
 }
 
-func (sendInput) Bounds() (Rect, bool) {
+// Bounds is the monitor under the cursor. The virtual screen around all
+// monitors has dead zones where Windows would clamp the pointer, which a
+// burst would mistake for the user moving it.
+func (s sendInput) Bounds() (Rect, bool) {
+	if x, y, ok := s.Position(); ok {
+		if r, ok := monitorAt(x, y); ok {
+			return r, true
+		}
+	}
 	r := virtualScreen()
 	return r, r.W > 0 && r.H > 0
+}
+
+func monitorAt(x, y float64) (Rect, bool) {
+	px, py := int32(x), int32(y)
+	at := rect32{px, py, px + 1, py + 1}
+	h, _, _ := procMonitorFromRect.Call(uintptr(unsafe.Pointer(&at)), monitorDefaultToNull)
+	if h == 0 {
+		return Rect{}, false
+	}
+	mi := monitorInfo{cbSize: uint32(unsafe.Sizeof(monitorInfo{}))}
+	if r, _, _ := procGetMonitorInfoW.Call(h, uintptr(unsafe.Pointer(&mi))); r == 0 {
+		return Rect{}, false
+	}
+	m := mi.rcMonitor
+	return Rect{X: float64(m.left), Y: float64(m.top), W: float64(m.right - m.left), H: float64(m.bottom - m.top)}, m.right > m.left && m.bottom > m.top
 }
 
 // FinishAt corrects a return stroke that landed a pixel or two off.
