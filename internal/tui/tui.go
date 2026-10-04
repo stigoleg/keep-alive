@@ -37,6 +37,8 @@ type Options struct {
 	OnSession func(*session.Session)
 	// Renderer styles the UI (see NewRenderer); nil means plain text.
 	Renderer *lipgloss.Renderer
+	// Look says whether the UI may use colours and Unicode symbols.
+	Look Look
 
 	// Claim makes this process the running keepalive; the UI calls it
 	// before starting a session unless Claimed is set. When another
@@ -130,7 +132,7 @@ func New(o Options) Model {
 	}
 	m := Model{
 		version: o.Version,
-		st:      NewStyles(o.Renderer),
+		st:      NewStyles(o.Renderer, o.Look),
 		now:     o.Now,
 		battery: o.Battery,
 		problem: o.ActivityProblem,
