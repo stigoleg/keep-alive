@@ -132,6 +132,13 @@ func TestColourProfiles(t *testing.T) {
 	if !strings.Contains(dark, "38;2;") || !strings.Contains(light, "38;2;") {
 		t.Fatalf("ok colour: dark %q light %q", dark, light)
 	}
+	// 256 and 16 colours use the hand-picked values: grey, not navy.
+	if got := NewStyles(forced(termenv.ANSI256, true), Look{}).Band.Render("x"); !strings.Contains(got, "48;5;235") {
+		t.Fatalf("256-colour band %q", got)
+	}
+	if got := NewStyles(forced(termenv.ANSI, true), Look{}).Key.Render("x"); !strings.Contains(got, "100") {
+		t.Fatalf("16-colour keycap %q", got)
+	}
 }
 
 func TestUnicodeTerminal(t *testing.T) {

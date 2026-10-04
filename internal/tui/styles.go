@@ -8,26 +8,37 @@ import (
 	"github.com/muesli/termenv"
 )
 
-// The palette ("Aurora"). Adaptive colours pick the light or dark variant
-// from the renderer's background setting; terminals with fewer colours get
-// the nearest one. Plain text keeps the terminal's own foreground.
+// The palette ("Aurora"): truecolor values from the mockups, with 256- and
+// 16-colour values picked by hand (the nearest 256 colour of a dark grey is
+// often navy blue). Adaptive colours pick the light or dark variant from
+// the renderer's background setting. Plain text keeps the terminal's own
+// foreground.
+//
+//	name     dark: true 256 16   light: true 256 16
 var (
-	colorFG     = lipgloss.AdaptiveColor{Light: "#1F2330", Dark: "#E4E6EE"}
-	colorMuted  = lipgloss.AdaptiveColor{Light: "#687085", Dark: "#8A90A2"}
-	colorDim    = lipgloss.AdaptiveColor{Light: "#9AA0B1", Dark: "#5B6172"}
-	colorFrame  = lipgloss.AdaptiveColor{Light: "#C8CCD8", Dark: "#3A3F50"}
-	colorSel    = lipgloss.AdaptiveColor{Light: "#ECEEF6", Dark: "#1E2232"}
-	colorTrack  = lipgloss.AdaptiveColor{Light: "#E1E4EC", Dark: "#2A2F3E"}
-	colorAccent = lipgloss.AdaptiveColor{Light: "#6D3FD9", Dark: "#A78BFA"}
-	colorOK     = lipgloss.AdaptiveColor{Light: "#15803D", Dark: "#4ADE80"}
-	colorWarn   = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
-	colorBad    = lipgloss.AdaptiveColor{Light: "#C62828", Dark: "#F87171"}
-	colorKeyBG  = lipgloss.AdaptiveColor{Light: "#E6E8F0", Dark: "#272C3B"}
-	colorKeyFG  = lipgloss.AdaptiveColor{Light: "#3A4159", Dark: "#CFD3E1"}
+	colorFG     = pal("#E4E6EE", "254", "15", "#1F2330", "235", "0")
+	colorMuted  = pal("#8A90A2", "245", "8", "#687085", "242", "8")
+	colorDim    = pal("#5B6172", "241", "8", "#9AA0B1", "248", "7")
+	colorFrame  = pal("#3A3F50", "238", "8", "#C8CCD8", "251", "7")
+	colorSel    = pal("#1E2232", "235", "8", "#ECEEF6", "255", "7")
+	colorTrack  = pal("#2A2F3E", "236", "8", "#E1E4EC", "254", "7")
+	colorAccent = pal("#A78BFA", "141", "13", "#6D3FD9", "62", "5")
+	colorOK     = pal("#4ADE80", "78", "10", "#15803D", "28", "2")
+	colorWarn   = pal("#FBBF24", "214", "11", "#B45309", "130", "3")
+	colorBad    = pal("#F87171", "203", "9", "#C62828", "160", "1")
+	colorKeyBG  = pal("#272C3B", "237", "8", "#E6E8F0", "253", "7")
+	colorKeyFG  = pal("#CFD3E1", "252", "15", "#3A4159", "238", "0")
 	// Text on an ok, warn or muted pill, and on a bad one.
-	colorPillFG    = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#062012"}
-	colorPillBadFG = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#2B0808"}
+	colorPillFG    = pal("#062012", "16", "0", "#FFFFFF", "231", "15")
+	colorPillBadFG = pal("#2B0808", "16", "0", "#FFFFFF", "231", "15")
 )
+
+func pal(dark, dark256, dark16, light, light256, light16 string) lipgloss.CompleteAdaptiveColor {
+	return lipgloss.CompleteAdaptiveColor{
+		Dark:  lipgloss.CompleteColor{TrueColor: dark, ANSI256: dark256, ANSI: dark16},
+		Light: lipgloss.CompleteColor{TrueColor: light, ANSI256: light256, ANSI: light16},
+	}
+}
 
 // Gradient stops, dark and light: violet → pink (at 55 %) → amber for the
 // wordmark and progress, teal → green for the sparkline.
