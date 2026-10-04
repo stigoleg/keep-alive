@@ -1,4 +1,4 @@
-package ui
+package tui
 
 import (
 	"fmt"
@@ -58,10 +58,6 @@ func baseView(m Model) string {
 		return runningView(m)
 	}
 	return ""
-}
-
-func ErrorBanner(message string) string {
-	return "\n" + Current.Error.Render(strings.TrimSpace(message)) + "\n"
 }
 
 func menuView(m Model) string {
@@ -447,13 +443,6 @@ func helpBodyWidth(m Model) int {
 	return width
 }
 
-func helpContentWidth(width int) int {
-	if width <= 0 {
-		width = defaultTerminalWidth
-	}
-	return maxInt(20, width-8)
-}
-
 func renderHelpTable(width int, leftHeader string, rightHeader string, rows [][]string) string {
 	headerStyle := lipgloss.NewStyle().
 		Foreground(defaultColors.Highlight).
@@ -538,7 +527,7 @@ func flagHelpRows() [][]string {
 		{"-c, --clock string", `Time to keep system alive until (e.g., "22:00" or "10:00PM")`},
 		{"-b, --battery int", "Keep system awake until battery reaches this percentage"},
 		{"-a, --active", "Simulate activity when a real input backend is available"},
-		{"-l, --log", "Enable logging to debug.log"},
+		{"-l, --log", "Write a debug log (path shown at start)"},
 		{"-v, --version", "Show version information"},
 		{"-h, --help", "Show help message"},
 	}

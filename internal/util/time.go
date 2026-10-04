@@ -6,35 +6,32 @@ import (
 	"time"
 )
 
-// ParseTimeString parses a time string in either 12-hour or 24-hour format
-// Supported formats:
-// - 24-hour: "HH:MM" (e.g., "23:30", "09:45")
-// - 12-hour: "HH:MM[AM|PM]" (e.g., "11:30PM", "09:45AM")
-func ParseTimeString(timeStr string) (time.Time, error) {
-	return ParseTimeStringWithNow(timeStr, time.Now())
-}
+var clockLayouts = []string{"15:04", "3:04PM", "3:04 PM"}
 
-// ParseTimeStringWithNow is like ParseTimeString but accepts a custom "now" time
-// This is primarily used for testing to ensure consistent results
-func ParseTimeStringWithNow(timeStr string, now time.Time) (time.Time, error) {
-	timeStr = strings.TrimSpace(strings.ToUpper(timeStr))
-
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-
-	// Try 24-hour format first
-	if t, err := time.Parse("15:04", timeStr); err == nil {
-		return today.Add(time.Duration(t.Hour())*time.Hour + time.Duration(t.Minute())*time.Minute), nil
-	}
-
-	// Try 12-hour format with AM/PM
-	formats := []string{"3:04PM", "3:04 PM", "03:04PM", "03:04 PM"}
-	for _, format := range formats {
-		if t, err := time.Parse(format, timeStr); err == nil {
-			return today.Add(time.Duration(t.Hour())*time.Hour + time.Duration(t.Minute())*time.Minute), nil
+// ParseClock parses a time of day in 24-hour ("22:00", "9:45") or 12-hour
+// ("10:00PM", "10:00 pm") form.
+func ParseClock(s string) (hour, minute int, err error) {
+	norm := strings.ToUpper(strings.TrimSpace(s))
+	for _, layout := range clockLayouts {
+		if t, err := time.Parse(layout, norm); err == nil {
+			return t.Hour(), t.Minute(), nil
 		}
 	}
+	return 0, 0, fmt.Errorf("invalid time %q: use 24-hour HH:MM (22:00) or 12-hour HH:MM AM/PM (10:00PM)", strings.TrimSpace(s))
+}
 
-	return time.Time{}, fmt.Errorf("invalid time format: %s\n\nValid formats:\n"+
-		"• 24-hour format: HH:MM (e.g., '23:30', '09:45')\n"+
-		"• 12-hour format: HH:MM[AM|PM] (e.g., '11:30PM', '9:45 AM')", timeStr)
+// NextClockTime returns the next occurrence of the time of day s that is at
+// least one minute after now. The next day is computed with time.Date, so a
+// daylight-saving change in between is handled.
+func NextClockTime(s string, now time.Time) (time.Time, error) {
+	hour, minute, err := ParseClock(s)
+	if err != nil {
+		return time.Time{}, err
+	}
+	y, m, d := now.Date()
+	t := time.Date(y, m, d, hour, minute, 0, 0, now.Location())
+	if t.Sub(now) < time.Minute {
+		t = time.Date(y, m, d+1, hour, minute, 0, 0, now.Location())
+	}
+	return t, nil
 }

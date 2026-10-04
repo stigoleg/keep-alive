@@ -70,7 +70,7 @@ func legacyStatus(base Status, ev platform.ActivityEvent) Status {
 		st.LastBurst = ev.At
 	default:
 		st.State = StateWaitingIdle
-		st.Reason = fmt.Sprintf("needs %s idle", platform.IdleThreshold)
+		st.Reason = fmt.Sprintf("needs %s", platform.IdleThreshold)
 	}
 	return st
 }

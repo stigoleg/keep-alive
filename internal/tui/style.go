@@ -1,5 +1,5 @@
-// Package ui provides the terminal user interface for the keep-alive application.
-package ui
+// Package tui provides the terminal user interface for the keep-alive application.
+package tui
 
 import "github.com/charmbracelet/lipgloss"
 

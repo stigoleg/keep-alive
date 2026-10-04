@@ -1,16 +1,13 @@
-package ui
+package tui
 
 import (
-	"context"
-	"os/exec"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/stigoleg/keep-alive/v2/internal/keepalive"
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
+	"github.com/stigoleg/keep-alive/v2/internal/session"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -102,7 +99,6 @@ func TestUpdate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.model.KeepAlive = keepalive.NewKeeper()
 			got, _ := Update(tt.msg, tt.model)
 			if got.State != tt.wantType {
 				t.Errorf("Update() state = %v, want %v", got.State, tt.wantType)
@@ -113,8 +109,7 @@ func TestUpdate(t *testing.T) {
 
 func TestTimedInputView(t *testing.T) {
 	m := Model{
-		State:     stateTimedInput,
-		KeepAlive: keepalive.NewKeeper(),
+		State: stateTimedInput,
 	}
 	m.textInput = newMinutesTextInput()
 	m.textInput.SetValue("5")
@@ -130,8 +125,7 @@ func TestTimedInputView(t *testing.T) {
 
 func TestClockInputView(t *testing.T) {
 	m := Model{
-		State:     stateClockInput,
-		KeepAlive: keepalive.NewKeeper(),
+		State: stateClockInput,
 	}
 	m.textInput = newClockTextInput()
 	m.textInput.SetValue("22:00")
@@ -149,7 +143,7 @@ func TestBatteryInputSetsThreshold(t *testing.T) {
 	restore := stubBatteryStatus(platformBatteryStatus(80), nil)
 	defer restore()
 
-	m := Model{State: stateBatteryInput, KeepAlive: keepalive.NewKeeper()}
+	m := Model{State: stateBatteryInput}
 	m.textInput = newBatteryTextInput(0)
 	m.textInput.SetValue("65")
 
@@ -169,7 +163,7 @@ func TestBatteryInputRejectsThresholdAtCurrentBattery(t *testing.T) {
 	restore := stubBatteryStatus(platformBatteryStatus(65), nil)
 	defer restore()
 
-	m := Model{State: stateBatteryInput, KeepAlive: keepalive.NewKeeper()}
+	m := Model{State: stateBatteryInput}
 	m.textInput = newBatteryTextInput(0)
 	m.textInput.SetValue("65")
 
@@ -184,7 +178,7 @@ func TestBatteryInputRejectsThresholdAtCurrentBattery(t *testing.T) {
 
 func TestTimedInputValidationErrors(t *testing.T) {
 	// Empty input
-	m := Model{State: stateTimedInput, KeepAlive: keepalive.NewKeeper()}
+	m := Model{State: stateTimedInput}
 	m.textInput = newMinutesTextInput()
 	m.textInput.SetValue("")
 	got, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
@@ -193,7 +187,7 @@ func TestTimedInputValidationErrors(t *testing.T) {
 	}
 
 	// Zero minutes
-	m2 := Model{State: stateTimedInput, KeepAlive: keepalive.NewKeeper()}
+	m2 := Model{State: stateTimedInput}
 	m2.textInput = newMinutesTextInput()
 	m2.textInput.SetValue("0")
 	got2, _ := Update(tea.KeyMsg{Type: tea.KeyEnter}, m2)
@@ -207,7 +201,6 @@ func TestRunningView(t *testing.T) {
 		State:     stateRunning,
 		StartTime: time.Now(),
 		Duration:  5 * time.Minute,
-		KeepAlive: keepalive.NewKeeper(),
 	}
 	view := View(m)
 
@@ -225,7 +218,6 @@ func TestRunningView(t *testing.T) {
 func TestRunningViewBatteryMode(t *testing.T) {
 	m := Model{
 		State:             stateRunning,
-		KeepAlive:         keepalive.NewKeeper(),
 		BatteryThreshold:  20,
 		BatteryPercentage: 42,
 	}
@@ -244,7 +236,6 @@ func TestRunningViewCombinedLimits(t *testing.T) {
 		State:             stateRunning,
 		StartTime:         time.Now(),
 		Duration:          5 * time.Minute,
-		KeepAlive:         keepalive.NewKeeper(),
 		BatteryThreshold:  20,
 		BatteryPercentage: 42,
 	}
@@ -258,30 +249,29 @@ func TestRunningViewCombinedLimits(t *testing.T) {
 	}
 }
 
-func TestBatteryStatusAtThresholdQuits(t *testing.T) {
-	m := Model{
-		State:            stateRunning,
-		KeepAlive:        keepalive.NewKeeper(),
-		BatteryThreshold: 20,
-	}
+func TestBatteryStoppedEventQuits(t *testing.T) {
+	m, _ := startTestSession(t, Options{Base: session.Config{BatteryThreshold: 20}, Start: true})
+	r := m.sessions.current()
+	stopped := session.Event{Type: session.EventStopped, Reason: session.ReasonBattery}
 
-	got, cmd := Update(batteryStatusMsg{status: platformBatteryStatus(20)}, m)
+	got, cmd := Update(sessionEventMsg{r: r, ev: stopped}, m)
 	if got.State != stateMenu {
 		t.Fatalf("Update() state = %v, want %v", got.State, stateMenu)
 	}
 	if cmd == nil {
 		t.Fatal("Update() command is nil, want quit command")
 	}
+	if !strings.Contains(got.ErrorMessage, "20%") {
+		t.Fatalf("ErrorMessage = %q, want the threshold", got.ErrorMessage)
+	}
 }
 
-func TestBatteryStatusAboveThresholdKeepsRunning(t *testing.T) {
-	m := Model{
-		State:            stateRunning,
-		KeepAlive:        keepalive.NewKeeper(),
-		BatteryThreshold: 20,
-	}
+func TestBatteryEventUpdatesPercentage(t *testing.T) {
+	m, _ := startTestSession(t, Options{Base: session.Config{BatteryThreshold: 20}, Start: true})
+	r := m.sessions.current()
+	ev := session.Event{Type: session.EventBattery, Snapshot: session.Snapshot{Battery: session.Battery{Percent: 21, Available: true, Threshold: 20}}}
 
-	got, cmd := Update(batteryStatusMsg{status: platformBatteryStatus(21)}, m)
+	got, cmd := Update(sessionEventMsg{r: r, ev: ev}, m)
 	if got.State != stateRunning {
 		t.Fatalf("Update() state = %v, want %v", got.State, stateRunning)
 	}
@@ -289,8 +279,19 @@ func TestBatteryStatusAboveThresholdKeepsRunning(t *testing.T) {
 		t.Fatalf("Update() BatteryPercentage = %d, want 21", got.BatteryPercentage)
 	}
 	if cmd == nil {
-		t.Fatal("Update() command is nil, want next battery poll command")
+		t.Fatal("Update() command is nil, want to keep waiting for events")
 	}
+	stopTestSession(t, got)
+}
+
+func TestStaleSessionEventIgnored(t *testing.T) {
+	m, _ := startTestSession(t, Options{Start: true})
+	stale := &runner{}
+	got, cmd := Update(sessionEventMsg{r: stale, ev: session.Event{Type: session.EventStopped, Reason: session.ReasonDuration}}, m)
+	if got.State != stateRunning || cmd != nil {
+		t.Fatalf("stale event changed state to %v (cmd %v)", got.State, cmd)
+	}
+	stopTestSession(t, got)
 }
 
 func TestWindowSizeUpdatesModel(t *testing.T) {
@@ -421,24 +422,10 @@ func TestHelpCloseDoesNotQuit(t *testing.T) {
 	}
 }
 
-func TestErrorBannerHasOwnLines(t *testing.T) {
-	banner := ErrorBanner("invalid flag")
-	if !strings.HasPrefix(banner, "\n") {
-		t.Fatalf("ErrorBanner() = %q, want leading newline", banner)
-	}
-	if !strings.HasSuffix(banner, "\n") {
-		t.Fatalf("ErrorBanner() = %q, want trailing newline", banner)
-	}
-	if !strings.Contains(banner, "invalid flag") {
-		t.Fatalf("ErrorBanner() = %q, want message", banner)
-	}
-}
-
 func TestErrorDisplay(t *testing.T) {
 	m := Model{
 		State:        stateMenu,
 		ErrorMessage: "test error",
-		KeepAlive:    keepalive.NewKeeper(),
 	}
 	view := View(m)
 
@@ -461,63 +448,90 @@ func stubBatteryStatus(status platform.BatteryStatus, err error) func() {
 	}
 }
 
-func TestTimeRemaining(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping test in short mode")
+func TestStartAndStopThroughSessionEngine(t *testing.T) {
+	m, deps := startTestSession(t, Options{})
+	m.Selected = 0
+
+	m, cmd := Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
+	if m.State != stateRunning || cmd == nil {
+		t.Fatalf("state = %v, cmd = %v; want running with commands", m.State, cmd)
+	}
+	ev := nextEvent(t, m)
+	if ev.ev.Type != session.EventStarted {
+		t.Fatalf("first event = %s, want started", ev.ev.Type)
+	}
+	m, _ = Update(ev, m)
+	if deps.power.acquires.Load() != 1 {
+		t.Fatalf("power acquired %d times, want 1", deps.power.acquires.Load())
 	}
 
-	// Add test timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	m, cmd = Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}, m)
+	if m.State != stateMenu || cmd != nil {
+		t.Fatalf("after stop: state = %v, cmd = %v", m.State, cmd)
+	}
+	if r := deps.power.releases.Load(); r != 1 {
+		t.Fatalf("power released %d times, want 1", r)
+	}
+	if m.sessions.current() != nil {
+		t.Fatal("session slot not cleared")
+	}
+}
 
-	// Kill any existing caffeinate processes
-	if runtime.GOOS == "darwin" {
-		exec.Command("pkill", "-9", "caffeinate").Run()
+func TestTimedSessionEndsAndQuits(t *testing.T) {
+	m, deps := startTestSession(t, Options{Base: session.Config{Active: true}})
+	m.State = stateTimedInput
+	m.textInput = newMinutesTextInput()
+	m.textInput.SetValue("1")
+	m, _ = Update(tea.KeyMsg{Type: tea.KeyEnter}, m)
+	if m.State != stateRunning || m.Duration != time.Minute {
+		t.Fatalf("state = %v duration = %v", m.State, m.Duration)
+	}
+	if snap := m.sessions.current().sess.Snapshot(); snap.Mode != session.ModeDuration || !snap.Active {
+		t.Fatalf("session snapshot = %+v", snap)
 	}
 
-	// Cleanup after test
-	t.Cleanup(func() {
-		if runtime.GOOS == "darwin" {
-			exec.Command("pkill", "-9", "caffeinate").Run()
-		}
-	})
+	// Simulate the session reporting the end of its duration.
+	r := m.sessions.current()
+	m, cmd := Update(sessionEventMsg{r: r, ev: session.Event{Type: session.EventStopped, Reason: session.ReasonDuration}}, m)
+	if m.State != stateMenu || cmd == nil {
+		t.Fatalf("state = %v cmd = %v, want menu + quit", m.State, cmd)
+	}
+	if a, rel := deps.power.acquires.Load(), deps.power.releases.Load(); a != rel {
+		t.Fatalf("acquires=%d releases=%d", a, rel)
+	}
+}
 
-	// Create a keeper with a short duration
-	k := keepalive.NewKeeper()
-	defer k.Stop() // Ensure cleanup even if test fails
+func TestStartFromOptionsAndShutdown(t *testing.T) {
+	until := time.Now().Add(2 * time.Hour)
+	m, deps := startTestSession(t, Options{Base: session.Config{Until: until}, Start: true})
+	if m.State != stateRunning || !m.Clock.Equal(until) {
+		t.Fatalf("state = %v clock = %v", m.State, m.Clock)
+	}
+	if m.Init() == nil {
+		t.Fatal("Init() returned no commands for a running session")
+	}
+	nextEvent(t, m) // started
+	if err := m.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if a, r := deps.power.acquires.Load(), deps.power.releases.Load(); a != 1 || r != 1 {
+		t.Fatalf("acquires=%d releases=%d, want 1/1", a, r)
+	}
+}
 
-	// Start timed with a short duration
-	duration := 2 * time.Second
-	err := k.StartTimed(duration)
-	if err != nil && err.Error() == "unsupported platform" {
-		t.Skip("Skipping on unsupported platform")
+func TestSessionErrorReturnsToMenu(t *testing.T) {
+	m, deps := startTestSession(t, Options{})
+	deps.power.err = errDenied
+	m, _ = startSession(m, 0, time.Time{})
+	ev := nextEvent(t, m)
+	for ev.ev.Type != session.EventStopped {
+		ev = nextEvent(t, m)
 	}
-	if err != nil {
-		t.Fatalf("StartTimed failed: %v", err)
+	m, cmd := Update(ev, m)
+	if m.State != stateMenu || cmd != nil {
+		t.Fatalf("state = %v cmd = %v, want menu without quitting", m.State, cmd)
 	}
-
-	// Wait for context or short timeout
-	select {
-	case <-ctx.Done():
-		t.Fatal("test timeout")
-	case <-time.After(200 * time.Millisecond):
-	}
-
-	// Check time remaining
-	remaining := k.TimeRemaining()
-	if remaining > duration {
-		t.Errorf("TimeRemaining returned %v, expected <= %v", remaining, duration)
-	}
-	if remaining <= 0 {
-		t.Error("TimeRemaining returned <= 0 immediately after start")
-	}
-
-	// Stop and verify cleanup
-	err = k.Stop()
-	if err != nil {
-		t.Fatalf("Stop failed: %v", err)
-	}
-	if k.TimeRemaining() != 0 {
-		t.Error("TimeRemaining not 0 after stop")
+	if !strings.Contains(m.ErrorMessage, "denied") {
+		t.Fatalf("ErrorMessage = %q", m.ErrorMessage)
 	}
 }

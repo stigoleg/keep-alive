@@ -1,7 +1,9 @@
-package ui
+package tui
 
 import (
+	"context"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -9,15 +11,16 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/timer"
 	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/stigoleg/keep-alive/v2/internal/keepalive"
-	"github.com/stigoleg/keep-alive/v2/internal/platform"
+	"github.com/stigoleg/keep-alive/v2/internal/session"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const batteryPollInterval = 30 * time.Second
-
 const defaultTerminalWidth = 80
+
+// stopTimeout bounds how long stopping a session from the TUI waits for the
+// power hold to be released.
+const stopTimeout = 10 * time.Second
 
 // state represents the different states of the TUI.
 type state int
@@ -35,7 +38,6 @@ type Model struct {
 	State              state
 	Selected           int
 	textInput          textinput.Model
-	KeepAlive          *keepalive.Keeper
 	ErrorMessage       string
 	StartTime          time.Time
 	Duration           time.Duration
@@ -56,84 +58,169 @@ type Model struct {
 	BatteryError       string
 	Width              int
 	Height             int
+
+	// Session wiring. sessions is a pointer so every copy of the model that
+	// bubbletea makes shares the running session.
+	ctx      context.Context
+	deps     session.Deps
+	base     session.Config
+	sessions *sessionSlot
+}
+
+// Options configures New.
+type Options struct {
+	Version string
+	// Context cancels running sessions (signals); nil means Background.
+	Context context.Context
+	// Deps are passed to every session the TUI starts.
+	Deps session.Deps
+	// Base is the session template: activity tuning, display, battery
+	// threshold and limits from the command line.
+	Base session.Config
+	// Start begins a session from Base immediately.
+	Start bool
 }
 
 // InitialModel returns the initial model for the TUI.
 func InitialModel() Model {
-	return Model{
+	return New(Options{})
+}
+
+// New returns a model in the menu, or already running when o.Start is set.
+func New(o Options) Model {
+	ctx := o.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m := Model{
 		State:              stateMenu,
 		Selected:           0,
 		textInput:          newMinutesTextInput(),
-		KeepAlive:          keepalive.NewKeeper(),
 		ShowHelp:           false,
 		ShowDependencyInfo: false,
 		DependencyWarning:  "",
 		ActivityWarning:    "",
+		version:            o.Version,
 		Keys:               DefaultKeys(),
 		Help:               NewHelpModel(),
 		HelpViewport:       newHelpViewport(defaultTerminalWidth, 20),
 		progress:           progress.New(progress.WithDefaultGradient(), progress.WithWidth(34)),
-		SimulateActivity:   false,
+		SimulateActivity:   o.Base.Active,
+		BatteryThreshold:   o.Base.BatteryThreshold,
 		Width:              defaultTerminalWidth,
+		ctx:                ctx,
+		deps:               o.Deps,
+		base:               o.Base,
+		sessions:           &sessionSlot{},
 	}
-}
-
-// InitialModelWithDuration returns a model initialized with a specific duration and starts running.
-func InitialModelWithDuration(minutes int, simulateActivity bool) Model {
-	return InitialModelWithLimits(minutes, 0, platform.BatteryStatus{}, simulateActivity)
-}
-
-// InitialModelWithBattery returns a model initialized in battery threshold mode.
-func InitialModelWithBattery(threshold int, status platform.BatteryStatus, simulateActivity bool) Model {
-	return InitialModelWithLimits(0, threshold, status, simulateActivity)
-}
-
-// InitialModelWithLimits returns a model initialized with any active runtime limits.
-func InitialModelWithLimits(minutes int, threshold int, status platform.BatteryStatus, simulateActivity bool) Model {
-	m := InitialModel()
-	m.SimulateActivity = simulateActivity
-	if minutes > 0 {
-		m.textInput.SetValue(strconv.Itoa(minutes))
-		m.Duration = time.Duration(minutes) * time.Minute
-		m.timer = timer.NewWithInterval(m.Duration, time.Second/10)
+	if o.Start {
+		dur := o.Base.Duration
+		if !o.Base.Until.IsZero() {
+			dur = time.Until(o.Base.Until)
+		}
+		if dur > 0 {
+			m.textInput.SetValue(strconv.Itoa(int(dur.Minutes())))
+		}
+		m, _ = startSession(m, dur, o.Base.Until)
 	}
-	if threshold > 0 {
-		m.BatteryThreshold = threshold
-		m.BatteryPercentage = status.Percentage
-	}
-
-	m.State = stateRunning
-	m.StartTime = time.Now()
-
-	m.KeepAlive.SetSimulateActivity(simulateActivity)
-	var err error
-	if m.Duration > 0 {
-		err = m.KeepAlive.StartTimed(m.Duration)
-	} else {
-		err = m.KeepAlive.StartIndefinite()
-	}
-	if err != nil {
-		m.ErrorMessage = err.Error()
-		m.State = stateMenu
-		return m
-	}
-
 	return m
+}
+
+// Shutdown stops the running session, if any, and waits for it to release
+// the power hold. Call it after the program exits.
+func (m Model) Shutdown() error {
+	if m.sessions == nil {
+		return nil
+	}
+	return m.sessions.stop()
+}
+
+// sessionSlot holds the session the TUI is currently running.
+type sessionSlot struct {
+	mu  sync.Mutex
+	cur *runner
+}
+
+func (s *sessionSlot) set(r *runner) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cur = r
+}
+
+func (s *sessionSlot) current() *runner {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cur
+}
+
+// stop ends the current session (if any) and clears the slot.
+func (s *sessionSlot) stop() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	r := s.cur
+	s.cur = nil
+	s.mu.Unlock()
+	if r == nil {
+		return nil
+	}
+	return r.stop()
+}
+
+// runner is one session started by the TUI.
+type runner struct {
+	sess   *session.Session
+	events <-chan session.Event
+	unsub  func()
+	done   chan session.Result
+}
+
+func startRunner(ctx context.Context, cfg session.Config, deps session.Deps) *runner {
+	s := session.New(cfg, deps)
+	events, unsub := s.Subscribe()
+	r := &runner{sess: s, events: events, unsub: unsub, done: make(chan session.Result, 1)}
+	go func() { r.done <- s.Run(ctx) }()
+	return r
+}
+
+// stop asks the session to end and waits until Run has returned.
+func (r *runner) stop() error {
+	r.sess.Stop(session.ReasonUser)
+	defer r.unsub()
+	select {
+	case res := <-r.done:
+		r.done <- res // keep the result for anyone else waiting
+		return res.Err
+	case <-time.After(stopTimeout):
+		return context.DeadlineExceeded
+	}
+}
+
+// sessionEventMsg carries one session event into Update.
+type sessionEventMsg struct {
+	r  *runner
+	ev session.Event
+}
+
+// waitForEvent delivers the runner's next event; nil once the stream ends.
+func waitForEvent(r *runner) tea.Cmd {
+	return func() tea.Msg {
+		ev, ok := <-r.events
+		if !ok {
+			return nil
+		}
+		return sessionEventMsg{r: r, ev: ev}
+	}
 }
 
 // Init implements tea.Model
 func (m Model) Init() tea.Cmd {
 	if m.State == stateRunning {
-		var cmds []tea.Cmd
-		if m.Duration > 0 {
-			cmds = append(cmds, m.timer.Init(), m.progress.SetPercent(0))
-		}
-		if m.BatteryThreshold > 0 {
-			cmds = append(cmds, batteryPollCmd())
-		}
-		if len(cmds) > 0 {
-			return tea.Batch(cmds...)
-		}
+		return runningCommands(m)
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
-package ui
+package tui
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,31 +11,24 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/timer"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stigoleg/keep-alive/v2/internal/activity"
+	"github.com/stigoleg/keep-alive/v2/internal/config"
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
+	"github.com/stigoleg/keep-alive/v2/internal/session"
 	"github.com/stigoleg/keep-alive/v2/internal/util"
 )
 
-type batteryStatusMsg struct {
-	status platform.BatteryStatus
-	err    error
-}
-
+// readBatteryStatus validates the battery threshold typed into the menu; the
+// running session polls the battery itself.
 var readBatteryStatus = platform.GetBatteryStatus
-
-func batteryPollCmd() tea.Cmd {
-	return tea.Tick(batteryPollInterval, func(time.Time) tea.Msg {
-		status, err := readBatteryStatus()
-		return batteryStatusMsg{status: status, err: err}
-	})
-}
 
 func runningCommands(m Model) tea.Cmd {
 	var cmds []tea.Cmd
 	if m.Duration > 0 {
 		cmds = append(cmds, m.timer.Init(), m.progress.SetPercent(0))
 	}
-	if m.BatteryThreshold > 0 {
-		cmds = append(cmds, batteryPollCmd())
+	if r := m.sessions.current(); r != nil {
+		cmds = append(cmds, waitForEvent(r))
 	}
 	return tea.Batch(cmds...)
 }
@@ -52,7 +46,7 @@ func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
 	if m.ShowDependencyInfo {
 		// Still process timer messages so progress and timeout continue under the overlay
 		switch msg.(type) {
-		case timer.TickMsg, timer.TimeoutMsg, batteryStatusMsg:
+		case timer.TickMsg, timer.TimeoutMsg, sessionEventMsg:
 			return handleRunningState(msg, m)
 		}
 		return handleDependencyInfoState(msg, m)
@@ -60,7 +54,7 @@ func Update(msg tea.Msg, m Model) (Model, tea.Cmd) {
 	if m.ShowHelp {
 		// Still process timer messages so progress and timeout continue under the overlay
 		switch msg.(type) {
-		case timer.TickMsg, timer.TimeoutMsg, batteryStatusMsg:
+		case timer.TickMsg, timer.TimeoutMsg, sessionEventMsg:
 			return handleRunningState(msg, m)
 		}
 		return handleHelpState(msg, m)
@@ -233,16 +227,9 @@ func handleClockInputSubmit(m Model) (Model, tea.Cmd) {
 	}
 
 	now := time.Now()
-	target, err := util.ParseTimeStringWithNow(value, now)
+	target, err := util.NextClockTime(value, now)
 	if err != nil {
-		m.ErrorMessage = err.Error()
-		return m, nil
-	}
-	if target.Before(now) {
-		target = target.Add(24 * time.Hour)
-	}
-	if !target.After(now) {
-		m.ErrorMessage = "Invalid Clock • Please enter a future time"
+		m.ErrorMessage = "Invalid Clock • " + err.Error()
 		return m, nil
 	}
 
@@ -366,33 +353,37 @@ func handleTimedInputSubmit(m Model) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	dur, err := util.ParseDuration(value)
+	dur, err := config.ParseDuration(value)
 	if err != nil {
-		m.ErrorMessage = err.Error()
-		return m, nil
-	}
-	if dur <= 0 {
-		m.ErrorMessage = "Invalid Input • Please enter a positive number"
+		m.ErrorMessage = "Invalid Input • " + err.Error()
 		return m, nil
 	}
 
 	return startSession(m, dur, time.Time{})
 }
 
+// startSession starts a session through the session engine. dur is the
+// countdown shown; clock, when set, makes it an until-session.
 func startSession(m Model, dur time.Duration, clock time.Time) (Model, tea.Cmd) {
 	m.ActivityWarning = activityWarningFor(m.SimulateActivity)
-	m.KeepAlive.SetSimulateActivity(m.SimulateActivity)
 
-	var err error
-	if dur > 0 {
-		err = m.KeepAlive.StartTimed(dur)
-	} else {
-		err = m.KeepAlive.StartIndefinite()
+	cfg := m.base
+	cfg.Duration, cfg.Until = 0, time.Time{}
+	if !clock.IsZero() {
+		cfg.Until = clock
+	} else if dur > 0 {
+		cfg.Duration = dur
 	}
-	if err != nil {
-		m.ErrorMessage = "System Error • " + err.Error()
-		return m, nil
+	cfg.BatteryThreshold = m.BatteryThreshold
+	cfg.Active = m.SimulateActivity
+	if m.sessions == nil {
+		m.sessions = &sessionSlot{}
 	}
+	if m.ctx == nil {
+		m.ctx = context.Background()
+	}
+	_ = m.sessions.stop()
+	m.sessions.set(startRunner(m.ctx, cfg, m.deps))
 
 	m.State = stateRunning
 	m.StartTime = time.Now()
@@ -446,9 +437,10 @@ func handleRunningState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case timer.TimeoutMsg:
-		return handleQuit(m)
-	case batteryStatusMsg:
-		return handleBatteryStatusMsg(msg, m)
+		// The session ends itself and reports it as a stopped event.
+		return m, tea.Batch(cmds...)
+	case sessionEventMsg:
+		return handleSessionEvent(msg, m)
 	}
 	if len(cmds) > 0 {
 		return m, tea.Batch(cmds...)
@@ -456,24 +448,45 @@ func handleRunningState(msg tea.Msg, m Model) (Model, tea.Cmd) {
 	return m, nil
 }
 
-func handleBatteryStatusMsg(msg batteryStatusMsg, m Model) (Model, tea.Cmd) {
-	if m.BatteryThreshold == 0 {
-		return m, nil
+// handleSessionEvent applies an event from the running session.
+func handleSessionEvent(msg sessionEventMsg, m Model) (Model, tea.Cmd) {
+	if msg.r != m.sessions.current() {
+		return m, nil // from a session that was already stopped
 	}
-
-	if msg.err != nil {
-		m.BatteryError = msg.err.Error()
-		return m, batteryPollCmd()
+	ev := msg.ev
+	switch ev.Type {
+	case session.EventBattery:
+		if ev.Snapshot.Battery.Available {
+			m.BatteryPercentage = ev.Snapshot.Battery.Percent
+			m.BatteryError = ""
+		} else {
+			m.BatteryError = ev.Message
+		}
+	case session.EventActivity:
+		if st := ev.Snapshot.Activity; st.State == activity.StateDegraded {
+			m.ActivityWarning = strings.TrimSpace(st.Reason + " " + st.Hint)
+		}
+	case session.EventStopped:
+		return handleSessionStopped(ev, m)
 	}
+	return m, waitForEvent(msg.r)
+}
 
-	m.BatteryPercentage = msg.status.Percentage
-	m.BatteryError = ""
-	if m.BatteryPercentage <= m.BatteryThreshold {
-		m.ErrorMessage = fmt.Sprintf("Battery reached %d%% threshold", m.BatteryThreshold)
+// handleSessionStopped reacts to the session ending on its own.
+func handleSessionStopped(ev session.Event, m Model) (Model, tea.Cmd) {
+	threshold := m.BatteryThreshold
+	switch ev.Reason {
+	case session.ReasonError:
+		cleaned, _ := cleanup(m)
+		cleaned.ErrorMessage = "System Error • " + ev.Message
+		return cleaned, nil
+	case session.ReasonBattery:
+		cleaned, _ := cleanup(m)
+		cleaned.ErrorMessage = fmt.Sprintf("Battery reached %d%% threshold", threshold)
+		return cleaned, tea.Quit
+	default:
 		return handleQuit(m)
 	}
-
-	return m, batteryPollCmd()
 }
 
 // handleRunningKeyMsg handles keyboard input in the running state
@@ -505,11 +518,10 @@ func activityWarningFor(enabled bool) string {
 	return strings.TrimSpace(status.Message)
 }
 
-// cleanup stops the keep-alive process and resets the model state
+// cleanup stops the session and resets the model state. The state is reset
+// even when stopping reports an error: the session is over either way.
 func cleanup(m Model) (Model, error) {
-	if err := m.KeepAlive.Stop(); err != nil {
-		return m, err
-	}
+	err := m.sessions.stop()
 
 	// Reset all state
 	m.State = stateMenu
@@ -523,26 +535,21 @@ func cleanup(m Model) (Model, error) {
 	// Reset timer and progress models
 	m.timer = timer.Model{}
 	m.progress = progress.New(progress.WithDefaultGradient(), progress.WithWidth(34))
+	if err != nil {
+		m.ErrorMessage = "System Error • " + err.Error()
+	}
 
-	return m, nil
+	return m, err
 }
 
 // handleStopAndReturn stops the keep-alive and returns to the main menu
 func handleStopAndReturn(m Model) (Model, tea.Cmd) {
-	cleanedModel, err := cleanup(m)
-	if err != nil {
-		m.ErrorMessage = err.Error()
-		return m, nil
-	}
+	cleanedModel, _ := cleanup(m)
 	return cleanedModel, nil
 }
 
 // handleQuit handles quitting the application
 func handleQuit(m Model) (Model, tea.Cmd) {
-	cleanedModel, err := cleanup(m)
-	if err != nil {
-		m.ErrorMessage = err.Error()
-		return m, nil
-	}
+	cleanedModel, _ := cleanup(m)
 	return cleanedModel, tea.Quit
 }

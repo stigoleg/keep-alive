@@ -5,10 +5,7 @@ import (
 	"time"
 )
 
-func TestParseTimeString(t *testing.T) {
-	now := time.Now()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-
+func TestParseClock(t *testing.T) {
 	tests := []struct {
 		name      string
 		timeStr   string
@@ -135,32 +132,63 @@ func TestParseTimeString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseTimeString(tt.timeStr)
+			hour, minute, err := ParseClock(tt.timeStr)
 
 			if tt.wantError {
 				if err == nil {
-					t.Errorf("ParseTimeString(%q) expected error but got none", tt.timeStr)
+					t.Errorf("ParseClock(%q) expected error but got none", tt.timeStr)
 				}
 				return
 			}
-
 			if err != nil {
-				t.Errorf("ParseTimeString(%q) unexpected error: %v", tt.timeStr, err)
+				t.Errorf("ParseClock(%q) unexpected error: %v", tt.timeStr, err)
 				return
 			}
-
-			// Check if the parsed time matches expected hour and minute
-			if got.Hour() != tt.wantHour {
-				t.Errorf("ParseTimeString(%q) got hour %d, want %d", tt.timeStr, got.Hour(), tt.wantHour)
-			}
-			if got.Minute() != tt.wantMin {
-				t.Errorf("ParseTimeString(%q) got minute %d, want %d", tt.timeStr, got.Minute(), tt.wantMin)
-			}
-
-			// Verify the date is today
-			if got.Year() != today.Year() || got.Month() != today.Month() || got.Day() != today.Day() {
-				t.Errorf("ParseTimeString(%q) got date %v, want today's date", tt.timeStr, got)
+			if hour != tt.wantHour || minute != tt.wantMin {
+				t.Errorf("ParseClock(%q) = %02d:%02d, want %02d:%02d", tt.timeStr, hour, minute, tt.wantHour, tt.wantMin)
 			}
 		})
+	}
+}
+
+func TestNextClockTime(t *testing.T) {
+	loc := time.FixedZone("test", 3600)
+	now := time.Date(2026, 6, 10, 10, 0, 30, 0, loc)
+	tests := []struct {
+		in   string
+		want time.Time
+	}{
+		{"22:00", time.Date(2026, 6, 10, 22, 0, 0, 0, loc)},
+		{"10:00PM", time.Date(2026, 6, 10, 22, 0, 0, 0, loc)},
+		{"10:00 pm", time.Date(2026, 6, 10, 22, 0, 0, 0, loc)},
+		{"9:45", time.Date(2026, 6, 11, 9, 45, 0, 0, loc)},  // earlier today: tomorrow
+		{"10:00", time.Date(2026, 6, 11, 10, 0, 0, 0, loc)}, // the current minute: tomorrow
+		{"10:01", time.Date(2026, 6, 11, 10, 1, 0, 0, loc)}, // under a minute away: tomorrow
+		{"10:02", time.Date(2026, 6, 10, 10, 2, 0, 0, loc)},
+	}
+	for _, tt := range tests {
+		got, err := NextClockTime(tt.in, now)
+		if err != nil || !got.Equal(tt.want) {
+			t.Errorf("NextClockTime(%q) = %v, %v; want %v", tt.in, got, err, tt.want)
+		}
+	}
+	if _, err := NextClockTime("25:00", now); err == nil {
+		t.Error("NextClockTime accepted 25:00")
+	}
+}
+
+func TestNextClockTimeAcrossDST(t *testing.T) {
+	oslo, err := time.LoadLocation("Europe/Oslo")
+	if err != nil {
+		t.Skipf("no tz database: %v", err)
+	}
+	// 2026-03-29 has 23 hours in Oslo; Add(24h) would land on 00:00.
+	now := time.Date(2026, 3, 28, 23, 0, 0, 0, oslo)
+	got, err := NextClockTime("23:00", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 3, 29, 23, 0, 0, 0, oslo); !got.Equal(want) {
+		t.Fatalf("NextClockTime across DST = %v, want %v", got, want)
 	}
 }
