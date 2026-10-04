@@ -25,6 +25,7 @@ type Human struct {
 	color bool
 
 	lastBattery  session.Battery
+	lastPaused   session.Pause
 	lastEndsAt   time.Time
 	lastActivity activity.Status
 }
@@ -50,6 +51,8 @@ func (h *Human) Print(ev session.Event) error {
 
 func (h *Human) meaningful(ev session.Event) bool {
 	snap := ev.Snapshot
+	pausedChanged := snap.Paused != h.lastPaused
+	h.lastPaused = snap.Paused
 	switch ev.Type {
 	case session.EventStarted:
 		h.lastEndsAt = snap.EndsAt
@@ -60,7 +63,8 @@ func (h *Human) meaningful(ev session.Event) bool {
 		h.lastEndsAt = snap.EndsAt
 		return changed
 	case session.EventBattery:
-		changed := snap.Battery != h.lastBattery
+		// A pause or resume always shows, a reading only when it changed.
+		changed := snap.Battery != h.lastBattery || pausedChanged
 		h.lastBattery = snap.Battery
 		return changed
 	case session.EventActivity:
@@ -132,10 +136,10 @@ func Text(ev session.Event) string {
 	case session.EventActivity:
 		return activityText(snap)
 	case session.EventBattery:
+		if ev.Message != "" { // unavailable, or a battery pause or resume
+			return ev.Message
+		}
 		if !snap.Battery.Available {
-			if ev.Message != "" {
-				return ev.Message
-			}
 			return "battery status unavailable"
 		}
 		if snap.Battery.Threshold > 0 {
@@ -173,13 +177,20 @@ func startedText(now time.Time, snap session.Snapshot) string {
 		limits = append(limits, fmt.Sprintf("during work hours (%s)", snap.Schedule))
 	}
 	if snap.Watching != "" {
-		limits = append(limits, fmt.Sprintf("while %s runs", snap.Watching))
+		verb := "runs"
+		if session.WatchingSeveral(snap.Watching) {
+			verb = "run"
+		}
+		limits = append(limits, fmt.Sprintf("while %s %s", snap.Watching, verb))
 	}
 	if len(limits) == 0 {
 		limits = append(limits, "indefinitely")
 	}
 	b.WriteString(" " + strings.Join(limits, ", "))
-	if snap.Battery.Threshold > 0 {
+	switch {
+	case snap.Battery.Threshold > 0 && snap.Battery.Pause:
+		fmt.Fprintf(&b, ", pausing at %d%% battery", snap.Battery.Threshold)
+	case snap.Battery.Threshold > 0:
 		fmt.Fprintf(&b, ", stopping at %d%% battery", snap.Battery.Threshold)
 	}
 	if snap.Active {
@@ -292,6 +303,8 @@ type JSONSnapshot struct {
 	InWindow      bool         `json:"in_window"`
 	NextChange    *string      `json:"next_change"`
 	Watching      string       `json:"watching"`
+	// Paused is "schedule" or "battery" while the session holds nothing.
+	Paused string `json:"paused"`
 }
 
 // JSONActivity is the activity part of a JSONSnapshot.
@@ -310,6 +323,9 @@ type JSONBattery struct {
 	Percent   int  `json:"percent"`
 	Available bool `json:"available"`
 	Threshold int  `json:"threshold"`
+	// Pause means the threshold pauses the session (the login service)
+	// instead of stopping it.
+	Pause bool `json:"pause"`
 }
 
 // NewJSONEvent converts ev to the object the JSON printer writes; its
@@ -341,13 +357,14 @@ func NewJSONSnapshot(snap session.Snapshot) JSONSnapshot {
 			Idle:      seconds(snap.Activity.Idle),
 			IdleText:  FormatDuration(snap.Activity.Idle),
 		},
-		Battery:     JSONBattery{Percent: snap.Battery.Percent, Available: snap.Battery.Available, Threshold: snap.Battery.Threshold},
+		Battery:     JSONBattery{Percent: snap.Battery.Percent, Available: snap.Battery.Available, Threshold: snap.Battery.Threshold, Pause: snap.Battery.Pause},
 		KeepDisplay: snap.KeepDisplay,
 		PowerHold:   snap.PowerHold,
 		Schedule:    snap.Schedule,
 		InWindow:    snap.InWindow,
 		NextChange:  timePtr(snap.NextChange),
 		Watching:    snap.Watching,
+		Paused:      string(snap.Paused),
 	}
 	if !snap.EndsAt.IsZero() {
 		r := seconds(snap.Remaining)
@@ -397,13 +414,14 @@ func SnapshotFromJSON(js JSONSnapshot) session.Snapshot {
 			LastBurst: parseTimePtr(js.Activity.LastBurst),
 			Idle:      time.Duration(js.Activity.Idle) * time.Second,
 		},
-		Battery:     session.Battery{Percent: js.Battery.Percent, Available: js.Battery.Available, Threshold: js.Battery.Threshold},
+		Battery:     session.Battery{Percent: js.Battery.Percent, Available: js.Battery.Available, Threshold: js.Battery.Threshold, Pause: js.Battery.Pause},
 		KeepDisplay: js.KeepDisplay,
 		PowerHold:   js.PowerHold,
 		Schedule:    js.Schedule,
 		InWindow:    js.InWindow,
 		NextChange:  parseTimePtr(js.NextChange),
 		Watching:    js.Watching,
+		Paused:      session.Pause(js.Paused),
 	}
 	if js.Remaining != nil {
 		snap.Remaining = time.Duration(*js.Remaining) * time.Second

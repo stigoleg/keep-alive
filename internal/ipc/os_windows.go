@@ -18,7 +18,12 @@ func platformBase(getenv func(string) string, cacheDir func() (string, error)) (
 func fallbackDir() string { return "" }
 
 // secureDir relies on the per-user ACL that %LOCALAPPDATA% children inherit.
-func secureDir(string, fs.FileInfo) error { return nil }
+func secureDir(string, fs.FileInfo, bool) error { return nil }
+
+// isPrivate is true: Windows has no mode bits to judge by.
+func isPrivate(fs.FileInfo) bool { return true }
+
+func privateSubdir() string { return "keepalive" }
 
 func restrictSocket(string) error { return nil }
 

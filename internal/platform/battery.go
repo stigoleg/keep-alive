@@ -5,4 +5,7 @@ package platform
 type BatteryStatus struct {
 	Percentage int
 	Available  bool
+	// Charging means the machine runs on external power, so the battery
+	// is charging or full.
+	Charging bool
 }

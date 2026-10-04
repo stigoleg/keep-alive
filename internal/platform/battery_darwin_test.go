@@ -22,3 +22,15 @@ func TestParseDarwinBatteryPercentageRejectsMissingValue(t *testing.T) {
 		t.Fatal("parseDarwinBatteryPercentage() expected error")
 	}
 }
+
+func TestDarwinOnExternalPower(t *testing.T) {
+	for out, want := range map[string]bool{
+		"Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t18%; charging; 2:01 remaining present: true":  true,
+		"Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t80%; AC attached; not charging present: true": true,
+		"Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t20%; discharging; 1:25 remaining":        false,
+	} {
+		if got := darwinOnExternalPower(out); got != want {
+			t.Errorf("darwinOnExternalPower(%q) = %v", out, got)
+		}
+	}
+}

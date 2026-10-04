@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -71,6 +72,9 @@ func TestRunChildKeepsStdout(t *testing.T) {
 func TestRunForwardsSIGINT(t *testing.T) {
 	requirePower(t)
 	cmd := keepalive(t, "run", "--", "sh", "-c", `trap 'echo got-int; exit 5' INT; echo ready; while :; do sleep 0.1; done`)
+	// No controlling terminal: in a terminal's foreground group keepalive
+	// leaves SIGINT to the terminal, which this test does not send.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -148,5 +152,92 @@ func TestWhileMissingProcessIsUsageError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "hint: start the app first") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+// countSignals runs the signal counter under "keepalive run" in a new
+// session: no controlling terminal, stdin /dev/null, keepalive leading its
+// own process group. send delivers the signals once the counter is ready;
+// the result is how many SIGINT/SIGQUIT the command saw.
+func countSignals(t *testing.T, send func(pid int)) int {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := keepalive(t, "run", "--", self)
+	cmd.Env = append(cmd.Env, signalCounterEnv+"=1")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
+	lines := make(chan string, 16)
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+	next := func(prefix string) string {
+		t.Helper()
+		select {
+		case l := <-lines:
+			if !strings.HasPrefix(l, prefix) {
+				t.Fatalf("command printed %q, want %s…", l, prefix)
+			}
+			return l
+		case <-time.After(10 * time.Second):
+			t.Fatalf("no %q from the command within 10s", prefix)
+			return ""
+		}
+	}
+	next("ready")
+	send(cmd.Process.Pid)
+	next("got ")
+	time.Sleep(500 * time.Millisecond) // room for a second delivery
+	if err := syscall.Kill(cmd.Process.Pid, syscall.SIGTERM); err != nil {
+		t.Fatalf("keepalive did not survive the signal: %v", err)
+	}
+	total := -1
+	for total < 0 {
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				t.Fatal("the command printed no total")
+			}
+			if n, ok := strings.CutPrefix(l, "total "); ok {
+				total, _ = strconv.Atoi(n)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("the command did not get SIGTERM")
+		}
+	}
+	if code := exitCode(cmd.Wait()); code != 0 {
+		t.Fatalf("keepalive run exit %d, want the command's 0", code)
+	}
+	return total
+}
+
+func TestRunGroupSignalArrivesOnce(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGQUIT} {
+		n := countSignals(t, func(pid int) { _ = syscall.Kill(-pid, sig) })
+		if n != 1 {
+			t.Errorf("%v to the process group: the command got it %d times, want 1", sig, n)
+		}
+	}
+}
+
+func TestRunForwardsSignalSentOnlyToKeepalive(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGQUIT} {
+		n := countSignals(t, func(pid int) { _ = syscall.Kill(pid, sig) })
+		if n != 1 {
+			t.Errorf("%v to keepalive only: the command got it %d times, want 1", sig, n)
+		}
 	}
 }

@@ -43,8 +43,10 @@ const Template = `# keepalive configuration file.
 # Keep the display on too; false keeps only the system awake.
 # keep_display = true
 
-# Show a desktop notification when a session ends.
-# notify = false
+# Show desktop notifications when keepalive stops on its own or simulating
+# activity fails. Unset: on when headless or as a service, off in the
+# interactive UI.
+# notify = true
 
 # Write a debug log.
 # log = false
@@ -73,12 +75,18 @@ func (r Resolved) TOML() string {
 	width := 0
 	for _, k := range Keys {
 		val, set := r.value(k)
+		source := "# " + string(r.Sources[k])
+		if k == "notify" && r.Sources[k] == SourceDefault {
+			// Its default depends on how keepalive runs, so no value is
+			// the honest one.
+			set, source = false, "# default: "+NotifyDefault
+		}
 		line := k + " = " + val
 		if !set {
 			line = "# " + k + " is not set"
 		}
 		width = max(width, len(line))
-		lines = append(lines, [2]string{line, "# " + string(r.Sources[k])})
+		lines = append(lines, [2]string{line, source})
 	}
 	for _, l := range lines {
 		fmt.Fprintf(&b, "%-*s  %s\n", width, l[0], l[1])

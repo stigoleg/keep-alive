@@ -429,6 +429,8 @@ func (m Model) badge(now time.Time) string {
 			b += " until " + session.ClockText(now, s.NextChange)
 		}
 		return st.Warn.Render(b)
+	case s.Paused == session.PauseBattery:
+		return st.Warn.Render("◐ PAUSED · battery low")
 	case problem(s):
 		return st.Problem.Render("▲ PROBLEM")
 	}
@@ -444,6 +446,8 @@ func headline(s session.Snapshot) string {
 	switch {
 	case !s.InWindow:
 		return "Outside work hours · the computer may sleep"
+	case s.Paused == session.PauseBattery:
+		return "Battery low · the computer may sleep"
 	case s.KeepDisplay:
 		return "Keeping system and display awake"
 	}
@@ -521,6 +525,9 @@ func (m Model) rows(p *page, s session.Snapshot, now time.Time) {
 	}
 	if b := s.Battery; b.Threshold > 0 {
 		v := fmt.Sprintf("stops at %d%%", b.Threshold)
+		if b.Pause {
+			v = fmt.Sprintf("pauses at %d%%, resumes at %d%% or charging", b.Threshold, b.Threshold+session.BatteryResumeMargin)
+		}
 		if b.Available {
 			v = fmt.Sprintf("%d%% · %s", b.Percent, v)
 		}
@@ -532,6 +539,8 @@ func (m Model) rows(p *page, s session.Snapshot, now time.Time) {
 	switch {
 	case !s.InWindow:
 		add("Holding", st.Muted.Render("nothing outside the work hours"))
+	case s.Paused == session.PauseBattery:
+		add("Holding", st.Muted.Render("nothing while the battery is low"))
 	case s.PowerHold == "":
 		add("Holding", st.Problem.Render("▲ lost · re-acquiring"))
 	default:
@@ -548,6 +557,8 @@ func (m Model) activityText(s session.Snapshot, now time.Time) (text, hint strin
 		return st.Muted.Render("off"), ""
 	case !s.InWindow:
 		return st.Muted.Render("on · resumes with the work hours"), ""
+	case s.Paused == session.PauseBattery:
+		return st.Muted.Render("on · resumes when the battery recovers"), ""
 	}
 	dim := func(t string) string { return st.Muted.Render("○ " + t) }
 	switch a.State {

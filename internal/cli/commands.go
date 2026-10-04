@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/activity"
 	"github.com/stigoleg/keep-alive/v2/internal/config"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
+	"github.com/stigoleg/keep-alive/v2/internal/power"
 )
 
 const rootLong = `keepalive keeps your computer awake: for a while, until a time, during work
@@ -59,6 +61,12 @@ func (a *App) Command() *cobra.Command {
 	if a.logSetup == nil {
 		a.logSetup = logging.Setup
 	}
+	if a.newPower == nil {
+		a.newPower = power.New
+	}
+	if a.stateDir == nil {
+		a.stateDir = defaultStateDir
+	}
 	if a.doctorFacts == nil {
 		a.doctorFacts = a.collectDoctor
 	}
@@ -77,7 +85,7 @@ func (a *App) Command() *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			p, err := a.plan(cmd, &sf, false)
+			p, err := a.plan(cmd, &sf, "")
 			if err != nil {
 				return err
 			}
@@ -135,7 +143,45 @@ func (a *App) Command() *cobra.Command {
   keepalive completion bash > /etc/bash_completion.d/keepalive
   keepalive completion fish > ~/.config/fish/completions/keepalive.fish`
 	}
+	for _, c := range root.Commands() {
+		if c.HasSubCommands() {
+			makeGroup(c)
+		}
+	}
 	return root
+}
+
+// makeGroup makes a command that only holds subcommands print its help when
+// called alone and reject anything else as a usage error, instead of
+// printing help and exiting 0 on a typo like "keepalive service instal".
+func makeGroup(c *cobra.Command) {
+	c.Args = groupArgs
+	if c.Annotations == nil {
+		c.Annotations = map[string]string{}
+	}
+	c.Annotations[groupCommand] = "true"
+	c.SuggestionsMinimumDistance = 2 // cobra's default, which only Find sets
+	c.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
+}
+
+func groupArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	hint := ""
+	if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
+		best := slices.MinFunc(s, func(x, y string) int { return editDistance(args[0], x) - editDistance(args[0], y) })
+		hint = fmt.Sprintf("did you mean %q?", cmd.CommandPath()+" "+best)
+	} else {
+		var names []string
+		for _, sub := range cmd.Commands() {
+			if sub.IsAvailableCommand() {
+				names = append(names, sub.Name())
+			}
+		}
+		hint = "use one of: " + strings.Join(names, ", ")
+	}
+	return usageErr(fmt.Errorf("unknown command %q for %q", args[0], cmd.CommandPath()), hint)
 }
 
 // rootArgs turns a command given to the root into a pointer to `run`.
@@ -184,7 +230,7 @@ also works next to a keepalive that is already running.`,
 			if dash != 0 || len(args) == 0 {
 				return usageErr(errors.New(runUsage), `put the command after "--", e.g. keepalive run -- make release`)
 			}
-			p, err := a.plan(cmd, &sf, true)
+			p, err := a.plan(cmd, &sf, originRun)
 			if err != nil {
 				return err
 			}
@@ -277,4 +323,26 @@ they combine with the environment and the file.`,
 
 	cmd.AddCommand(path, initCmd, show)
 	return cmd
+}
+
+// editDistance is the Levenshtein distance between a and b, ignoring case.
+func editDistance(a, b string) int {
+	a, b = strings.ToLower(a), strings.ToLower(b)
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
 }

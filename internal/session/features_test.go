@@ -278,7 +278,7 @@ func TestWatchedPIDExitStops(t *testing.T) {
 	l := &fakeLister{alive: map[int]bool{42: true}}
 	h := newWatchHarness(t, Config{WatchPIDs: []int{42}}, l)
 	h.start()
-	if w := h.seen[0].Snapshot.Watching; w != "pid 42" {
+	if w := h.seen[0].Snapshot.Watching; w != "process 42" {
 		t.Fatalf("Watching = %q", w)
 	}
 	l.set(func(f *fakeLister) { f.alive[42] = false })
@@ -318,10 +318,11 @@ func TestWatchDescriptions(t *testing.T) {
 		name    string
 		want    string
 	}{
-		{"", []int{42}, "", "pid 42"},
-		{"", []int{11, 10}, "", "pids 10, 11"},
+		{"", []int{42}, "", "process 42"},
+		{"", []int{11, 10}, "", "processes 10, 11"},
 		{"", nil, "zoom", "zoom"},
-		{"", []int{42}, "zoom", "zoom, pid 42"},
+		{"", []int{42}, "zoom", "zoom and process 42"},
+		{"make", []int{2, 1}, "zoom", "make, zoom and processes 1, 2"},
 		{"make", nil, "", "make"},
 	} {
 		if got := watchDescription(tt.command, tt.pids, tt.name); got != tt.want {
@@ -418,7 +419,7 @@ func TestNotifyOnUnusualStop(t *testing.T) {
 }
 
 func TestNoNotifyOnNormalStops(t *testing.T) {
-	for _, reason := range []Reason{ReasonUser, ReasonSignal, ReasonIPC} {
+	for _, reason := range []Reason{ReasonUser, ReasonSignal, ReasonIPC, ReasonCommandExited} {
 		h, n := newNotifyHarness(t, Config{})
 		h.start()
 		h.s.Stop(reason)
@@ -509,3 +510,133 @@ func TestNotifyPowerLostAfterFirstRetry(t *testing.T) {
 }
 
 var _ clock.Clock = (*clock.Fake)(nil)
+
+type fakeLimiter struct {
+	mu    sync.Mutex
+	asked []string
+	allow bool
+}
+
+func (f *fakeLimiter) Allow(kind string, _ time.Time) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, kind)
+	return f.allow
+}
+
+func TestNotifyLimiterDecides(t *testing.T) {
+	for _, allow := range []bool{false, true} {
+		h := newHarness(t, Config{BatteryThreshold: 20})
+		n, lim := &fakeNotifier{}, &fakeLimiter{allow: allow}
+		h.s = New(Config{BatteryThreshold: 20}, Deps{Clock: h.clk, Power: h.power, Battery: h.batt.status, Notifier: n, NotifyLimiter: lim})
+		var unsub func()
+		h.events, unsub = h.s.Subscribe()
+		t.Cleanup(unsub)
+		h.batt.set(15, nil)
+		h.run()
+		h.finish(ReasonBattery)
+		if len(lim.asked) != 1 || lim.asked[0] != notifyStopped {
+			t.Fatalf("limiter asked %v", lim.asked)
+		}
+		if got := len(n.list()); got != map[bool]int{false: 0, true: 1}[allow] {
+			t.Fatalf("allow=%v: %d notifications", allow, got)
+		}
+	}
+}
+
+// ---- battery pause (login service) ----
+
+// poll moves to the next battery poll and returns its event.
+func (h *harness) poll(pct int) Event {
+	h.t.Helper()
+	h.batt.set(pct, nil)
+	h.clk.Advance(BatteryPollInterval)
+	for {
+		ev := h.waitFor(EventBattery)
+		if ev.Snapshot.Battery.Percent == pct {
+			return ev
+		}
+	}
+}
+
+func TestBatteryPausesInsteadOfStopping(t *testing.T) {
+	h := newHarness(t, Config{BatteryThreshold: 20, BatteryPause: true, Active: true})
+	h.start()
+	run := h.sim.next(t)
+	if ev := h.waitFor(EventBattery); ev.Snapshot.Paused != "" || !ev.Snapshot.Battery.Pause {
+		t.Fatalf("first poll: %+v", ev.Snapshot)
+	}
+
+	ev := h.poll(18)
+	if ev.Snapshot.Paused != PauseBattery || ev.Snapshot.PowerHold != "" || !ev.Snapshot.Running ||
+		ev.Message != "battery at 18%: paused until it is back at 25% or charging" {
+		t.Fatalf("pause event: %q %+v", ev.Message, ev.Snapshot)
+	}
+	h.assertCounts(1, 1)
+	exited(t, run)
+	if st := h.s.Snapshot(); st.Paused != PauseBattery || st.Activity.State != activity.StateOff || !st.Active {
+		t.Fatalf("paused snapshot: %+v", st)
+	}
+
+	if ev := h.poll(24); ev.Snapshot.Paused != PauseBattery || ev.Message != "" {
+		t.Fatalf("below the resume level: %q %+v", ev.Message, ev.Snapshot)
+	}
+	h.s.SetActive(true)
+	h.noSimulator()
+	h.assertCounts(1, 1)
+
+	ev = h.poll(25)
+	if ev.Snapshot.Paused != "" || ev.Snapshot.PowerHold == "" || ev.Message != "battery at 25%: keeping awake again" {
+		t.Fatalf("resume event: %q %+v", ev.Message, ev.Snapshot)
+	}
+	h.assertCounts(2, 1)
+	h.sim.next(t)
+
+	h.s.Stop(ReasonUser)
+	h.finish(ReasonUser)
+	h.assertCounts(2, 2)
+}
+
+func TestBatteryPauseEndsWhenCharging(t *testing.T) {
+	h := newHarness(t, Config{BatteryThreshold: 20, BatteryPause: true})
+	h.start()
+	h.waitFor(EventBattery)
+	h.poll(15)
+	h.batt.setCharging(true)
+	ev := h.poll(16)
+	if ev.Snapshot.Paused != "" || ev.Message != "charging: keeping awake again" {
+		t.Fatalf("resume on charging: %q %+v", ev.Message, ev.Snapshot)
+	}
+	// Low but charging: no pause.
+	if ev := h.poll(14); ev.Snapshot.Paused != "" {
+		t.Fatalf("paused while charging: %+v", ev.Snapshot)
+	}
+	h.assertCounts(2, 1)
+	h.s.Stop(ReasonUser)
+	h.finish(ReasonUser)
+}
+
+func TestBatteryPauseOutsideWorkHours(t *testing.T) {
+	// t0 (Sunday 10:00) is outside the work hours. A low battery pauses as
+	// well, and entering the work hours keeps the battery pause.
+	h := newHarness(t, Config{BatteryThreshold: 20, BatteryPause: true, Schedule: mustSchedule(t, "daily 11:00-23:00")})
+	h.start()
+	h.waitFor(EventBattery)
+	h.poll(15)
+	if st := h.s.Snapshot(); st.Paused != PauseSchedule || st.InWindow {
+		t.Fatalf("outside the work hours: %+v", st)
+	}
+	h.clk.Set(t0.Add(time.Hour))
+	h.waitFor(EventSchedule)
+	if st := h.s.Snapshot(); st.Paused != PauseBattery || !st.InWindow || st.PowerHold != "" {
+		t.Fatalf("work hours with a low battery: %+v", st)
+	}
+	h.assertCounts(0, 0)
+	h.poll(30)
+	h.assertCounts(1, 0)
+	if st := h.s.Snapshot(); st.Paused != "" || st.PowerHold == "" {
+		t.Fatalf("after the battery recovered: %+v", st)
+	}
+	h.s.Stop(ReasonUser)
+	h.finish(ReasonUser)
+}

@@ -96,10 +96,11 @@ func (f *fakeSim) next(t *testing.T) *simRun {
 }
 
 type fakeBattery struct {
-	mu   sync.Mutex
-	pct  int
-	err  error
-	read atomic.Int32
+	mu       sync.Mutex
+	pct      int
+	charging bool
+	err      error
+	read     atomic.Int32
 }
 
 func (b *fakeBattery) set(pct int, err error) {
@@ -115,7 +116,13 @@ func (b *fakeBattery) status() (platform.BatteryStatus, error) {
 	if b.err != nil {
 		return platform.BatteryStatus{}, b.err
 	}
-	return platform.BatteryStatus{Percentage: b.pct, Available: true}, nil
+	return platform.BatteryStatus{Percentage: b.pct, Available: true, Charging: b.charging}, nil
+}
+
+func (b *fakeBattery) setCharging(on bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.charging = on
 }
 
 // ---- harness ----
@@ -654,4 +661,41 @@ func TestSubscribeAfterEndIsClosed(t *testing.T) {
 	if _, ok := <-ch; ok {
 		t.Fatal("subscription after end delivered an event")
 	}
+}
+
+// TestDeadlinesAreWallClock checks that session times carry no monotonic
+// clock reading. time.Now() includes one, and comparisons and Sub between
+// two such times use it; the monotonic clock stops while the machine sleeps
+// (macOS, Linux), so a 2h session would end 2h of awake time later, not at
+// the ends_at it shows. The fake clock never has a monotonic reading and
+// cannot simulate sleep, so this test runs on the real clock.
+func TestDeadlinesAreWallClock(t *testing.T) {
+	monotonic := func(tm time.Time) bool { return tm != tm.Round(0) }
+	if !monotonic(time.Now()) {
+		t.Skip("this platform's clock has no monotonic reading")
+	}
+	s := New(Config{Duration: time.Hour}, Deps{Clock: clock.Real(), Power: &fakePower{}})
+	events, unsub := s.Subscribe()
+	defer unsub()
+	result := make(chan Result, 1)
+	go func() { result <- s.Run(context.Background()) }()
+	for ev := range events {
+		if ev.Type == EventStarted {
+			break
+		}
+	}
+	check := func(when string) {
+		t.Helper()
+		snap := s.Snapshot()
+		if snap.EndsAt.IsZero() || monotonic(snap.EndsAt) || monotonic(snap.StartedAt) {
+			t.Fatalf("%s: ends_at %v, started_at %v carry a monotonic reading", when, snap.EndsAt, snap.StartedAt)
+		}
+	}
+	check("start")
+	s.Extend(30 * time.Minute)
+	check("extend")
+	s.Extend(-5 * time.Hour) // clamped to now + 1 minute
+	check("shorten")
+	s.Stop(ReasonUser)
+	<-result
 }

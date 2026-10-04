@@ -144,7 +144,7 @@ func initialSnapshot(cfg Config) Snapshot {
 		Mode:        cfg.mode(),
 		Active:      cfg.Active,
 		Activity:    activity.Status{State: activity.StateOff},
-		Battery:     Battery{Threshold: cfg.BatteryThreshold},
+		Battery:     Battery{Threshold: cfg.BatteryThreshold, Pause: cfg.BatteryPause && cfg.BatteryThreshold > 0},
 		KeepDisplay: cfg.KeepDisplay,
 		InWindow:    cfg.Schedule == nil,
 		Watching:    watchDescription(cfg.Command, cfg.WatchPIDs, cfg.WatchProcess),
@@ -153,7 +153,7 @@ func initialSnapshot(cfg Config) Snapshot {
 		snap.Schedule = cfg.Schedule.String()
 	}
 	if snap.Mode == ModeUntil {
-		snap.EndsAt = cfg.Until
+		snap.EndsAt = cfg.Until.Round(0) // wall clock; see run
 	}
 	return snap
 }
@@ -209,6 +209,7 @@ type loop struct {
 
 	inWindow   bool        // inside the schedule (always true without one)
 	schedTimer clock.Timer // fires at the next schedule change
+	batteryLow bool        // paused by the battery (Config.BatteryPause)
 
 	watchExit   <-chan proc.Exit
 	cancelWatch context.CancelFunc
@@ -241,7 +242,7 @@ func (l *loop) run() Result {
 		return l.finish(ReasonError, err)
 	}
 	l.inWindow = cfg.Schedule == nil || cfg.Schedule.In(l.clk.Now())
-	if l.inWindow {
+	if l.awake() {
 		hold, err := l.s.deps.Power.Acquire(l.ctx, l.powerOptions())
 		if err != nil {
 			if l.ctx.Err() != nil {
@@ -253,7 +254,11 @@ func (l *loop) run() Result {
 		l.watchPower()
 		l.snap.PowerHold = hold.Describe()
 	}
-	now := l.clk.Now()
+	// Session times are wall-clock times (Round(0) drops the monotonic
+	// reading): the monotonic clock stops while the machine sleeps, so a
+	// deadline compared through it would drift by the time spent asleep and
+	// disagree with the ends_at it shows.
+	now := l.clk.Now().Round(0)
 	l.snap.StartedAt = now
 	l.snap.Running = true
 	l.snap.InWindow = l.inWindow
@@ -278,7 +283,7 @@ func (l *loop) run() Result {
 	if l.batteryTick != nil {
 		l.pollBattery()
 	}
-	if cfg.Active && l.inWindow {
+	if cfg.Active && l.awake() {
 		l.startActivity()
 	}
 	return l.loop()
@@ -336,7 +341,7 @@ func (l *loop) deadlinePassed() bool {
 	if l.snap.EndsAt.IsZero() {
 		return false
 	}
-	now := l.clk.Now()
+	now := l.clk.Now().Round(0) // wall clock; see run
 	if !now.Before(l.snap.EndsAt) {
 		return true
 	}
@@ -395,7 +400,8 @@ func (l *loop) finish(reason Reason, err error) Result {
 	ev := l.emit(EventStopped, reason, msg)
 	l.s.bus.close()
 	switch reason {
-	case ReasonUser, ReasonSignal, ReasonIPC:
+	case ReasonUser, ReasonSignal, ReasonIPC, ReasonCommandExited:
+		// The user (or their command) ended it; nothing to tell them.
 	default:
 		l.notify(notifyStopped, "Keep-Alive stopped", msg)
 	}
@@ -429,8 +435,11 @@ func stopMessage(r Reason, b Battery) string {
 
 func (l *loop) snapshot() Snapshot {
 	snap := l.snap
+	if snap.Running {
+		snap.Paused = l.paused()
+	}
 	if snap.Running && !snap.EndsAt.IsZero() {
-		snap.Remaining = max(snap.EndsAt.Sub(l.clk.Now()), 0)
+		snap.Remaining = max(snap.EndsAt.Sub(l.clk.Now().Round(0)), 0)
 	}
 	return snap
 }
@@ -455,7 +464,7 @@ func (l *loop) extend(d time.Duration) {
 		l.warn("extend ignored: the session has no end time")
 		return
 	}
-	now := l.clk.Now()
+	now := l.clk.Now().Round(0) // wall clock; see run
 	end := l.snap.EndsAt.Add(d)
 	if d < 0 {
 		if floor := now.Add(MinRemainingAfterShorten); end.Before(floor) {
@@ -471,12 +480,12 @@ func (l *loop) extend(d time.Duration) {
 }
 
 func (l *loop) setActive(on bool) {
-	if on == l.snap.Active && (!on || l.act != nil || !l.inWindow) {
+	if on == l.snap.Active && (!on || l.act != nil || !l.awake()) {
 		return
 	}
 	l.snap.Active = on
 	if on {
-		if l.inWindow { // outside the work hours it starts on entering them
+		if l.awake() { // while paused it starts on resuming
 			l.startActivity()
 		}
 		l.emit(EventSnapshot, "", "")
@@ -629,7 +638,7 @@ func (l *loop) schedulePowerRetry() {
 }
 
 func (l *loop) reacquirePower() {
-	if !l.inWindow {
+	if !l.awake() {
 		return
 	}
 	hold, err := l.s.deps.Power.Acquire(l.ctx, l.powerOptions())
@@ -670,8 +679,8 @@ func (l *loop) pollBattery() {
 	}()
 }
 
-// handleBattery records a poll result and reports whether the threshold is
-// reached.
+// handleBattery records a poll result and reports whether the session
+// must stop. With Config.BatteryPause it pauses or resumes instead.
 func (l *loop) handleBattery(r batteryResult) bool {
 	l.batteryBusy = false
 	if r.err != nil {
@@ -684,10 +693,30 @@ func (l *loop) handleBattery(r batteryResult) bool {
 		return false
 	}
 	l.batteryFailing = false
-	l.snap.Battery.Percent = r.status.Percentage
-	l.snap.Battery.Available = r.status.Available
-	l.emit(EventBattery, "", "")
-	return l.snap.Battery.Threshold > 0 && l.snap.Battery.Available && l.snap.Battery.Percent <= l.snap.Battery.Threshold
+	b := &l.snap.Battery
+	b.Percent, b.Available = r.status.Percentage, r.status.Available
+	low := b.Threshold > 0 && b.Available && b.Percent <= b.Threshold
+	if !l.s.cfg.BatteryPause {
+		l.emit(EventBattery, "", "")
+		return low
+	}
+	msg := ""
+	switch {
+	case !l.batteryLow && low && !r.status.Charging:
+		msg = fmt.Sprintf("battery at %d%%: paused until it is back at %d%% or charging", b.Percent, b.Threshold+BatteryResumeMargin)
+		l.setBatteryLow(true)
+	case l.batteryLow && r.status.Charging:
+		msg = "charging: keeping awake again"
+		l.setBatteryLow(false)
+	case l.batteryLow && b.Available && b.Percent >= b.Threshold+BatteryResumeMargin:
+		msg = fmt.Sprintf("battery at %d%%: keeping awake again", b.Percent)
+		l.setBatteryLow(false)
+	}
+	if msg != "" {
+		slog.Info("session: " + msg)
+	}
+	l.emit(EventBattery, "", msg)
+	return false
 }
 
 func timerC(t clock.Timer) <-chan time.Time {

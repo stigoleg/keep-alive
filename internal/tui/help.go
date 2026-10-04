@@ -75,7 +75,7 @@ func (m Model) helpView() string {
 	}
 	p.blank()
 
-	p.wrapped("Simulate activity moves the pointer a few pixels once you have been idle for a while, so Teams and Slack keep showing you as Active.", "", st.Muted)
+	p.wrapped("Simulate activity moves the pointer in small arcs (up to about 130 px) and back to where it was, once you have been idle for a while, so Teams and Slack keep showing you as Active.", "", st.Muted)
 	p.wrapped(`It pauses while you use the computer or the screen is locked; "keepalive doctor" checks that it works here.`, "", st.Muted)
 	logs := "Logs: " + m.logPath
 	if !m.logOn {

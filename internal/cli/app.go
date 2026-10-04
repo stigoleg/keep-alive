@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
 	"github.com/stigoleg/keep-alive/v2/internal/notify"
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
+	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/proc"
 	"github.com/stigoleg/keep-alive/v2/internal/schedule"
 	"github.com/stigoleg/keep-alive/v2/internal/service"
@@ -44,7 +46,7 @@ type App struct {
 	DefaultConfigPath              func() (string, error)
 	// Processes checks --pid and --while targets during planning.
 	Processes proc.Lister
-	// Notifier reports a service that cannot start; nil means notify.New().
+	// Notifier shows desktop notifications; nil means notify.New().
 	Notifier notify.Notifier
 	// ServiceManager and ResolveExecutable back `keepalive service`.
 	ServiceManager    func() (service.Manager, error)
@@ -52,6 +54,11 @@ type App struct {
 
 	// logSetup is logging.Setup; tests replace it.
 	logSetup func(logging.Options) (string, func() error, error)
+	// newPower is power.New; tests replace it.
+	newPower func() power.Inhibitor
+	// stateDir holds state kept across runs (the login service's
+	// notification times); tests replace it.
+	stateDir func() (string, error)
 	// doctorFacts, probe and probeWait back `keepalive doctor`; tests
 	// replace them.
 	doctorFacts func(*cobra.Command) doctorFacts
@@ -164,15 +171,52 @@ func (a *App) reportServiceFailure(err error) {
 		slog.Error("service: could not start", "err", msg)
 		_ = closeLog()
 	}
-	n := a.Notifier
-	if n == nil {
-		n = notify.New()
+	a.notifyService("service-start", "Keep-Alive service could not start", msg)
+}
+
+// notifyService shows a notification from the login service, at most once
+// per kind every session.NotifyInterval across restarts. Failures are only
+// logged.
+func (a *App) notifyService(kind, title, body string) {
+	if lim := a.serviceLimiter(); lim != nil && !lim.Allow(kind, time.Now()) {
+		slog.Debug("service: notification held back", "kind", kind)
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), notify.Timeout)
 	defer cancel()
-	if nerr := n.Notify(ctx, "Keep-Alive service could not start", msg); nerr != nil {
-		slog.Debug("service: notification failed", "err", nerr)
+	if err := a.notifier().Notify(ctx, title, body); err != nil {
+		slog.Debug("service: notification failed", "kind", kind, "err", err)
 	}
+}
+
+// notifier is a.Notifier, or the system's.
+func (a *App) notifier() notify.Notifier {
+	if a.Notifier != nil {
+		return a.Notifier
+	}
+	return notify.New()
+}
+
+// serviceLimiter allows each kind of notification from the login service
+// once every session.NotifyInterval, across restarts: a service that fails
+// at every start would otherwise notify every few seconds. nil when there
+// is nowhere to keep the state.
+func (a *App) serviceLimiter() *notify.FileLimiter {
+	dir, err := a.stateDir()
+	if err != nil {
+		slog.Debug("service: no state directory for notification limits", "err", err)
+		return nil
+	}
+	return &notify.FileLimiter{Path: filepath.Join(dir, "notified.json"), Interval: session.NotifyInterval}
+}
+
+// defaultStateDir is the directory of the default log file.
+func defaultStateDir() (string, error) {
+	p, err := logging.DefaultPath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Dir(p), nil
 }
 
 func (a *App) color() bool {
@@ -276,10 +320,11 @@ func (a *App) origin(cmd *cobra.Command) (string, error) {
 }
 
 // plan turns flags, env and config into a session request and validates it.
-// forRun plans `keepalive run`: headless, never a TUI.
-func (a *App) plan(cmd *cobra.Command, f *sessionFlags, forRun bool) (*Plan, error) {
-	origin := originRun
-	if !forRun {
+// origin is who runs it: originRun plans `keepalive run` (headless, never a
+// TUI), ipc.OriginService checks what `service install` stores, and ""
+// takes it from --origin and KEEPALIVE_ORIGIN.
+func (a *App) plan(cmd *cobra.Command, f *sessionFlags, origin string) (*Plan, error) {
+	if origin == "" {
 		var err error
 		if origin, err = a.origin(cmd); err != nil {
 			return nil, err
@@ -322,7 +367,10 @@ func (a *App) plan(cmd *cobra.Command, f *sessionFlags, forRun bool) (*Plan, err
 	}
 
 	if s.BatteryThreshold > 0 {
-		if err := a.checkBattery(s.BatteryThreshold); err != nil {
+		// The login service pauses at the threshold instead of stopping,
+		// so it may start below it.
+		s.BatteryPause = origin == ipc.OriginService
+		if err := a.checkBattery(s.BatteryThreshold, s.BatteryPause); err != nil {
 			return nil, err
 		}
 	}
@@ -343,6 +391,11 @@ func (a *App) plan(cmd *cobra.Command, f *sessionFlags, forRun bool) (*Plan, err
 	}
 	if origin == ipc.OriginService && res.Sources["log"] == config.SourceDefault {
 		p.Logging.Enabled, p.Logging.Debug = true, false // a service always keeps an info log
+	}
+	if origin == ipc.OriginService && res.Sources["log_file"] == config.SourceFile && res.Path != "" &&
+		p.Logging.Path != "" && !filepath.IsAbs(p.Logging.Path) {
+		// A service has no meaningful working directory.
+		p.Logging.Path = filepath.Join(filepath.Dir(res.Path), p.Logging.Path)
 	}
 	return p, nil
 }
@@ -379,7 +432,7 @@ func processListCommand() string {
 	return "ps"
 }
 
-func (a *App) checkBattery(threshold int) error {
+func (a *App) checkBattery(threshold int, pause bool) error {
 	st, err := a.Battery()
 	if err != nil || !st.Available {
 		if err == nil {
@@ -388,7 +441,7 @@ func (a *App) checkBattery(threshold int) error {
 		return usageErr(fmt.Errorf("battery threshold %d%% set, but no battery was found (%v)", threshold, err),
 			"--battery only works on machines with a battery; remove it (or the battery setting)")
 	}
-	if st.Percentage <= threshold {
+	if st.Percentage <= threshold && !pause {
 		return usageErr(fmt.Errorf("battery threshold must be below the current level (current %d%%, threshold %d%%)", st.Percentage, threshold),
 			"choose a lower --battery value")
 	}

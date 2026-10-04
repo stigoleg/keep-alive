@@ -9,6 +9,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -182,4 +183,88 @@ func TestSecondInstanceRefusedAndReplace(t *testing.T) {
 func itoa(n int) string {
 	b, _ := json.Marshal(n)
 	return string(b)
+}
+
+// startRun starts "keepalive run" in its own process group (killed at
+// cleanup, with the command) and waits for its start line.
+func startRun(t *testing.T, args ...string) *exec.Cmd {
+	t.Helper()
+	cmd := keepalive(t, append([]string{"run"}, args...)...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan struct{})
+	t.Cleanup(func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-waited
+	})
+	started := make(chan string, 1)
+	go func() {
+		sc := bufio.NewScanner(stderr)
+		for sc.Scan() {
+			if strings.HasPrefix(sc.Text(), "keepalive: keeping") {
+				select {
+				case started <- sc.Text():
+				default:
+				}
+			}
+		}
+		_ = cmd.Wait()
+		close(waited)
+	}()
+	select {
+	case <-started:
+	case <-waited:
+		t.Fatal("keepalive run exited before it started")
+	case <-time.After(10 * time.Second):
+		t.Fatal("keepalive run did not start within 10s")
+	}
+	return cmd
+}
+
+// TestStopEndsRunsControl: once "keepalive stop" ends a keepalive run
+// session, that process no longer counts as the running keepalive, although
+// its command keeps running.
+func TestStopEndsRunsControl(t *testing.T) {
+	requirePower(t)
+	startRun(t, "--", "sleep", "15")
+
+	begin := time.Now()
+	if out, errOut, code := control(t, "stop"); code != 0 || !strings.HasPrefix(out, "stopped keepalive (pid ") {
+		t.Fatalf("stop: exit %d: %q %s", code, out, errOut)
+	}
+	if d := time.Since(begin); d > 3*time.Second {
+		t.Fatalf("stop took %v", d)
+	}
+	if _, _, code := control(t, "status"); code != 3 {
+		t.Fatalf("status after stop: exit %d, want 3", code)
+	}
+	next := startInstance(t, "-d", "30m")
+	if _, _, code := control(t, "stop"); code != 0 {
+		t.Fatalf("stop of the new instance: exit %d", code)
+	}
+	if code := next.exit(t); code != 0 {
+		t.Fatalf("new instance exit %d", code)
+	}
+}
+
+func TestReplaceTakesOverFromRun(t *testing.T) {
+	requirePower(t)
+	startRun(t, "-d", "1m", "--", "sleep", "25")
+	in := startInstance(t, "--replace", "-d", "30m")
+	out, _, code := control(t, "status", "--json")
+	if code != 0 || !strings.Contains(out, `"pid":`+itoa(in.cmd.Process.Pid)) {
+		t.Fatalf("status after replace: exit %d: %s", code, out)
+	}
+	if _, _, code := control(t, "stop"); code != 0 {
+		t.Fatalf("stop: exit %d", code)
+	}
+	if code := in.exit(t); code != 0 {
+		t.Fatalf("instance exit %d", code)
+	}
 }

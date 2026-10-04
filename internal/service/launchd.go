@@ -94,6 +94,7 @@ func (m *launchd) Status() (State, error) {
 		return st, nil
 	}
 	info := parseLaunchctlPrint(out)
+	st.Restarts = launchdRestarts(info)
 	if info["state"] == "running" {
 		st.Running = true
 		st.Detail = "running"
@@ -111,6 +112,20 @@ func (m *launchd) Status() (State, error) {
 		st.Detail += "; the plist file is missing"
 	}
 	return st, nil
+}
+
+// launchdRestarts is how often launchd restarted the job: every run after
+// the first, as long as the last one failed (launchd only restarts it after
+// a failed exit; "keepalive service install" loads it afresh).
+func launchdRestarts(info map[string]string) int {
+	runs, err := strconv.Atoi(info["runs"])
+	if err != nil || runs < 2 {
+		return 0
+	}
+	if code, err := strconv.Atoi(info["last exit code"]); err != nil || code == 0 {
+		return 0
+	}
+	return runs - 1
 }
 
 // parseLaunchctlPrint returns the "key = value" pairs at the top level of

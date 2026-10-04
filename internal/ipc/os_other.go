@@ -14,7 +14,11 @@ func platformBase(_ func(string) string, cacheDir func() (string, error)) (strin
 
 func fallbackDir() string { return "" }
 
-func secureDir(string, fs.FileInfo) error { return nil }
+func secureDir(string, fs.FileInfo, bool) error { return nil }
+
+func isPrivate(fs.FileInfo) bool { return true }
+
+func privateSubdir() string { return "keepalive" }
 
 func restrictSocket(string) error { return nil }
 

@@ -2,14 +2,21 @@
 
 package cli
 
-import "os"
+import (
+	"os"
+	"os/exec"
+)
 
 // runSignals are handled by `keepalive run`.
 func runSignals() []os.Signal { return []os.Signal{os.Interrupt} }
 
-// forwardSignal never forwards on Windows: Ctrl+C reaches the child through
-// the console they share, so keepalive just waits for it.
-func forwardSignal(os.Signal) bool { return false }
+// commandSignals never forwards on Windows: Ctrl+C reaches the command
+// through the console they share, so keepalive just waits for it.
+type commandSignals struct{}
+
+func newCommandSignals(*exec.Cmd) *commandSignals { return &commandSignals{} }
+
+func (*commandSignals) forward(*os.Process, os.Signal) bool { return false }
 
 func childExitCode(ps *os.ProcessState) int { return ps.ExitCode() }
 

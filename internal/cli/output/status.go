@@ -59,6 +59,8 @@ func StatusText(st StatusInfo, now time.Time) string {
 		row("activity", "off")
 	case !snap.InWindow:
 		row("activity", "on; resumes with the work hours")
+	case snap.Paused == string(session.PauseBattery):
+		row("activity", "on; resumes when the battery recovers")
 	default:
 		row("activity", ActivityText(act, false))
 		if act.Hint != "" && act.State == activity.StateDegraded {
@@ -68,6 +70,8 @@ func StatusText(st StatusInfo, now time.Time) string {
 	switch {
 	case !snap.InWindow:
 		row("power", "released while outside the work hours")
+	case snap.Paused == string(session.PauseBattery):
+		row("power", "released while the battery is low")
 	case snap.PowerHold == "":
 		row("power", "lost; re-acquiring")
 	default:
@@ -78,7 +82,10 @@ func StatusText(st StatusInfo, now time.Time) string {
 		if bat.Available {
 			v = fmt.Sprintf("%d%%", bat.Percent)
 		}
-		if bat.Threshold > 0 {
+		switch {
+		case bat.Threshold > 0 && bat.Pause:
+			v += fmt.Sprintf(" · pauses at %d%%, resumes at %d%% or when charging", bat.Threshold, bat.Threshold+session.BatteryResumeMargin)
+		case bat.Threshold > 0:
 			v += fmt.Sprintf(" · stops at %d%%", bat.Threshold)
 		}
 		row("battery", v)
@@ -142,6 +149,7 @@ type Follow struct {
 	started  bool
 	endsAt   string
 	battery  JSONBattery
+	paused   string
 	activity JSONActivity
 }
 
@@ -173,6 +181,8 @@ func (f *Follow) meaningful(ev JSONEvent) bool {
 	if snap.EndsAt != nil {
 		endsAt = *snap.EndsAt
 	}
+	pausedChanged := snap.Paused != f.paused
+	f.paused = snap.Paused
 	switch session.EventType(ev.Type) {
 	case session.EventStarted:
 		f.started, f.endsAt, f.battery = true, endsAt, snap.Battery
@@ -181,8 +191,8 @@ func (f *Follow) meaningful(ev JSONEvent) bool {
 		changed := f.started && endsAt != f.endsAt
 		f.endsAt, f.started = endsAt, true
 		return changed
-	case session.EventBattery:
-		changed := snap.Battery != f.battery
+	case session.EventBattery: // like Human
+		changed := snap.Battery != f.battery || pausedChanged
 		f.battery = snap.Battery
 		return changed
 	case session.EventActivity:

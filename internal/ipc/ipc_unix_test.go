@@ -75,28 +75,97 @@ func TestLockReleasedWhenServerIsKilled(t *testing.T) {
 	}
 }
 
-func TestPermissions(t *testing.T) {
-	dir := runtimeDir(t)
-	if err := os.Chmod(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	srv, err := Listen(testInfo)
+func mode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	fi, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	return fi.Mode().Perm()
+}
+
+// listenAndStatus starts a server and checks a client finds it.
+func listenAndStatus(t *testing.T) *Server {
+	t.Helper()
+	srv := serve(t, newFake())
+	if _, err := dial(t).Status(ctxTimeout(t)); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	return srv
+}
+
+func TestPermissions(t *testing.T) {
+	dir := runtimeDir(t) // private, from MkdirTemp
+	listenAndStatus(t)
 	for path, want := range map[string]os.FileMode{
 		dir:                            0o700,
 		filepath.Join(dir, SocketName): 0o600,
 		filepath.Join(dir, LockName):   0o600,
 	} {
-		fi, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := fi.Mode().Perm(); got != want {
+		if got := mode(t, path); got != want {
 			t.Errorf("%s mode %o, want %o", filepath.Base(path), got, want)
 		}
+	}
+}
+
+func TestRuntimeDirWeCreateIsPrivate(t *testing.T) {
+	base := runtimeDir(t)
+	dir := filepath.Join(base, "a", "rt")
+	t.Setenv(EnvRuntimeDir, dir)
+	listenAndStatus(t)
+	if got := mode(t, dir); got != 0o700 {
+		t.Fatalf("created runtime dir mode %o, want 700", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, SocketName)); err != nil {
+		t.Fatalf("socket not directly in the directory keepalive created: %v", err)
+	}
+}
+
+// TestSharedRuntimeDirIsNotChanged: KEEPALIVE_RUNTIME_DIR=$HOME (or /tmp)
+// must not chmod that directory; keepalive uses a private subdirectory.
+func TestSharedRuntimeDirIsNotChanged(t *testing.T) {
+	dir := runtimeDir(t)
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	listenAndStatus(t)
+	if got := mode(t, dir); got != 0o755 {
+		t.Fatalf("existing runtime dir changed to mode %o", got)
+	}
+	sub := filepath.Join(dir, fmt.Sprintf("keepalive-%d", os.Getuid()))
+	if got := mode(t, sub); got != 0o700 {
+		t.Fatalf("%s mode %o, want 700", sub, got)
+	}
+	for _, name := range []string{SocketName, LockName} {
+		if _, err := os.Stat(filepath.Join(sub, name)); err != nil {
+			t.Errorf("%s not in the private subdirectory: %v", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			t.Errorf("%s left in the shared directory", name)
+		}
+	}
+	if got, err := Dir(); err != nil || got != sub {
+		t.Fatalf("Dir() = %q, %v; want %q", got, err, sub)
+	}
+}
+
+func TestSharedRuntimeDirWithAnOpenSubdirIsRefused(t *testing.T) {
+	dir := runtimeDir(t)
+	sub := filepath.Join(dir, fmt.Sprintf("keepalive-%d", os.Getuid()))
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if srv, err := Listen(testInfo); err == nil {
+		srv.Close()
+		t.Fatal("Listen used a subdirectory others can read")
+	} else if !strings.Contains(err.Error(), "chmod 700") {
+		t.Fatalf("error %q does not say how to fix it", err)
+	}
+	if got := mode(t, sub); got != 0o755 {
+		t.Fatalf("subdirectory changed to mode %o", got)
 	}
 }
 

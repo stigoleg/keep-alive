@@ -392,14 +392,20 @@ func TestControllerFixedCadenceWithoutIdleSource(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, testCfg, tweak)
 			h.runFor(time.Second)
+			// Working as designed: no degraded state (and so no "not
+			// working" notification), only a hint about its limit.
 			st := h.last()
-			if st.State != StateDegraded || st.Reason != noIdleReason || st.Hint != "install an idle source" {
+			if st.State != StateWaitingIdle || st.Method != "Fake on a fixed schedule" ||
+				st.Hint != fixedHint || st.Reason != "first burst after 2m0s" {
 				t.Fatalf("status = %+v", st)
 			}
 			// The user just started keepalive: the first burst waits one idle threshold.
 			h.runFor(2*time.Minute - 2*time.Second)
 			if n := h.m.burstCount(); n != 0 {
 				t.Fatalf("%d bursts before the first threshold", n)
+			}
+			if st := h.last(); st.State != StateWaitingIdle || st.Idle < 2*time.Minute-3*time.Second {
+				t.Fatalf("waiting status shows no progress: %+v", st)
 			}
 			h.runFor(2 * time.Second)
 			h.runFor(10 * time.Minute)
@@ -412,12 +418,20 @@ func TestControllerFixedCadenceWithoutIdleSource(t *testing.T) {
 					t.Fatalf("gap %d = %v, want exactly 30s", i, gap)
 				}
 			}
-			if st := h.last(); st.State != StateDegraded || st.LastBurst.IsZero() {
+			if st := h.last(); st.State != StateSimulating || st.LastBurst.IsZero() || st.Method != "Fake on a fixed schedule" ||
+				st.Hint != fixedHint || st.Reason != "" {
 				t.Fatalf("status = %+v", st)
+			}
+			for _, st := range h.statuses {
+				if st.State == StateDegraded {
+					t.Fatalf("degraded on the fixed schedule: %+v", st)
+				}
 			}
 		})
 	}
 }
+
+const fixedHint = "no idle source on this desktop, so simulated activity cannot pause while you use the computer; install an idle source"
 
 func TestControllerReprobesUnavailableInjector(t *testing.T) {
 	h := newHarness(t, testCfg, func(m *machine, d *controllerDeps) {
@@ -826,7 +840,7 @@ func TestControllerFixedScheduleBacksOffWhenTheUserTakesThePointer(t *testing.T)
 		t.Fatalf("burst again %v after the user took the pointer, status %+v", 110*time.Second, st)
 	}
 	h.runFor(12 * time.Second)
-	if h.m.burstCount() != n+1 || h.last().State != StateDegraded {
+	if h.m.burstCount() != n+1 || h.last().State != StateSimulating {
 		t.Fatalf("not back on the fixed schedule one idle threshold later: %+v", h.last())
 	}
 }

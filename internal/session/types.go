@@ -22,9 +22,14 @@ type Config struct {
 	Duration         time.Duration // 0 = none
 	Until            time.Time     // zero = none (resolved from -c)
 	BatteryThreshold int           // 0 = none
-	Active           bool
-	Activity         activity.Config
-	KeepDisplay      bool
+	// BatteryPause pauses the session at the threshold instead of ending
+	// it (the login service, which nobody restarts by hand): no power hold,
+	// no simulated activity until the battery is BatteryResumeMargin above
+	// the threshold or charging.
+	BatteryPause bool
+	Active       bool
+	Activity     activity.Config
+	KeepDisplay  bool
 	// Schedule limits keeping awake to its windows; outside them the
 	// session is paused (no power hold, no simulated activity). nil = always.
 	Schedule *schedule.Schedule
@@ -49,6 +54,16 @@ type Deps struct {
 	// Notifier shows desktop notifications for unusual stops and problems;
 	// nil disables them.
 	Notifier notify.Notifier
+	// NotifyLimiter decides whether a notification of a kind may be shown;
+	// the login service passes one that remembers across restarts. nil
+	// means once per kind every NotifyInterval within this session.
+	NotifyLimiter NotifyLimiter
+}
+
+// NotifyLimiter rate-limits notifications by kind ("stopped", "activity",
+// "power"). Allow records the notification when it returns true.
+type NotifyLimiter interface {
+	Allow(kind string, now time.Time) bool
 }
 
 // Reason says why a session ended.
@@ -87,8 +102,17 @@ const (
 type Battery struct {
 	Percent   int
 	Available bool
-	Threshold int // 0 = none
+	Threshold int  // 0 = none
+	Pause     bool // the threshold pauses the session instead of ending it
 }
+
+// Pause says why a running session holds nothing ("" = it does not pause).
+type Pause string
+
+const (
+	PauseSchedule Pause = "schedule" // outside the work hours
+	PauseBattery  Pause = "battery"  // battery at or below the threshold
+)
 
 // Snapshot is the externally visible session state.
 type Snapshot struct {
@@ -109,8 +133,11 @@ type Snapshot struct {
 	Schedule   string
 	InWindow   bool
 	NextChange time.Time
-	// Watching describes the watched processes, e.g. "zoom" or "pid 4242".
+	// Watching describes the watched processes, e.g. "zoom" or "process 4242".
 	Watching string
+	// Paused is why the session holds no power and simulates nothing right
+	// now; the work hours win when both apply.
+	Paused Pause
 }
 
 // EventType names an Event.
@@ -149,6 +176,10 @@ const (
 	// NotifyInterval is the minimum gap between two notifications of the
 	// same kind.
 	NotifyInterval = 10 * time.Minute
+	// BatteryResumeMargin is how far above the threshold the battery must
+	// be before a battery pause ends (unless it is charging), so the
+	// session does not flap around the threshold.
+	BatteryResumeMargin = 5
 )
 
 func (c Config) mode() Mode {

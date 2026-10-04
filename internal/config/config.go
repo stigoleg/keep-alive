@@ -55,6 +55,10 @@ const (
 	SourceFlag    Source = "flag"
 )
 
+// NotifyDefault describes what an unset notify means; the CLI decides it
+// per run.
+const NotifyDefault = "on when headless or as a service, off in the interactive UI"
+
 // MinDuration is the shortest session duration accepted.
 const MinDuration = time.Minute
 

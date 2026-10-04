@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -48,6 +49,7 @@ func (a *App) manager() (service.Manager, error) {
 
 func (a *App) serviceInstallCommand() *cobra.Command {
 	var sf sessionFlags
+	var replace bool
 	cmd := &cobra.Command{
 		Use:   "install [flags]",
 		Short: "Install and start the login service",
@@ -55,13 +57,23 @@ func (a *App) serviceInstallCommand() *cobra.Command {
 session flags as keepalive itself; they are checked the same way and stored in
 the service. Settings you do not pass here are read from the config file each
 time the service starts, so later "keepalive config" edits apply from its next
-start. Installing again replaces the previous service.`,
+start. Installing again replaces the previous service. Limits that end a
+session for good (-d, -c, --pid, --while) cannot be used; with --battery the
+service pauses at the threshold and resumes 5 points above it or when the
+machine is plugged in.
+
+Only one keepalive runs at a time, so the service cannot start while one
+started elsewhere runs: on a terminal install offers to stop it, and
+--replace stops it without asking.`,
 		Example: `  keepalive service install
   keepalive service install --schedule "Mon-Fri 08:00-16:00" -a
   keepalive service install --schedule "weekdays 08:00-16:00" --battery 20`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if _, err := a.plan(cmd, &sf, false); err != nil {
+			if err := refuseOneShot(cmd.Flags()); err != nil {
+				return err
+			}
+			if _, err := a.plan(cmd, &sf, ipc.OriginService); err != nil {
 				return err
 			}
 			args, err := serviceArgs(cmd.Flags())
@@ -79,6 +91,7 @@ start. Installing again replaces the previous service.`,
 			if err != nil {
 				return err
 			}
+			blocking := a.blockingInstance(cmd.Context(), replace)
 			spec := service.Spec{Executable: exe, Args: args, LogPath: serviceLogPath()}
 			if err := m.Install(spec); err != nil {
 				return runtimeErr(err, service.Hint(err))
@@ -88,11 +101,84 @@ start. Installing again replaces the previous service.`,
 				st = service.State{Detail: err.Error()}
 			}
 			a.printInstalled(m, spec, st, cmd.Flags())
+			if blocking != "" {
+				fmt.Fprintf(a.Stderr, "keepalive: warning: another keepalive is running (%s); the service will not start while it runs\n", blocking)
+				fmt.Fprintln(a.Stderr, `hint: run "keepalive stop", then "keepalive service install" again; or log out and back in`)
+			}
 			return nil
 		},
 	}
 	addSessionFlags(cmd.Flags(), &sf)
+	cmd.Flags().BoolVar(&replace, "replace", false, "stop a keepalive that is already running, so the service can start now")
 	return cmd
+}
+
+// blockingInstance deals with a keepalive that is running outside the
+// service before installing it: the service would find it and exit. With
+// replace, or when the user agrees on a terminal, it is stopped. Otherwise
+// it is described ("pid 42, started in a terminal") for a warning. The
+// service's own keepalive does not count: installing replaces it.
+func (a *App) blockingInstance(ctx context.Context, replace bool) string {
+	dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	c, err := ipc.Dial(dctx)
+	if err != nil {
+		return ""
+	}
+	st, err := c.Status(dctx)
+	if err != nil || st.Origin == ipc.OriginService {
+		return ""
+	}
+	other := fmt.Sprintf("pid %d, started %s", st.PID, originPhrase(st.Origin))
+	if !replace && a.StdinTTY && a.StdoutTTY {
+		fmt.Fprintf(a.Stdout, "Another keepalive is running (%s).\nStop the running keepalive now so the service can start? [y/N] ", other)
+		line, _ := bufio.NewReader(a.Stdin).ReadString('\n')
+		answer := strings.ToLower(strings.TrimSpace(line))
+		replace = answer == "y" || answer == "yes"
+	}
+	if !replace {
+		return other
+	}
+	sctx, cancel := context.WithTimeout(ctx, stopWait)
+	defer cancel()
+	if err := c.Stop(sctx); err != nil {
+		fmt.Fprintf(a.Stderr, "keepalive: warning: could not stop it: %v\n", err)
+		return other
+	}
+	if err := waitGone(sctx, stopWait); err != nil {
+		fmt.Fprintf(a.Stderr, "keepalive: warning: %v\n", err)
+		return other
+	}
+	fmt.Fprintf(a.Stdout, "stopped keepalive (%s)\n", other)
+	return ""
+}
+
+// originPhrase is "in a terminal", "by keepalive run", "by the login service".
+func originPhrase(origin string) string {
+	switch origin {
+	case originRun:
+		return "by keepalive run"
+	case ipc.OriginService:
+		return "by the login service"
+	}
+	return "in a terminal"
+}
+
+// refuseOneShot rejects limits that end a session for good: the service
+// would stop and stay stopped until the next login.
+func refuseOneShot(fs *pflag.FlagSet) error {
+	for _, f := range []struct{ name, label string }{
+		{"duration", "-d/--duration"},
+		{"clock", "-c/--clock/--until"},
+		{"pid", "--pid"},
+		{"while", "--while"},
+	} {
+		if fs.Changed(f.name) {
+			return usageErr(fmt.Errorf(`%s cannot be used with "keepalive service install"`, f.label),
+				"a service runs at every login; use --schedule for work hours")
+		}
+	}
+	return nil
 }
 
 // serviceArgs serializes the flags given on the command line, and only
@@ -102,15 +188,21 @@ func serviceArgs(fs *pflag.FlagSet) ([]string, error) {
 	var err error
 	fs.Visit(func(f *pflag.Flag) {
 		switch f.Name {
-		case "plain", "help":
+		case "plain", "help", "replace":
 			return
-		case "config":
-			p, aerr := filepath.Abs(f.Value.String())
-			if aerr != nil {
-				err = aerr
-				return
+		case "config", "log-file":
+			// The service starts elsewhere: paths must not depend on the
+			// working directory ("~" is expanded when it starts).
+			p := f.Value.String()
+			if !strings.HasPrefix(p, "~") {
+				abs, aerr := filepath.Abs(p)
+				if aerr != nil {
+					err = aerr
+					return
+				}
+				p = abs
 			}
-			args = append(args, "--config="+p)
+			args = append(args, "--"+f.Name+"="+p)
 			return
 		}
 		if sv, ok := f.Value.(pflag.SliceValue); ok {

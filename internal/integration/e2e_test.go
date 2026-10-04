@@ -9,11 +9,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stigoleg/keep-alive/v2/internal/power"
 )
@@ -23,6 +26,10 @@ const testVersion = "9.9.9-e2e"
 var binary string
 
 func TestMain(m *testing.M) {
+	if os.Getenv(signalCounterEnv) == "1" {
+		signalCounter()
+		return
+	}
 	dir, err := os.MkdirTemp("", "keepalive-e2e-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -246,5 +253,26 @@ func TestDoctorJSON(t *testing.T) {
 	}
 	if failed != (code == 1) {
 		t.Fatalf("exit %d with failed=%v", code, failed)
+	}
+}
+
+// signalCounterEnv makes the test binary a command for "keepalive run"
+// that counts the SIGINT and SIGQUIT it receives and prints the total on
+// SIGTERM.
+const signalCounterEnv = "KA_E2E_SIGNAL_COUNTER"
+
+func signalCounter() {
+	sigs := make(chan os.Signal, 16)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
+	time.AfterFunc(30*time.Second, func() { os.Exit(3) }) // never outlive a failed test
+	fmt.Println("ready")
+	n := 0
+	for sig := range sigs {
+		if sig == syscall.SIGTERM {
+			fmt.Printf("total %d\n", n)
+			os.Exit(0)
+		}
+		n++
+		fmt.Printf("got %v\n", sig)
 	}
 }

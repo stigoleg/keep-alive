@@ -23,6 +23,7 @@ func (l *loop) armSchedule(now time.Time) {
 		return
 	}
 	next, _ := sched.Next(now)
+	next = next.Round(0) // wall clock, like EndsAt
 	l.snap.NextChange = next
 	switch {
 	case next.IsZero(): // always on: nothing ever changes
@@ -44,13 +45,13 @@ func (l *loop) checkSchedule() {
 	if sched == nil {
 		return
 	}
-	now := l.clk.Now()
+	now := l.clk.Now().Round(0) // wall clock, like EndsAt
 	in := sched.In(now)
 	changed := in != l.inWindow
-	if changed && in {
-		l.enterWindow()
-	} else if changed {
-		l.leaveWindow()
+	if changed {
+		wasAwake := l.awake()
+		l.inWindow, l.snap.InWindow = in, in
+		l.wake(wasAwake)
 	}
 	l.armSchedule(now)
 	if changed {
@@ -60,8 +61,41 @@ func (l *loop) checkSchedule() {
 	}
 }
 
-func (l *loop) enterWindow() {
-	l.inWindow, l.snap.InWindow = true, true
+// awake reports whether the session keeps the machine awake now: inside
+// the work hours and not paused by the battery.
+func (l *loop) awake() bool { return l.inWindow && !l.batteryLow }
+
+// paused is Snapshot.Paused.
+func (l *loop) paused() Pause {
+	switch {
+	case !l.inWindow:
+		return PauseSchedule
+	case l.batteryLow:
+		return PauseBattery
+	}
+	return ""
+}
+
+// setBatteryLow pauses or resumes for the battery.
+func (l *loop) setBatteryLow(low bool) {
+	wasAwake := l.awake()
+	l.batteryLow = low
+	l.wake(wasAwake)
+}
+
+// wake resumes or pauses after the work hours or the battery changed what
+// awake reports.
+func (l *loop) wake(wasAwake bool) {
+	switch now := l.awake(); {
+	case now && !wasAwake:
+		l.resume()
+	case !now && wasAwake:
+		l.pause()
+	}
+}
+
+// resume acquires the power hold and restarts simulated activity.
+func (l *loop) resume() {
 	hold, err := l.s.deps.Power.Acquire(l.ctx, l.powerOptions())
 	if err != nil {
 		l.warn(fmt.Sprintf("could not keep the system awake (%v); retrying", err))
@@ -77,9 +111,8 @@ func (l *loop) enterWindow() {
 	}
 }
 
-// leaveWindow pauses the session: no simulated activity, no power hold.
-func (l *loop) leaveWindow() {
-	l.inWindow, l.snap.InWindow = false, false
+// pause stops simulated activity and releases the power hold.
+func (l *loop) pause() {
 	l.stopActivity()
 	l.snap.Activity = activity.Status{State: activity.StateOff}
 	if l.powerRetry != nil {
@@ -165,8 +198,8 @@ func (l *loop) exitMessage(ex proc.Exit) string {
 	return ex.Reason
 }
 
-// watchDescription is Snapshot.Watching: "make", "zoom", "pid 42",
-// "zoom, pids 1, 2".
+// watchDescription is Snapshot.Watching: "make", "zoom", "process 42",
+// "processes 1, 2", "zoom and process 42".
 func watchDescription(command string, pids []int, name string) string {
 	var parts []string
 	if command != "" {
@@ -181,13 +214,22 @@ func watchDescription(command string, pids []int, name string) string {
 		for i, pid := range pids {
 			s[i] = strconv.Itoa(pid)
 		}
-		label := "pid "
+		label := "process "
 		if len(pids) > 1 {
-			label = "pids "
+			label = "processes "
 		}
 		parts = append(parts, label+strings.Join(s, ", "))
 	}
-	return strings.Join(parts, ", ")
+	if len(parts) < 2 {
+		return strings.Join(parts, "")
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
+}
+
+// WatchingSeveral reports whether a Snapshot.Watching names more than one
+// process ("processes 1, 2", "zoom and process 42"), for "run" or "runs".
+func WatchingSeveral(watching string) bool {
+	return strings.HasPrefix(watching, "processes ") || strings.Contains(watching, " and ")
 }
 
 // ---- notifications ----
@@ -200,18 +242,24 @@ const (
 )
 
 // notify shows a desktop notification in the background, at most once per
-// kind every NotifyInterval. Failures are only logged; Run waits for
+// kind every NotifyInterval (or as Deps.NotifyLimiter decides). Failures are only logged; Run waits for
 // pending notifications before it returns.
 func (l *loop) notify(kind, title, body string) {
 	n := l.s.deps.Notifier
 	if n == nil {
 		return
 	}
-	now := l.clk.Now()
-	if last, ok := l.notified[kind]; ok && now.Sub(last) < NotifyInterval {
-		return
+	now := l.clk.Now().Round(0) // wall clock, so time asleep counts
+	if lim := l.s.deps.NotifyLimiter; lim != nil {
+		if !lim.Allow(kind, now) {
+			return
+		}
+	} else {
+		if last, ok := l.notified[kind]; ok && now.Sub(last) < NotifyInterval {
+			return
+		}
+		l.notified[kind] = now
 	}
-	l.notified[kind] = now
 	l.notifying.Add(1)
 	go func() {
 		defer l.notifying.Done()

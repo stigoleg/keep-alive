@@ -12,6 +12,7 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/activity"
 	"github.com/stigoleg/keep-alive/v2/internal/ipc"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
+	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
 	"github.com/stigoleg/keep-alive/v2/internal/tui"
 )
@@ -67,7 +68,12 @@ func (f *fakeInstance) Subscribe() (<-chan session.Event, func()) {
 
 func startInstance(t *testing.T, snap session.Snapshot) *fakeInstance {
 	t.Helper()
-	srv, err := ipc.Listen(ipc.ServerInfo{Version: "2.0.0", Origin: ipc.OriginService})
+	return startInstanceFrom(t, snap, ipc.OriginService)
+}
+
+func startInstanceFrom(t *testing.T, snap session.Snapshot, origin string) *fakeInstance {
+	t.Helper()
+	srv, err := ipc.Listen(ipc.ServerInfo{Version: "2.0.0", Origin: origin})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,4 +321,34 @@ func TestTUIClaimTakesTheLock(t *testing.T) {
 		t.Fatalf("lock not released: %v", err)
 	}
 	srv.Close()
+}
+
+type failingPower struct{}
+
+func (failingPower) Name() string { return "failing" }
+
+func (failingPower) Acquire(context.Context, power.Options) (power.Hold, error) {
+	return nil, &power.Error{Err: errors.New("no inhibitor answered"), Hint: "start a desktop session"}
+}
+
+// TestServiceRestartsDoNotRepeatNotifications: a service that fails at
+// every start (and is restarted by its manager) notifies once per kind
+// every ten minutes, not once per start.
+func TestServiceRestartsDoNotRepeatNotifications(t *testing.T) {
+	n := &recordingNotifier{}
+	state := t.TempDir()
+	for range 3 {
+		ta := newTestApp(t)
+		ta.runSession = nil // the real headless run
+		ta.newPower = func() power.Inhibitor { return failingPower{} }
+		ta.Notifier = n
+		ta.stateDir = func() (string, error) { return state, nil }
+		ta.logSetup = func(logging.Options) (string, func() error, error) { return "", func() error { return nil }, nil }
+		if code := ta.run("--plain", "--origin", "service"); code != ExitFailure {
+			t.Fatalf("exit %d, want 1: %s", code, ta.stderr)
+		}
+	}
+	if len(n.sent) != 1 || !strings.Contains(n.sent[0], "no inhibitor answered") {
+		t.Fatalf("notifications = %q, want one", n.sent)
+	}
 }

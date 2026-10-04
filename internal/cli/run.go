@@ -13,7 +13,6 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/clock"
 	"github.com/stigoleg/keep-alive/v2/internal/ipc"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
-	"github.com/stigoleg/keep-alive/v2/internal/notify"
 	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
 	"github.com/stigoleg/keep-alive/v2/internal/tui"
@@ -43,7 +42,9 @@ func (a *App) execute(ctx context.Context, p *Plan) error {
 // startLogging sets up the log file the plan asks for and says where it is.
 func (a *App) startLogging(p *Plan) (func() error, error) {
 	logPath, closeLog, err := a.logSetup(p.Logging)
-	if err != nil {
+	if err != nil && p.Origin == ipc.OriginService {
+		logPath, closeLog = a.fallbackLog(p, err)
+	} else if err != nil {
 		return nil, runtimeErr(fmt.Errorf("open log file: %w", err), "pass --log-file to choose another location")
 	}
 	if logPath != "" && p.Origin != ipc.OriginService {
@@ -54,17 +55,47 @@ func (a *App) startLogging(p *Plan) (func() error, error) {
 	return closeLog, nil
 }
 
+// fallbackLog keeps a login service running when its log file cannot be
+// opened: exiting would make the service manager restart it in a loop. It
+// logs to the default file instead, or nowhere, and says so once.
+func (a *App) fallbackLog(p *Plan, cause error) (string, func() error) {
+	var logPath, msg string
+	var closeLog func() error
+	err := cause
+	if failed := p.Logging.Path; failed != "" { // try the default file
+		o := p.Logging
+		o.Path = ""
+		if logPath, closeLog, err = a.logSetup(o); err == nil {
+			msg = fmt.Sprintf("cannot write the log file %s (%v); logging to %s instead", failed, cause, logPath)
+		}
+	}
+	if err != nil {
+		logPath, closeLog, _ = a.logSetup(logging.Options{}) // logging off
+		msg = fmt.Sprintf("cannot write a log file (%v); running without one", err)
+	}
+	slog.Warn("service: " + msg)
+	if p.Notify {
+		a.notifyService("log", "Keep-Alive service: no log file", msg)
+	}
+	return logPath, closeLog
+}
+
 // deps are the production session dependencies for p.
 func (a *App) deps(p *Plan) session.Deps {
 	d := session.Deps{
 		Clock:     clock.Real(),
-		Power:     power.New(),
+		Power:     a.newPower(),
 		Activity:  activity.New(),
 		Battery:   a.Battery,
 		Processes: a.Processes,
 	}
 	if p.Notify {
-		d.Notifier = notify.New()
+		d.Notifier = a.notifier()
+		if p.Origin == ipc.OriginService {
+			if lim := a.serviceLimiter(); lim != nil {
+				d.NotifyLimiter = lim
+			}
+		}
 	}
 	return d
 }

@@ -57,6 +57,9 @@ type State struct {
 	Running   bool
 	Detail    string // human summary, e.g. "running (pid 123)"
 	Path      string // plist or unit/desktop file, or the task name
+	// Restarts counts restarts after a failed exit since the service was
+	// loaded, where the manager reports it (launchd, systemd); 0 otherwise.
+	Restarts int
 }
 
 // Manager installs, removes and inspects the service.
