@@ -1,3 +1,8 @@
+# TODO(2.0.0): re-record for the v2 interactive UI. These steps drive the 1.x
+# menu (j to move, a number to pick a duration) and no longer match; the
+# README shows a text screenshot until a new demo.gif exists. Render it from
+# docs/ with `vhs demo.tape`, then add the image back to README.md.
+
 Output demo.gif
 
 Require echo

@@ -25,6 +25,11 @@ All notable changes to keepalive. Releases before 2.0.0 are described on the
   at every login (LaunchAgent, systemd user unit or Task Scheduler).
   `keepalive status`, `stop`, `active on|off` and `extend 30m` control the
   running instance.
+- **A new interactive UI.** Pick how long to stay awake, toggle activity,
+  display and battery options, and follow a dashboard with the time left,
+  the activity state, the work hours and the power hold. Opened while
+  another keepalive runs (the login service, for example), it attaches to
+  that one instead of refusing to start.
 - **`keepalive doctor`** checks what works on this machine: power
   mechanisms, activity backends, idle sources, permissions and the lock
   screen, each with a fix.
@@ -53,6 +58,9 @@ All notable changes to keepalive. Releases before 2.0.0 are described on the
   `--replace` to take over.
 - **The GUI is gone.** keepalive is a command-line tool with an interactive
   terminal UI. The menu-bar app is no longer developed or shipped.
+- **New keys in the interactive UI.** `↑`/`↓` choose (`j`/`k` are gone),
+  `b` turns the battery limit on and off (`B` is gone), `esc` no longer
+  quits, and `+`/`-` move the end of a running session by 15 minutes.
 - **Release file names changed** to `keepalive_<version>_<os>_<arch>` (for
   example `keepalive_2.0.0_darwin_universal.tar.gz`,
   `keepalive_2.0.0_linux_amd64.tar.gz`). Download scripts that used
@@ -86,11 +94,45 @@ All notable changes to keepalive. Releases before 2.0.0 are described on the
 - Windows: simulated pointer movement drifted because of pointer
   acceleration, and input that was dropped on a locked desktop went
   unnoticed.
+- Activity simulation kept no distance from display edges, so a burst could
+  trigger a hot corner (GNOME Activities, Plasma Overview, macOS). Bursts
+  now stay 3 px off every edge and out of a 24 px square at each corner;
+  where the pointer position cannot be read (uinput, ydotool), they head
+  right and down and barely move up or left.
+- Activity simulation kept moving the pointer while you took the mouse in
+  the middle of a burst. On macOS and Windows a burst now stops at once and
+  waits for the next idle period.
+- Windows: the pointer could end a pixel or two away from where it started;
+  it now returns exactly. Bursts stay on the monitor under the cursor. When
+  the session query fails, the lock screen is detected through the input
+  desktop. System DLLs load from System32 only.
+- Linux: on Wayland, XWayland's idle counter could gate or verify activity,
+  although it only sees input over XWayland windows. It is now only
+  watched: when it misses bursts, keepalive warns that apps under XWayland
+  may go Away and suggests `--ozone-platform=wayland`.
+- Linux: the fix for `/dev/uinput` access told you to join the `input`
+  group, which lets every program read your keyboard. It now grants access
+  to the user at the seat with a `uaccess` udev rule.
+- Linux: input methods are checked for real (keepalive opens `/dev/uinput`
+  and connects to `ydotoold`), and when one fails during a session
+  keepalive switches to the next and replays the burst on it.
+- Linux: the screen counts as locked when logind or any running desktop
+  screensaver (GNOME, KDE, MATE, Cinnamon, XFCE) says so.
+- Stopping keepalive now also ends activity setup, idle and lock queries
+  and a burst in progress at once, even when a D-Bus call or a helper
+  process hangs.
 
 ### New
 
 - `keepalive run -- CMD` keeps the machine awake while a command runs and
-  exits with its status.
+  always exits with the command's status. If the machine cannot be kept
+  awake it prints a warning and runs the command anyway. It sends no
+  desktop notification when the command ends.
+- `keepalive service install` takes the session flags except the one-shot
+  limits (`-d`, `-c`/`--until`, `--pid`, `--while`), which it refuses with a
+  hint to use `--schedule`. In the service, `-b` pauses keeping awake while
+  the battery is at or below the threshold and resumes once it is 5 points
+  above it or charging, instead of ending the service.
 - `--schedule`, `--pid`, `--while`, `--notify` (desktop notifications when
   keepalive stops on its own or activity simulation fails),
   `--active-idle`, `--active-interval`, `--active-keys`, `--keep-display`,
@@ -103,4 +145,6 @@ All notable changes to keepalive. Releases before 2.0.0 are described on the
 - Linux packages install a udev rule (`60-keepalive-uinput.rules`) that
   gives the user at the active seat access to `/dev/uinput`, and load the
   `uinput` module at boot, so `--active` works on Wayland without adding
-  yourself to the `input` group.
+  yourself to the `input` group. The rule lets every process of that user
+  write to `/dev/uinput`; if you never use `--active`, delete it or mask it
+  with an empty `/etc/udev/rules.d/60-keepalive-uinput.rules`.
