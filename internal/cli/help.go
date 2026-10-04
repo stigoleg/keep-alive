@@ -23,8 +23,12 @@ func setGroup(fs *pflag.FlagSet, group string, names ...string) {
 	}
 }
 
+// groupCommand marks a command that only holds subcommands (see makeGroup).
+const groupCommand = "keepalive_group_command"
+
 func init() {
 	cobra.AddTemplateFunc("groupedFlagUsages", groupedFlagUsages)
+	cobra.AddTemplateFunc("isGroup", func(c *cobra.Command) bool { return c.Annotations[groupCommand] != "" })
 }
 
 // groupedFlagUsages renders a command's own flags under "Session flags:",
@@ -64,8 +68,9 @@ func groupedFlagUsages(c *cobra.Command) string {
 	return b.String()
 }
 
-// usageTemplate is cobra's default with the flags grouped.
-const usageTemplate = `Usage:{{if .Runnable}}
+// usageTemplate is cobra's default with the flags grouped, and no
+// "[flags]" line for commands that only hold subcommands.
+const usageTemplate = `Usage:{{if and .Runnable (not (isGroup .))}}
   {{.UseLine}}{{end}}{{if .HasAvailableSubCommands}}
   {{.CommandPath}} [command]{{end}}{{if gt (len .Aliases) 0}}
 

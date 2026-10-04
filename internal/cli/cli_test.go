@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -639,5 +640,87 @@ func TestRunHelpHidesPlain(t *testing.T) {
 	ta = newTestApp(t)
 	if code := ta.run("run", "--plain", "--", "true"); code != ExitOK { // still accepted
 		t.Fatalf("exit %d: %s", code, ta.stderr)
+	}
+}
+
+// TestEveryCommandHelp checks that "<command> --help", "-h" and "help
+// <command>" show that command's own help, never the root's.
+func TestEveryCommandHelp(t *testing.T) {
+	var paths [][]string
+	var walk func(c *cobra.Command, path []string)
+	walk = func(c *cobra.Command, path []string) {
+		if c.Name() == "help" {
+			return
+		}
+		paths = append(paths, path)
+		for _, sub := range c.Commands() {
+			walk(sub, append(slices.Clone(path), sub.Name()))
+		}
+	}
+	walk(newTestApp(t).Command(), nil)
+	if len(paths) < 15 {
+		t.Fatalf("only %d commands found", len(paths))
+	}
+	for _, path := range paths {
+		for _, args := range [][]string{
+			append(slices.Clone(path), "--help"),
+			append(slices.Clone(path), "-h"),
+			append([]string{"help"}, path...),
+		} {
+			ta := newTestApp(t)
+			cmd, _, err := ta.Command().Find(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if code := ta.run(args...); code != ExitOK {
+				t.Errorf("%q: exit %d: %s", args, code, ta.stderr)
+				continue
+			}
+			out := ta.stdout.String()
+			long := strings.TrimSpace(cmd.Long)
+			if long == "" {
+				long = cmd.Short
+			}
+			first, _, _ := strings.Cut(long, "\n")
+			if !strings.HasPrefix(out, first) || !strings.Contains(out, "\nUsage:\n  "+cmd.CommandPath()) {
+				t.Errorf("%q does not show the help of %q:\n%s", args, cmd.CommandPath(), out)
+			}
+		}
+	}
+}
+
+func TestGroupCommandTyposAreUsageErrors(t *testing.T) {
+	for _, tc := range []struct {
+		args       []string
+		suggestion string // "" when nothing is close
+	}{
+		{[]string{"service", "instal"}, `did you mean "keepalive service install"?`},
+		{[]string{"service", "uninstal"}, `did you mean "keepalive service uninstall"?`},
+		{[]string{"config", "instal"}, "use one of: init, path, show"},
+		{[]string{"config", "sho"}, `did you mean "keepalive config show"?`},
+		{[]string{"completion", "zssh"}, `did you mean "keepalive completion zsh"?`},
+		{[]string{"service", "xyzzy", "more"}, ""},
+	} {
+		ta := newTestApp(t)
+		if code := ta.run(tc.args...); code != ExitUsage {
+			t.Errorf("%q: exit %d, want 2", tc.args, code)
+		}
+		errOut := ta.stderr.String()
+		want := fmt.Sprintf("keepalive: error: unknown command %q for %q", tc.args[1], "keepalive "+tc.args[0])
+		if !strings.HasPrefix(errOut, want) {
+			t.Errorf("%q: stderr %q, want %q", tc.args, errOut, want)
+		}
+		if tc.suggestion != "" && !strings.Contains(errOut, "hint: "+tc.suggestion) {
+			t.Errorf("%q: stderr %q, want hint %q", tc.args, errOut, tc.suggestion)
+		}
+		if ta.stdout.Len() != 0 {
+			t.Errorf("%q printed help: %q", tc.args, ta.stdout)
+		}
+	}
+	for _, group := range []string{"service", "config", "completion"} {
+		ta := newTestApp(t)
+		if code := ta.run(group); code != ExitOK || !strings.Contains(ta.stdout.String(), "Usage:") {
+			t.Errorf("%s alone: exit %d, output %q", group, code, ta.stdout)
+		}
 	}
 }
