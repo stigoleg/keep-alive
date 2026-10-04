@@ -71,5 +71,23 @@ if [ "$status" != Accepted ]; then
 fi
 log "notarized (submission $id)"
 
-# Informational: for a CLI binary spctl may still answer "not an app".
-spctl --assess --type execute --verbose=2 "$bin" 2>&1 | sed 's/^/macos-sign: spctl: /' >&2 || true
+# Gatekeeper must now accept the binary with the online ticket. "--type
+# execute" rejects any bare CLI binary as "not an app"; "--type open" with the
+# primary-signature context assesses the signature itself. The ticket can take
+# a moment to show up, so try a few times.
+tries=3
+while :; do
+	assess=$(spctl --assess --type open --context context:primary-signature -v "$bin" 2>&1) && ok=1 || ok=0
+	printf '%s\n' "$assess" | sed 's/^/macos-sign: spctl: /' >&2
+	if [ "$ok" = 1 ] && printf '%s\n' "$assess" | grep -qF 'source=Notarized Developer ID'; then
+		break
+	fi
+	tries=$((tries - 1))
+	if [ "$tries" -le 0 ]; then
+		log "Gatekeeper does not accept $bin as notarized (submission $id)"
+		exit 1
+	fi
+	log "Gatekeeper does not accept it yet; retrying in 15 s"
+	sleep 15
+done
+log "Gatekeeper accepts $bin (Notarized Developer ID)"

@@ -141,11 +141,17 @@ codesign --verify --strict --verbose=2 "$b"
 ```
 
 After a release, download the macOS archive from GitHub so that it is
-quarantined like a user's copy. Then run
-`spctl --assess --type execute --verbose=2 keepalive` and `./keepalive
-version`. If spctl only answers that the code "does not seem to be an app",
-rely on `codesign -dv` and on the `Accepted` entry in `xcrun notarytool
-history --keychain-profile keepalive-notary`.
+quarantined like a user's copy. Then run `./keepalive version` and
+
+```sh
+spctl --assess --type open --context context:primary-signature -v keepalive
+# keepalive: accepted
+# source=Notarized Developer ID
+```
+
+`macos-sign.sh` runs the same check after notarizing and fails unless it
+says `accepted`. `spctl --assess --type execute` is no use here: it rejects
+every bare command-line binary as "does not seem to be an app".
 
 Linux packages, in Docker (use the `amd64` package on an Intel host):
 
