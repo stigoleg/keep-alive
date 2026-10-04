@@ -172,6 +172,32 @@ func TestFixturesFitEveryWidth(t *testing.T) {
 	}
 }
 
+// TestFootersFit checks the key footer of every screen at the golden
+// widths, in colour and without: never wider than the terminal, and on one
+// line at the full 64 columns.
+func TestFootersFit(t *testing.T) {
+	for _, f := range Fixtures() {
+		for _, r := range []*lipgloss.Renderer{nil, forced(termenv.TrueColor, true)} {
+			for _, w := range goldenWidths {
+				lines := strings.Split(f.Build(w, goldenHeight, r, Look{}).View(), "\n")
+				footer := 0
+				for i := len(lines) - 1; i >= 0 && !strings.ContainsAny(lines[i], "╯│") && lines[i] != ""; i-- {
+					footer++
+					if lipgloss.Width(lines[i]) > w {
+						t.Errorf("%s at %d: footer %q is %d wide", f.Name, w, lines[i], lipgloss.Width(lines[i]))
+					}
+				}
+				if footer == 0 {
+					t.Errorf("%s at %d: no footer", f.Name, w)
+				}
+				if w == 64 && footer > 1 {
+					t.Errorf("%s at 64: footer takes %d lines", f.Name, footer)
+				}
+			}
+		}
+	}
+}
+
 func TestFixtureNamesAreUnique(t *testing.T) {
 	seen := map[string]bool{}
 	for _, f := range Fixtures() {
