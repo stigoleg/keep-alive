@@ -309,16 +309,17 @@ func (c *controller) checkSecondary(before time.Duration) {
 		return // not idle before the burst: nothing to compare
 	}
 	after, err := c.deps.secondary.Idle()
-	switch {
-	case err != nil:
-	case after < effectiveIdle:
+	if err != nil {
+		return
+	}
+	if after < effectiveIdle {
 		c.secMisses = 0
-	default:
-		c.secMisses++
-		if c.secMisses >= ineffectiveLimit && !c.secWarned {
-			c.secWarned = true
-			slog.Warn("activity: simulated input does not reach "+c.deps.secondary.Name(), "idle_after", after)
-		}
+		return
+	}
+	c.secMisses++
+	if c.secMisses >= ineffectiveLimit && !c.secWarned {
+		c.secWarned = true
+		slog.Warn("activity: simulated input does not reach "+c.deps.secondary.Name(), "idle_after", after)
 	}
 }
 
