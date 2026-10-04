@@ -3,7 +3,7 @@
 All notable changes to keepalive. Releases before 2.0.0 are described on the
 [GitHub releases page](https://github.com/stigoleg/keep-alive/releases).
 
-## [2.0.0] - Unreleased
+## [2.0.0] - 2026-10-04
 
 ### Highlights
 

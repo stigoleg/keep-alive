@@ -125,8 +125,7 @@ and a man page.
 
 ### The interactive UI
 
-<!-- TODO: add a screenshot or GIF of the interactive UI here once its
-     redesign has landed (re-record docs/demo.tape). -->
+![keepalive keeping the computer awake for two hours and simulating activity](docs/demo.gif)
 
 Run `keepalive` on a terminal to pick how long to stay awake and which
 options to use, then follow a dashboard with the time left, the activity
