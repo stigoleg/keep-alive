@@ -125,25 +125,13 @@ and a man page.
 
 ### The interactive UI
 
-```
- keepalive 2.0.0                                        ● AWAKE
+<!-- TODO: add a screenshot or GIF of the interactive UI here once its
+     redesign has landed (re-record docs/demo.tape). -->
 
- Keeping system and display awake
- ██████████████████░░░░░░░░░░░░  1h 12m left · until 17:00
-
- Activity     ● simulating · last move 12s ago · CoreGraphics
- Work hours   Mon-Fri 08:00-16:00 · ends 16:00
- Battery      76% · stops at 20%
- Holding      IOPMAssertion(PreventUserIdleSystemSleep, +2)
-
- a activity off · +/- 15 min · s stop · ? help · q quit
-```
-
-| Screen | Keys |
-|---|---|
-| Home | `↑` `↓` choose, `enter` start, `a` simulate activity, `d` keep display on, `b` stop at a battery level, `k` tap Shift too, `?` help, `q` quit |
-| Running | `a` activity on/off, `+` `-` 15 minutes more or less, `s` or `esc` stop and go back, `q` stop and quit |
-| Attached to another keepalive | `a`, `+`, `-` act on it, `s` asks before stopping it, `q` detaches and leaves it running |
+Run `keepalive` on a terminal to pick how long to stay awake and which
+options to use, then follow a dashboard with the time left, the activity
+state, the work hours, the battery and the power hold. Opened while another
+keepalive runs, it attaches to that one; quitting then leaves it running.
 
 ## Activity simulation
 
@@ -225,7 +213,7 @@ empty file of the same name in `/etc/udev/rules.d/`.
 | Session | Idle-aware? | Notes |
 |---|---|---|
 | GNOME on Wayland | yes (Mutter) | |
-| KDE Plasma on Wayland | no | Plasma does not share idle time, so keepalive simulates activity on a fixed schedule (every `--active-interval`) and says so |
+| KDE Plasma on Wayland | no | Plasma does not share idle time, so keepalive simulates activity on a fixed schedule (first after `--active-idle`, then every `--active-interval`), also while you use the computer, and says so |
 | Other Wayland compositors (sway, Hyprland, …) | no | fixed schedule, as above |
 | X11 | yes | GNOME and KDE report idle time themselves; other desktops need `xprintidle` (`sudo apt install xprintidle`) |
 
@@ -282,12 +270,20 @@ keepalive run -- ./backup.sh    # run a command and keep awake until it exits
 its extension (`zoom` matches `zoom.us` and `Zoom.exe`). The process must be
 running when keepalive starts.
 
-`keepalive run` gives the command the terminal, forwards signals to it and
-always exits with the command's exit code. If it cannot keep the machine
-awake, it prints a warning and runs the command anyway. Session flags go
-before `--` (`keepalive run -a -b 20 -- rsync -a ~/photos nas:/backup`). It
-also works next to a keepalive that is already running, and sends no
-desktop notification when the command ends.
+`keepalive run` gives the command the terminal and always exits with the
+command's exit code. If it cannot keep the machine awake, it prints a
+warning and runs the command anyway. Session flags go before `--`
+(`keepalive run -a -b 20 -- rsync -a ~/photos nas:/backup`). It also works
+next to a keepalive that is already running, and sends no desktop
+notification when the command ends. `keepalive stop` ends the keep-awake
+part only; the command keeps running.
+
+On a terminal, Ctrl+C and Ctrl+\ reach the command once, straight from
+the terminal, and SIGTERM or SIGHUP sent to keepalive is passed on. Without
+a controlling terminal (cron, CI, a service manager), the command runs in
+its own process group and keepalive passes every signal it gets on to that
+group, once. A SIGKILL to keepalive's process group, such as `timeout -k`
+sends, then does not reach the command, which can outlive keepalive.
 
 ## Background service
 
@@ -300,15 +296,27 @@ keepalive service uninstall
 `service install` starts keepalive now and at every login: a LaunchAgent on
 macOS, a systemd user unit on Linux (an XDG autostart entry without
 systemd), and a Task Scheduler task on Windows. It takes the session flags
-except the one-shot limits (`-d`, `-c`/`--until`, `--pid`, `--while`), which
-it refuses; use `--schedule` to limit when it keeps the machine awake.
-Anything you do not pass is read from the config file each time the
-service starts. Installing again replaces the service.
+except the limits that would end it for good (`-d`, `-c`/`--until`,
+`--pid`, `--while`): those exit with status 2 and a hint to use
+`--schedule`. Anything you do not pass is read from the config file each
+time the service starts. Installing again replaces the service.
 
-With `-b`, the service does not end at the battery threshold: it stops
-keeping the machine awake until the battery is 5 points above the
-threshold or charging, then carries on. The service logs to a file and
-shows a desktop notification if it cannot start or stops on its own.
+The service cannot start while a keepalive started elsewhere runs. On a
+terminal, `service install` asks whether to stop that one; `--replace`
+stops it without asking. Otherwise it installs anyway and warns that the
+service will not start while the other one runs: stop it and install
+again, or log out and back in.
+
+With `-b`, the service pauses instead of ending: at the threshold it stops
+keeping the machine awake, and it carries on once the battery is 5 points
+above the threshold or the machine is on external power. `-b 100` therefore
+means "only while plugged in".
+
+The service always keeps a log (see [Logs](#logs)) and shows a desktop
+notification when it cannot start or stops on its own, at most once every
+10 minutes per kind, also across restarts (the state is kept in
+`keepalive/notified.json` in the user cache directory). On macOS and Linux,
+`keepalive doctor` flags a service that keeps restarting.
 
 ## Controlling a running keepalive
 
@@ -363,6 +371,14 @@ schedule = "Mon-Fri 08:00-16:00"
 KEEPALIVE_ACTIVE_IDLE=3m keepalive -a
 ```
 
+The control socket that `status`, `stop` and the other commands use lives
+in `keepalive/` under `$XDG_RUNTIME_DIR` (Linux), the user cache directory
+(macOS) or `%LOCALAPPDATA%` (Windows). `KEEPALIVE_RUNTIME_DIR` moves it. On
+macOS and Linux, if that directory already exists and other users can read
+it (such as `/tmp` on Linux), keepalive uses a private `keepalive-<uid>`
+directory inside it and leaves the directory's own permissions alone. A
+symlink (such as `/tmp` on macOS) is refused; use the real path.
+
 ## Output and scripting
 
 Headless output is one line per event:
@@ -385,8 +401,10 @@ Headless output is one line per event:
 - `snapshot`: `running`, `started_at`, `ends_at`, `remaining` (seconds),
   `mode` (`indefinite`, `duration`, `until`), `active`, `activity`
   (`state`, `method`, `reason`, `hint`, `last_burst`, `idle`), `battery`
-  (`percent`, `available`, `threshold`), `keep_display`, `power_hold`,
-  `schedule`, `in_window`, `next_change`, `watching`.
+  (`percent`, `available`, `threshold`, `pause`: true when the threshold
+  pauses rather than stops), `keep_display`, `power_hold`, `schedule`,
+  `in_window`, `next_change`, `watching`, `paused` (`""`, `"schedule"` or
+  `"battery"`: why nothing is held right now).
 - `activity.state`: `off`, `waiting_idle`, `simulating`, `paused_user`,
   `paused_locked`, `degraded`.
 - `reason` on `stopping`/`stopped`: `user`, `duration`, `until`, `battery`,
@@ -399,9 +417,9 @@ Headless output is one line per event:
 |---|---|
 | 0 | ended normally, including Ctrl+C and `keepalive stop` |
 | 1 | runtime error, e.g. nothing can keep the machine awake; `doctor`: a check failed |
-| 2 | usage error: a bad flag, value, schedule or process |
+| 2 | usage error: a bad flag, value, schedule or process, or a mistyped subcommand (with a suggestion) |
 | 3 | `status`, `stop`, `active`, `extend`: no keepalive is running |
-| *n* | `keepalive run`: the command's exit status (127 not found, 126 not executable) |
+| *n* | `keepalive run`: always the command's exit status (127 not found, 126 not executable) |
 
 `--notify` controls desktop notifications when keepalive stops on its own or
 activity simulation fails. They are on by default except in the interactive
@@ -421,11 +439,12 @@ keepalive doctor --probe    # also move the pointer once and verify the idle res
 | macOS: "Accessibility permission is missing" | Turn on the app `doctor` names under Privacy & Security → Accessibility. After an update, remove the entry and add it again. |
 | macOS: no notifications | They come from Script Editor; allow it under System Settings → Notifications. |
 | Linux: "no write access to /dev/uinput" | Install the package, or add the udev rule under [Linux](#linux). |
-| Linux: "simulating on a fixed schedule" | KDE Plasma or another compositor on Wayland does not share idle time. Use GNOME, or a Plasma (X11) session. |
+| Linux: "… on a fixed schedule" | KDE Plasma or another compositor on Wayland does not share idle time, so activity is simulated even while you work. Use GNOME, or a Plasma (X11) session. |
 | Linux: the XWayland warning | Start Slack or Teams with `--ozone-platform=wayland`. |
 | Linux: the inhibitor is refused | logind's polkit rules refuse it outside a desktop session; run keepalive from the desktop. |
 | Windows: "Windows dropped the synthetic input" | An administrator window has focus; see [Windows](#windows). |
 | "another keepalive is already running" | `keepalive status`, `keepalive stop`, or start with `--replace`. |
+| doctor: the service is "restarting repeatedly" | Read its log: `~/Library/Logs/keepalive/service.log` on macOS, `journalctl --user -u keepalive.service` on Linux. |
 
 ## Logs
 
@@ -439,8 +458,11 @@ directory:
 | Linux | `~/.cache/keepalive/keepalive.log` (`$XDG_CACHE_HOME` if set) |
 | Windows | `%LOCALAPPDATA%\keepalive\keepalive.log` |
 
-The login service always writes an info log there. On macOS its console
-output goes to `~/Library/Logs/keepalive/service.log`; on Linux see
+The login service always writes an info log: there, or where `--log-file`
+or `log_file` says (a relative `log_file` in the config file is relative to
+that file). If it cannot open that file, it falls back to the default and
+notifies you once. On macOS its console output goes to
+`~/Library/Logs/keepalive/service.log`; on Linux see
 `journalctl --user -u keepalive.service`.
 
 ## Migrating from 1.x

@@ -113,6 +113,8 @@ All notable changes to keepalive. Releases before 2.0.0 are described on the
 - Linux: the fix for `/dev/uinput` access told you to join the `input`
   group, which lets every program read your keyboard. It now grants access
   to the user at the seat with a `uaccess` udev rule.
+- `-d`, `-c`, `extend` and work hours follow the wall clock, also after the
+  machine has slept.
 - Linux: input methods are checked for real (keepalive opens `/dev/uinput`
   and connects to `ydotoold`), and when one fails during a session
   keepalive switches to the next and replays the burst on it.
@@ -127,12 +129,36 @@ All notable changes to keepalive. Releases before 2.0.0 are described on the
 - `keepalive run -- CMD` keeps the machine awake while a command runs and
   always exits with the command's status. If the machine cannot be kept
   awake it prints a warning and runs the command anyway. It sends no
-  desktop notification when the command ends.
+  desktop notification when the command ends. On a terminal, Ctrl+C and
+  Ctrl+\ reach the command once; without a controlling terminal the command
+  gets its own process group and keepalive passes signals on to it (so a
+  SIGKILL to keepalive's group, as `timeout -k` sends, does not reach the
+  command).
 - `keepalive service install` takes the session flags except the one-shot
   limits (`-d`, `-c`/`--until`, `--pid`, `--while`), which it refuses with a
-  hint to use `--schedule`. In the service, `-b` pauses keeping awake while
-  the battery is at or below the threshold and resumes once it is 5 points
-  above it or charging, instead of ending the service.
+  hint to use `--schedule` (exit status 2). When another keepalive is
+  running it asks whether to stop it on a terminal, stops it with
+  `--replace`, and otherwise installs and says why the service cannot start
+  yet. In the service, `-b` pauses keeping awake while the battery is at or
+  below the threshold and resumes once it is 5 points above it or on
+  external power, instead of ending the service; `-b 100` keeps the machine
+  awake only while it is plugged in.
+- A service that keeps failing shows each kind of notification at most once
+  every 10 minutes, also across restarts (`keepalive/notified.json` in the
+  user cache directory), and `keepalive doctor` reports it as restarting
+  repeatedly.
+- `--json` snapshots say why nothing is held right now (`paused`:
+  `schedule` or `battery`) and whether the battery threshold pauses
+  (`battery.pause`).
+- A mistyped subcommand (`keepalive service instal`) is a usage error
+  (exit status 2) with a suggestion.
+- `KEEPALIVE_RUNTIME_DIR` moves the control socket. An existing directory
+  that other users can read (such as `/tmp` on Linux) is left as it is;
+  keepalive uses a private `keepalive-<uid>` directory inside it.
+- Linux: on desktops without an idle source (KDE Plasma and Wayland
+  compositors other than GNOME) activity is simulated on a fixed schedule,
+  reported as working with a hint that it cannot pause while you use the
+  computer.
 - `--schedule`, `--pid`, `--while`, `--notify` (desktop notifications when
   keepalive stops on its own or activity simulation fails),
   `--active-idle`, `--active-interval`, `--active-keys`, `--keep-display`,

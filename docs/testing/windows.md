@@ -159,6 +159,8 @@ Run `powercfg /requests` (admin) in each phase.
   hours until HH:MM`; no keepalive power request.
 - [ ] At the start time: `work hours started (until HH:MM)`; requests
   present.
+- [ ] `keepalive status --json` has `"paused":"schedule"` before the start
+  time and `"paused":""` inside the window.
 - [ ] At the end time: `outside work hours until <weekday> HH:MM`; requests
   gone; keepalive keeps running. Stop it with Ctrl+C.
 
@@ -212,9 +214,21 @@ schtasks /Query /TN keepalive /V /FO LIST | Select-String 'Task To Run','Status'
   `keepalive status` shows it running again.
 - [ ] Task Manager → Details lists `keepalivew.exe`, not `keepalive.exe`.
 - [ ] `keepalive stop` stops it; it stays stopped until the next sign-in.
-- [ ] `keepalive service install -d 30` and `keepalive service install -c
-  17:00` are refused (exit 2) with a hint to use `--schedule`, and the
-  installed service is left as it was.
+- [ ] `keepalive service install -d 30`, `… -c 17:00`, `… --pid 1` and
+  `… --while x` each exit 2 with `hint: a service runs at every login; use
+  --schedule for work hours`, and the installed service is left as it was.
+- [ ] With `keepalive --plain -d 30` running in another terminal,
+  `keepalive service install` asks `Stop the running keepalive now so the
+  service can start? [y/N]`. `n`: it installs anyway and warns `the
+  service will not start while it runs`. Again with `y`: `stopped
+  keepalive (pid N, started in a terminal)`, and the service runs. Start
+  the other one again: `keepalive service install --replace` stops it
+  without asking.
+- [ ] Laptop only: `keepalive service install -b 100`, then unplug the
+  power. Within a minute `keepalive status` shows `power  released while
+  the battery is low` and `battery  NN% · pauses at 100%, resumes at 105%
+  or when charging`, and the service is still running. Plug in: within a
+  minute the power hold is back. Install again without `-b` afterwards.
 - [ ] `keepalive service uninstall` prints `removed the login service (Task
   Scheduler)`; `schtasks /Query /TN keepalive` reports that the task does
   not exist; `keepalive status` exits 3.

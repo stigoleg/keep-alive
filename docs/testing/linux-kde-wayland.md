@@ -7,8 +7,9 @@ is the first run on a real Plasma desktop.
 
 Plasma on Wayland does not share idle time with other programs, so
 keepalive cannot tell whether you are using the computer. It then simulates
-activity on a fixed schedule, every `--active-interval`, and reports that
-mode as a problem with a hint. This checklist tests that mode.
+activity on a fixed schedule (the first burst after `--active-idle`, then
+every `--active-interval`) and reports it as working, with a hint that it
+cannot pause while you use the computer. This checklist tests that mode.
 
 Run every step in a terminal (Konsole) inside the Plasma session (not over
 SSH), with the screen unlocked. Do not touch the mouse or keyboard while a
@@ -57,8 +58,9 @@ keepalive doctor; echo "exit $?"
   `display server  Wayland (with XWayland)`; `desktop  KDE`.
 - [ ] `! idle time  no idle source; activity is simulated on a fixed
   schedule (read for information only: xprintidle (XWayland) …)` with the
-  fix `KDE Plasma on Wayland does not share idle time with other programs;
-  log in to a Plasma (X11) session for idle-aware simulation`.
+  fix `simulated activity cannot pause while you use the computer; KDE
+  Plasma on Wayland does not share idle time with other programs; log in to
+  a Plasma (X11) session for idle-aware simulation`.
 - [ ] A `!` `XWayland` row.
 
 ## 3. doctor --probe
@@ -83,15 +85,18 @@ keepalive --json -a | jq -r 'select(.type=="activity") | [.time, .snapshot.activ
 
 Hands off for 4 minutes, then use the computer normally for 2 minutes.
 
-- [ ] The first activity line has state `degraded` (that is how this mode is
-  reported), and the dashboard or `keepalive status` shows `unavailable (no
-  idle source on this desktop; simulating on a fixed schedule)`.
+- [ ] The activity lines go from `waiting_idle` to `simulating`, never
+  `degraded`.
 - [ ] The first burst comes 2 minutes (`--active-idle`) after the start;
   after that `last_burst` advances every 20 to 40 seconds, both while hands
   off and while you work (expected in this mode: keepalive cannot see your
   input).
-- [ ] Note whether a desktop notification `Keep-Alive: activity simulation
-  not working` appeared at start.
+- [ ] In another terminal, `keepalive status` shows `activity  simulating
+  input via uinput on a fixed schedule`, and `keepalive doctor` has a `!`
+  `instance` row whose fix starts with `no idle source on this desktop, so
+  simulated activity cannot pause while you use the computer`.
+- [ ] No desktop notification `Keep-Alive: activity simulation not working`
+  appears.
 - [ ] Ctrl+C stops it; the pointer is not left somewhere odd.
 
 ## 5. Slack away test (15 minutes)
@@ -175,6 +180,8 @@ Run `systemd-inhibit --list | grep keepalive` in each phase.
   hours until HH:MM`; no inhibitor.
 - [ ] At the start time: `work hours started (until HH:MM)`; inhibitor
   present.
+- [ ] `keepalive status --json` has `"paused":"schedule"` before the start
+  time and `"paused":""` inside the window.
 - [ ] At the end time: `outside work hours until <weekday> HH:MM`;
   inhibitor gone; keepalive keeps running. Ctrl+C stops it, exit 0.
 
@@ -189,7 +196,8 @@ keepalive run -- no-such-command; echo "exit $?"
   `exit 3`; the inhibitor is listed during the 5 seconds.
 - [ ] `keepalive: error: command not found: no-such-command`, `exit 127`.
 - [ ] No desktop notification appears when the command ends.
-- [ ] Ctrl+C during `keepalive run -- sleep 30`: exit 130.
+- [ ] `keepalive run -- sh -c 'trap "echo got INT; exit 5" INT; sleep 30 & wait'`,
+  then Ctrl+C: `got INT` is printed exactly once, and the exit status is 5.
 
 ## 10. --while
 
@@ -218,9 +226,21 @@ systemctl --user status keepalive.service
 - [ ] `journalctl --user -u keepalive.service -n 20` shows no errors.
 - [ ] Log out and back in: running again.
 - [ ] `keepalive stop` stops it, and it stays stopped until the next login.
-- [ ] `keepalive service install -d 30` and `keepalive service install -c
-  17:00` are refused (exit 2) with a hint to use `--schedule`, and the
-  installed service is left as it was.
+- [ ] `keepalive service install -d 30`, `… -c 17:00`, `… --pid 1` and
+  `… --while x` each exit 2 with `hint: a service runs at every login; use
+  --schedule for work hours`, and the installed service is left as it was.
+- [ ] With `keepalive --plain -d 30` running in another terminal,
+  `keepalive service install` asks `Stop the running keepalive now so the
+  service can start? [y/N]`. `n`: it installs anyway and warns `the
+  service will not start while it runs`. Again with `y`: `stopped
+  keepalive (pid N, started in a terminal)`, and the service runs. Start
+  the other one again: `keepalive service install --replace` stops it
+  without asking.
+- [ ] Laptop only: `keepalive service install -b 100`, then unplug the
+  power. Within a minute `keepalive status` shows `power  released while
+  the battery is low` and `battery  NN% · pauses at 100%, resumes at 105%
+  or when charging`, and the service is still running. Plug in: within a
+  minute the power hold is back. Install again without `-b` afterwards.
 - [ ] `keepalive service uninstall` prints `removed the login service
   (systemd --user)`; the unit file is gone; `keepalive status` exits 3.
 
@@ -230,10 +250,11 @@ systemctl --user status keepalive.service
 keepalive --plain -a --active-idle 10s --active-interval 10s
 ```
 
-- [ ] The fixed-schedule line appears at once, and bursts start after about
-  10 seconds.
+- [ ] At once: `active: waiting for idle (first burst after 10s); no idle
+  source on this desktop, …`; about 10 seconds later `active: simulating
+  input via uinput on a fixed schedule; …`.
 - [ ] Meta+L, wait a minute, unlock: `active: paused while the screen is
-  locked` while locked, then the fixed-schedule state again.
+  locked` while locked, then `simulating … on a fixed schedule` again.
 
 ## 13. Notifications
 
@@ -253,6 +274,18 @@ Log in to a "Plasma (X11)" session and run `keepalive doctor`.
 - [ ] `idle time` is ✓ (KDE ScreenSaver or xprintidle) and
   `keepalive --plain -a` waits for idle instead of using a fixed schedule.
 
+## 15. Shared runtime directory
+
+```sh
+KEEPALIVE_RUNTIME_DIR=/tmp keepalive --plain -d 5 & sleep 1
+ls -ld /tmp /tmp/keepalive-$(id -u)
+KEEPALIVE_RUNTIME_DIR=/tmp keepalive status
+KEEPALIVE_RUNTIME_DIR=/tmp keepalive stop
+```
+
+- [ ] `/tmp` keeps its mode (`drwxrwxrwt`); `/tmp/keepalive-<uid>` is
+  `drwx------`; `status` and `stop` find the running keepalive.
+
 ## Report back
 
 Paste:
@@ -261,7 +294,7 @@ Paste:
    architecture.
 2. The output of `keepalive doctor` and `keepalive doctor --probe`, and of
    `getfacl -p /dev/uinput`.
-3. The `jq` output of step 4, whether the "not working" notification
+3. The `jq` output of step 4, whether any "not working" notification
    appeared, and what Slack showed in step 5.
 4. For every box that failed: the step number, the command, its full
    output and what you expected.

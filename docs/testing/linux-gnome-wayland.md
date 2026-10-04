@@ -181,6 +181,8 @@ Run `systemd-inhibit --list | grep keepalive` in each phase.
   hours until HH:MM`; no inhibitor.
 - [ ] At the start time: `work hours started (until HH:MM)`; inhibitor
   present.
+- [ ] `keepalive status --json` has `"paused":"schedule"` before the start
+  time and `"paused":""` inside the window.
 - [ ] At the end time: `outside work hours until <weekday> HH:MM`;
   inhibitor gone; keepalive keeps running. Ctrl+C stops it, exit 0.
 
@@ -195,7 +197,8 @@ keepalive run -- no-such-command; echo "exit $?"
   `exit 3`; the inhibitor is listed during the 5 seconds.
 - [ ] `keepalive: error: command not found: no-such-command`, `exit 127`.
 - [ ] No desktop notification appears when the command ends.
-- [ ] Ctrl+C during `keepalive run -- sleep 30`: exit 130.
+- [ ] `keepalive run -- sh -c 'trap "echo got INT; exit 5" INT; sleep 30 & wait'`,
+  then Ctrl+C: `got INT` is printed exactly once, and the exit status is 5.
 
 ## 10. --while
 
@@ -225,9 +228,21 @@ systemctl --user status keepalive.service
   `~/.cache/keepalive/keepalive.log` has the service's info log.
 - [ ] Log out and back in: running again.
 - [ ] `keepalive stop` stops it, and it stays stopped until the next login.
-- [ ] `keepalive service install -d 30` and `keepalive service install -c
-  17:00` are refused (exit 2) with a hint to use `--schedule`, and the
-  installed service is left as it was.
+- [ ] `keepalive service install -d 30`, `… -c 17:00`, `… --pid 1` and
+  `… --while x` each exit 2 with `hint: a service runs at every login; use
+  --schedule for work hours`, and the installed service is left as it was.
+- [ ] With `keepalive --plain -d 30` running in another terminal,
+  `keepalive service install` asks `Stop the running keepalive now so the
+  service can start? [y/N]`. `n`: it installs anyway and warns `the
+  service will not start while it runs`. Again with `y`: `stopped
+  keepalive (pid N, started in a terminal)`, and the service runs. Start
+  the other one again: `keepalive service install --replace` stops it
+  without asking.
+- [ ] Laptop only: `keepalive service install -b 100`, then unplug the
+  power. Within a minute `keepalive status` shows `power  released while
+  the battery is low` and `battery  NN% · pauses at 100%, resumes at 105%
+  or when charging`, and the service is still running. Plug in: within a
+  minute the power hold is back. Install again without `-b` afterwards.
 - [ ] `keepalive service uninstall` prints `removed the login service
   (systemd --user)`; the unit file is gone; `keepalive status` exits 3.
 
@@ -255,6 +270,18 @@ keepalive --plain --notify=false -d 1
 - [ ] After a minute, a notification `Keep-Alive stopped` /
   `duration reached` from `keepalive`.
 - [ ] The second run shows none.
+
+## 14. Shared runtime directory
+
+```sh
+KEEPALIVE_RUNTIME_DIR=/tmp keepalive --plain -d 5 & sleep 1
+ls -ld /tmp /tmp/keepalive-$(id -u)
+KEEPALIVE_RUNTIME_DIR=/tmp keepalive status
+KEEPALIVE_RUNTIME_DIR=/tmp keepalive stop
+```
+
+- [ ] `/tmp` keeps its mode (`drwxrwxrwt`); `/tmp/keepalive-<uid>` is
+  `drwx------`; `status` and `stop` find the running keepalive.
 
 ## Report back
 
