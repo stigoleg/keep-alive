@@ -627,3 +627,17 @@ func TestHelpGroupsFlags(t *testing.T) {
 		t.Error("hidden --origin shows in help")
 	}
 }
+
+func TestRunHelpHidesPlain(t *testing.T) {
+	ta := newTestApp(t)
+	if code := ta.run("run", "--help"); code != ExitOK {
+		t.Fatalf("exit %d", code)
+	}
+	if out := ta.stdout.String(); strings.Contains(out, "--plain") || !strings.Contains(out, "--json") {
+		t.Fatalf("run --help:\n%s", out)
+	}
+	ta = newTestApp(t)
+	if code := ta.run("run", "--plain", "--", "true"); code != ExitOK { // still accepted
+		t.Fatalf("exit %d: %s", code, ta.stderr)
+	}
+}

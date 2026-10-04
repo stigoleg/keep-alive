@@ -193,6 +193,9 @@ also works next to a keepalive that is already running.`,
 		},
 	}
 	addSessionFlags(cmd.Flags(), &sf)
+	// run is always headless; --plain is accepted but means nothing here.
+	_ = cmd.Flags().MarkHidden("plain")
+	cmd.Flags().Lookup("json").Usage = "print NDJSON events instead of human lines"
 	return cmd
 }
 
