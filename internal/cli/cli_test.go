@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
 	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/proc"
@@ -588,5 +590,39 @@ func TestResolveVersion(t *testing.T) {
 	}
 	if got := ResolveVersion(""); got == "" {
 		t.Fatal("ResolveVersion(\"\") is empty")
+	}
+}
+
+func TestEveryCommandIsDocumented(t *testing.T) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if c.Name() == "help" || (c.HasParent() && c.Parent().Name() == "completion") {
+			return
+		}
+		if c.Short == "" || c.Long == "" || c.Example == "" {
+			t.Errorf("%q: Short %q, Long %d bytes, Example %d bytes", c.CommandPath(), c.Short, len(c.Long), len(c.Example))
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(newTestApp(t).Command())
+}
+
+func TestHelpGroupsFlags(t *testing.T) {
+	ta := newTestApp(t)
+	ta.run("--help")
+	out := ta.stdout.String()
+	session, activity, output := strings.Index(out, "Session flags:"), strings.Index(out, "Activity flags:"), strings.Index(out, "Output flags:")
+	if session < 0 || activity < session || output < activity {
+		t.Fatalf("flag groups missing or out of order:\n%s", out)
+	}
+	for _, want := range []string{`keepalive --schedule "Mon-Fri 08:00-16:00" -a`, "keepalive run -- make release", "keepalive -c 17:00 -a"} {
+		if !strings.Contains(out[:session], want) {
+			t.Errorf("root help does not lead with %q", want)
+		}
+	}
+	if strings.Contains(out, "--origin") {
+		t.Error("hidden --origin shows in help")
 	}
 }

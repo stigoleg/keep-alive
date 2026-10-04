@@ -202,22 +202,28 @@ type sessionFlags struct {
 // `run`, `service install` and `config show`.
 func addSessionFlags(fs *pflag.FlagSet, f *sessionFlags) {
 	def := config.Defaults()
-	fs.VarP(&f.duration, "duration", "d", `keep awake for this long: minutes ("150") or a duration ("2h30m", "45m"); at least 1m`)
-	fs.StringVarP(&f.clock, "clock", "c", "", `keep awake until this time of day ("22:00", "10:00PM"); alias --until`)
+	fs.VarP(&f.duration, "duration", "d", `keep awake for this long: minutes ("150") or a duration ("2h30m"); at least 1m`)
+	fs.StringVarP(&f.clock, "clock", "c", "", `keep awake until this time of day ("17:00", "5:00PM"); alias --until`)
 	fs.IntP("battery", "b", 0, "stop when the battery is at or below this percentage (1-100)")
-	fs.BoolP("active", "a", false, "simulate user activity so chat apps (Slack, Teams) keep you active")
-	fs.Duration("active-idle", def.ActiveIdle, "idle time before activity is simulated (at least 10s)")
-	fs.Duration("active-interval", def.ActiveInterval, "mean gap between simulated activity bursts (at least 5s)")
-	fs.Bool("active-keys", false, "also send a harmless key press with each activity burst")
-	fs.String("schedule", "", `only keep awake during these work hours, e.g. "Mon-Fri 08:00-16:00"`)
+	fs.String("schedule", "", `keep awake only during these work hours, e.g. "Mon-Fri 08:00-16:00"`)
 	fs.IntSliceVar(&f.pids, "pid", nil, "keep awake until these processes exit (repeatable)")
 	fs.StringVar(&f.while, "while", "", `keep awake while a process with this name runs, e.g. "zoom"`)
 	fs.Bool("keep-display", def.KeepDisplay, "keep the display on too (false keeps only the system awake)")
-	fs.BoolVar(&f.json, "json", false, "print NDJSON events on stdout (implies --plain)")
-	fs.BoolVar(&f.plain, "plain", false, "run headless even on a terminal")
-	fs.Bool("notify", false, "show a desktop notification when the session ends (not applied yet)")
-	fs.BoolP("log", "l", false, "write a debug log (the path is printed at start)")
+	setGroup(fs, groupSession, "duration", "clock", "battery", "schedule", "pid", "while", "keep-display")
+
+	fs.BoolP("active", "a", false, "simulate activity, so Teams and Slack keep showing you as active")
+	fs.Duration("active-idle", def.ActiveIdle, "idle time before activity is simulated (at least 10s)")
+	fs.Duration("active-interval", def.ActiveInterval, "mean gap between simulated activity bursts (at least 5s)")
+	fs.Bool("active-keys", false, "also tap Shift with each burst of simulated activity")
+	setGroup(fs, groupActivity, "active", "active-idle", "active-interval", "active-keys")
+
+	fs.BoolVar(&f.plain, "plain", false, "run headless, one line per event, even on a terminal")
+	fs.BoolVar(&f.json, "json", false, "print NDJSON events (implies --plain)")
+	fs.Bool("notify", false, "show desktop notifications when keepalive stops on its own or simulating activity fails (default on, off in the interactive UI)")
+	fs.BoolP("log", "l", false, "write a log file (its path is printed at start)")
 	fs.String("log-file", "", "log file path (default: keepalive/keepalive.log in the user cache directory)")
+	setGroup(fs, groupOutput, "plain", "json", "notify", "log", "log-file")
+
 	fs.SetNormalizeFunc(func(_ *pflag.FlagSet, name string) pflag.NormalizedName {
 		if name == "until" {
 			name = "clock"
