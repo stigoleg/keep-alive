@@ -10,7 +10,8 @@ import (
 
 // The palette ("Aurora"): truecolor values from the mockups, with 256- and
 // 16-colour values picked by hand (the nearest 256 colour of a dark grey is
-// often navy blue). Adaptive colours pick the light or dark variant from
+// often navy blue; with 16 colours the dark band is black, so muted grey
+// stays readable on it). Adaptive colours pick the light or dark variant from
 // the renderer's background setting. Plain text keeps the terminal's own
 // foreground.
 //
@@ -20,7 +21,7 @@ var (
 	colorMuted  = pal("#8A90A2", "245", "8", "#687085", "242", "8")
 	colorDim    = pal("#5B6172", "241", "8", "#9AA0B1", "248", "7")
 	colorFrame  = pal("#3A3F50", "238", "8", "#C8CCD8", "251", "7")
-	colorSel    = pal("#1E2232", "235", "8", "#ECEEF6", "255", "7")
+	colorSel    = pal("#1E2232", "235", "0", "#ECEEF6", "255", "7")
 	colorTrack  = pal("#2A2F3E", "236", "8", "#E1E4EC", "254", "7")
 	colorAccent = pal("#A78BFA", "141", "13", "#6D3FD9", "62", "5")
 	colorOK     = pal("#4ADE80", "78", "10", "#15803D", "28", "2")
