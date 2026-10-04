@@ -357,6 +357,65 @@ func NewJSONSnapshot(snap session.Snapshot) JSONSnapshot {
 	return js
 }
 
+// EventFromJSON converts an event received from a running instance back to
+// a session.Event. Only warning, schedule and stopped events carry their
+// message; the others' messages are rendered text and come back empty.
+func EventFromJSON(je JSONEvent) session.Event {
+	ev := session.Event{
+		Type:     session.EventType(je.Type),
+		Snapshot: SnapshotFromJSON(je.Snapshot),
+		Reason:   session.Reason(je.Reason),
+	}
+	ev.Time, _ = time.Parse(time.RFC3339Nano, je.Time)
+	switch ev.Type {
+	case session.EventWarning:
+		ev.Message = strings.TrimPrefix(je.Message, "warning: ")
+	case session.EventStopped:
+		ev.Message = strings.TrimPrefix(je.Message, "stopped: ")
+		if ev.Reason == session.ReasonError {
+			ev.Message = strings.TrimPrefix(ev.Message, "error: ")
+		}
+	case session.EventSchedule:
+		ev.Message = je.Message
+	}
+	return ev
+}
+
+// SnapshotFromJSON is the inverse of NewJSONSnapshot, at second precision.
+func SnapshotFromJSON(js JSONSnapshot) session.Snapshot {
+	snap := session.Snapshot{
+		Running:   js.Running,
+		StartedAt: parseTimePtr(js.StartedAt),
+		EndsAt:    parseTimePtr(js.EndsAt),
+		Mode:      session.Mode(js.Mode),
+		Active:    js.Active,
+		Activity: activity.Status{
+			State:     activity.State(js.Activity.State),
+			Method:    js.Activity.Method,
+			Reason:    js.Activity.Reason,
+			Hint:      js.Activity.Hint,
+			LastBurst: parseTimePtr(js.Activity.LastBurst),
+			Idle:      time.Duration(js.Activity.Idle) * time.Second,
+		},
+		Battery:     session.Battery{Percent: js.Battery.Percent, Available: js.Battery.Available, Threshold: js.Battery.Threshold},
+		KeepDisplay: js.KeepDisplay,
+		PowerHold:   js.PowerHold,
+		Schedule:    js.Schedule,
+		InWindow:    js.InWindow,
+		NextChange:  parseTimePtr(js.NextChange),
+		Watching:    js.Watching,
+	}
+	if js.Remaining != nil {
+		snap.Remaining = time.Duration(*js.Remaining) * time.Second
+	}
+	return snap
+}
+
+func parseTimePtr(s *string) time.Time {
+	t, _ := parseTime(s)
+	return t
+}
+
 func timePtr(t time.Time) *string {
 	if t.IsZero() {
 		return nil

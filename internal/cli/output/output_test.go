@@ -296,3 +296,41 @@ func TestRunPrinterIsQuiet(t *testing.T) {
 		t.Fatalf("start failure printed %q", buf.String())
 	}
 }
+
+func TestJSONRoundTrip(t *testing.T) {
+	for name, ev := range fixtures() {
+		ev.Snapshot.Watching = "zoom"
+		ev.Snapshot.Activity.Idle = ev.Snapshot.Activity.Idle.Truncate(time.Second)
+		got := EventFromJSON(NewJSONEvent(ev))
+		want := ev
+		if !want.Snapshot.EndsAt.IsZero() {
+			want.Snapshot.Remaining = want.Snapshot.Remaining.Truncate(time.Second)
+		} else {
+			want.Snapshot.Remaining = 0
+		}
+		switch ev.Type {
+		case session.EventStarted, session.EventSnapshot, session.EventActivity, session.EventBattery, session.EventStopping:
+			want.Message = "" // these messages are rendered, not carried
+		}
+		if !got.Time.Equal(want.Time) {
+			t.Errorf("%s: time %v, want %v", name, got.Time, want.Time)
+		}
+		got.Time, want.Time = time.Time{}, time.Time{}
+		if !equalSnapshots(got.Snapshot, want.Snapshot) {
+			t.Errorf("%s: snapshot\n got %+v\nwant %+v", name, got.Snapshot, want.Snapshot)
+		}
+		got.Snapshot, want.Snapshot = session.Snapshot{}, session.Snapshot{}
+		if got != want {
+			t.Errorf("%s: event %+v, want %+v", name, got, want)
+		}
+	}
+}
+
+func equalSnapshots(a, b session.Snapshot) bool {
+	sameTime := func(x, y time.Time) bool { return x.Equal(y) }
+	ok := sameTime(a.StartedAt, b.StartedAt) && sameTime(a.EndsAt, b.EndsAt) && sameTime(a.NextChange, b.NextChange) &&
+		sameTime(a.Activity.LastBurst, b.Activity.LastBurst)
+	a.StartedAt, a.EndsAt, a.NextChange, a.Activity.LastBurst = time.Time{}, time.Time{}, time.Time{}, time.Time{}
+	b.StartedAt, b.EndsAt, b.NextChange, b.Activity.LastBurst = time.Time{}, time.Time{}, time.Time{}, time.Time{}
+	return ok && a == b
+}
