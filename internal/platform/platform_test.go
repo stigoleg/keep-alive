@@ -2,7 +2,6 @@ package platform
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -12,12 +11,14 @@ import (
 	"time"
 )
 
+// getCaffeinateProcesses lists caffeinate processes started by this test
+// process only, so the test never sees (or disturbs) the user's own.
 func getCaffeinateProcesses() ([]int, error) {
 	if runtime.GOOS != "darwin" {
 		return nil, nil
 	}
 
-	cmd := exec.Command("pgrep", "caffeinate")
+	cmd := exec.Command("pgrep", "-P", strconv.Itoa(os.Getpid()), "caffeinate")
 	output, err := cmd.Output()
 	if err != nil {
 		// No processes found is not an error for our purposes
@@ -48,36 +49,6 @@ func pmsetAssertionsBytes() (int, error) {
 	return len(out), nil
 }
 
-func killCaffeinate() error {
-	if runtime.GOOS != "darwin" {
-		return nil
-	}
-
-	// Try SIGTERM first
-	termCmd := exec.Command("pkill", "caffeinate")
-	if output, err := termCmd.CombinedOutput(); err != nil {
-		// Ignore permission errors, as we can't kill processes we don't own
-		if !strings.Contains(string(output), "Operation not permitted") {
-			fmt.Printf("pkill output: %s, error: %v\n", string(output), err)
-		}
-	}
-	time.Sleep(100 * time.Millisecond)
-
-	// Check if any processes remain that we started
-	if pids, _ := getCaffeinateProcesses(); len(pids) > 0 {
-		// Try SIGKILL for remaining processes
-		killCmd := exec.Command("pkill", "-9", "caffeinate")
-		if output, err := killCmd.CombinedOutput(); err != nil {
-			// Ignore permission errors
-			if !strings.Contains(string(output), "Operation not permitted") {
-				fmt.Printf("pkill -9 output: %s, error: %v\n", string(output), err)
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return nil
-}
-
 func TestKeepAlive(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode")
@@ -91,19 +62,10 @@ func TestKeepAlive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Try to clean up any processes we can
-	killCaffeinate()
-
-	// Get initial process count (some may be running that we can't kill)
+	// Only our own children are counted, so other caffeinate processes on
+	// the machine (e.g. a running keepalive) are left alone.
 	initialPids, _ := getCaffeinateProcesses()
 	initialCount := len(initialPids)
-
-	// Cleanup after test
-	t.Cleanup(func() {
-		if err := killCaffeinate(); err != nil {
-			t.Logf("Cleanup warning: %v", err)
-		}
-	})
 
 	keeper, err := NewKeepAlive()
 	if err != nil {
