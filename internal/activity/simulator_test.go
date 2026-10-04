@@ -81,6 +81,15 @@ func TestProbeNotesACounterThatMissedTheBurst(t *testing.T) {
 	}
 }
 
+func TestProbeReportsAMouseMovedDuringTheBurst(t *testing.T) {
+	m := newMachine()
+	m.playErr = errUserMoved
+	res := probe(context.Background(), probeBackend(m), false, seeded(1), noSleep)
+	if res.Effective || res.Reason != "the mouse was moved during the probe" || res.Hint != "keep the mouse still and probe again" {
+		t.Fatalf("probe = %+v", res)
+	}
+}
+
 func TestProbeWithoutInjector(t *testing.T) {
 	m := newMachine()
 	m.openErr = &Unavailable{Reason: "no backend", Hint: "install one"}
@@ -90,14 +99,18 @@ func TestProbeWithoutInjector(t *testing.T) {
 	}
 }
 
-type move struct{ x, y float64 }
-
 // absRecorder is an AbsoluteInjector without Play, so playBurst steps it.
+// The pointer follows its moves, lagging by lag moves, until userAt moves
+// have been made; then the user has grabbed it and it sits at user.
 type absRecorder struct {
-	ox, oy float64
-	bounds Rect
-	moves  []move
-	failAt int
+	ox, oy    float64
+	bounds    Rect
+	moves     []move
+	failAt    int
+	lag       int
+	userAt    int
+	user      move
+	positions int
 }
 
 func (*absRecorder) Name() string               { return "abs" }
@@ -106,6 +119,13 @@ func (*absRecorder) Tap() error                 { return nil }
 func (*absRecorder) Diagnose() (string, string) { return "", "" }
 func (*absRecorder) Close() error               { return nil }
 func (a *absRecorder) Position() (float64, float64, bool) {
+	a.positions++
+	if a.userAt > 0 && len(a.moves) >= a.userAt {
+		return a.user.x, a.user.y, true
+	}
+	if i := len(a.moves) - 1 - a.lag; i >= 0 {
+		return a.moves[i].x, a.moves[i].y, true
+	}
 	return a.ox, a.oy, true
 }
 func (a *absRecorder) Bounds() (Rect, bool) { return a.bounds, a.bounds.W > 0 }
@@ -275,5 +295,41 @@ func TestPlayBurstRelativeLimitsMovesUpAndLeft(t *testing.T) {
 				t.Fatalf("seed %d: relative pointer at (%d, %d), more than 40%% of %.0f px up or left", seed, x, y, radius)
 			}
 		}
+	}
+}
+
+func TestPlayBurstStopsWhenTheUserMovesThePointer(t *testing.T) {
+	p := NewPath(seeded(11))
+	a := &absRecorder{ox: 700, oy: 400, bounds: Rect{0, 0, 1440, 900}, userAt: 20, user: move{1000, 120}}
+	err := playBurst(context.Background(), a, p, noSleep)
+	if !errors.Is(err, errUserMoved) {
+		t.Fatalf("err = %v, want errUserMoved", err)
+	}
+	if n := len(a.moves); n < 20 || n > 23 {
+		t.Fatalf("made %d moves, want to stop within 3 steps of the user's move at 20", n)
+	}
+	if last := a.moves[len(a.moves)-1]; last == (move{700, 400}) || last == a.user {
+		t.Fatalf("moved the pointer to %+v after the user took it", last)
+	}
+	if a.positions > len(p)/3+1 {
+		t.Fatalf("read the position %d times for %d steps, want every 3 steps", a.positions, len(p))
+	}
+}
+
+func TestPlayBurstToleratesPositionLagAndRounding(t *testing.T) {
+	for _, lag := range []int{0, 1} {
+		a := &absRecorder{ox: 700, oy: 400, bounds: Rect{0, 0, 1440, 900}, lag: lag}
+		if err := playBurst(context.Background(), a, NewPath(seeded(12)), noSleep); err != nil {
+			t.Fatalf("lag %d: %v", lag, err)
+		}
+		if last := a.moves[len(a.moves)-1]; last != (move{700, 400}) {
+			t.Fatalf("lag %d: ended at %+v", lag, last)
+		}
+	}
+	if userMoved(102.5, 99, move{100, 100}, move{90, 95}) {
+		t.Fatal("a pixel of rounding counted as the user")
+	}
+	if !userMoved(104, 100, move{100, 100}, move{90, 95}) {
+		t.Fatal("4 px from both points not counted as the user")
 	}
 }

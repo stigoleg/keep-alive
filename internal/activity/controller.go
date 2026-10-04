@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand/v2"
 	"time"
 
@@ -34,7 +35,21 @@ const (
 	cadenceJitter = 0.35
 )
 
-const noIdleReason = "no idle source on this desktop; simulating on a fixed schedule"
+const (
+	noIdleReason = "no idle source on this desktop; simulating on a fixed schedule"
+	userReason   = "you are using the computer"
+)
+
+const (
+	// userCheckEvery is how many moves an absolute burst makes between
+	// checks that the pointer is still where it put it.
+	userCheckEvery = 3
+	// userMoveTolerance absorbs rounding to whole pixels.
+	userMoveTolerance = 3.0
+)
+
+// errUserMoved stops a burst whose pointer the user has taken over.
+var errUserMoved = errors.New("the pointer was moved during the burst")
 
 type controllerDeps struct {
 	clock clock.Clock
@@ -185,7 +200,7 @@ func (c *controller) step(ctx context.Context) time.Duration {
 	}
 	if c.armed && !c.lastBurst.IsZero() && idle+userReturnTolerance < now.Sub(c.lastBurst) {
 		c.disarm()
-		c.publish(Status{State: StatePausedUser, Method: method, Reason: "you are using the computer", Idle: idle})
+		c.publish(Status{State: StatePausedUser, Method: method, Reason: userReason, Idle: idle})
 		return tickInterval
 	}
 	if !c.armed {
@@ -226,6 +241,12 @@ func (c *controller) burst(ctx context.Context) {
 	secBefore, secOK := c.readSecondary()
 	err := c.play(ctx)
 	if ctx.Err() != nil {
+		return
+	}
+	if errors.Is(err, errUserMoved) {
+		// The user took the pointer mid-burst: leave it to them.
+		c.disarm()
+		c.publish(Status{State: StatePausedUser, Method: c.inj.Name(), Reason: userReason})
 		return
 	}
 	end := c.deps.clock.Now()
@@ -304,7 +325,11 @@ func (c *controller) checkSecondary(before time.Duration) {
 // fixedStep bursts every Interval without idle information.
 func (c *controller) fixedStep(ctx context.Context, now time.Time) time.Duration {
 	if now.Before(c.nextBurst) {
-		c.publish(c.fixedStatus())
+		if c.status.State == StatePausedUser {
+			c.publish(c.status)
+		} else {
+			c.publish(c.fixedStatus())
+		}
 		return min(tickInterval, c.nextBurst.Sub(now))
 	}
 	if ctx.Err() != nil {
@@ -315,6 +340,12 @@ func (c *controller) fixedStep(ctx context.Context, now time.Time) time.Duration
 		return tickInterval
 	}
 	end := c.deps.clock.Now()
+	if errors.Is(err, errUserMoved) {
+		// Without an idle source, give the user one idle threshold.
+		c.nextBurst = end.Add(c.cfg.IdleThreshold)
+		c.publish(Status{State: StatePausedUser, Method: c.inj.Name(), Reason: userReason, LastBurst: c.lastBurst})
+		return c.untilNextBurst()
+	}
 	c.lastBurst = end
 	c.nextBurst = end.Add(c.cfg.Interval)
 	c.lastErr = err
@@ -364,7 +395,7 @@ func (c *controller) play(ctx context.Context) error {
 			delete(c.failed, c.inj.Name())
 			return nil
 		}
-		if ctx.Err() != nil || !c.failover() {
+		if ctx.Err() != nil || errors.Is(err, errUserMoved) || !c.failover() {
 			return err
 		}
 	}
@@ -460,7 +491,10 @@ func explain(err error) (reason, hint string) {
 }
 
 // playBurst moves the pointer along p from where it is now and back. An
-// interrupted burst still returns the pointer to its origin.
+// interrupted burst still returns the pointer to its origin, except when
+// the user has taken the pointer (errUserMoved): absolute injectors check
+// every few moves that it is still where they put it, and stop at once.
+// Relative injectors cannot tell.
 func playBurst(ctx context.Context, inj Injector, p Path, sleep sleepFunc) error {
 	switch in := inj.(type) {
 	case AbsoluteInjector:
@@ -474,15 +508,23 @@ func playBurst(ctx context.Context, inj Injector, p Path, sleep sleepFunc) error
 		if pl, ok := inj.(pathPlayer); ok {
 			return pl.Play(ctx, ox, oy, p)
 		}
-		for _, s := range p {
+		last, prev := move{ox, oy}, move{ox, oy}
+		for i, s := range p {
 			if err := sleep(ctx, s.Delay); err != nil {
 				_ = in.MoveTo(ox, oy)
 				return err
 			}
-			if err := in.MoveTo(ox+s.X, oy+s.Y); err != nil {
+			if i > 0 && i%userCheckEvery == 0 {
+				if x, y, ok := in.Position(); ok && userMoved(x, y, last, prev) {
+					return errUserMoved
+				}
+			}
+			x, y := ox+s.X, oy+s.Y
+			if err := in.MoveTo(x, y); err != nil {
 				_ = in.MoveTo(ox, oy)
 				return err
 			}
+			last, prev = move{x, y}, last
 		}
 		return nil
 	case RelativeInjector:
@@ -511,4 +553,13 @@ func playBurst(ctx context.Context, inj Injector, p Path, sleep sleepFunc) error
 		return nil
 	}
 	return fmt.Errorf("%s cannot move the pointer", inj.Name())
+}
+
+type move struct{ x, y float64 }
+
+// userMoved reports whether the pointer at (x, y) is more than a few pixels
+// from the last point a burst set. The point before it is accepted too, in
+// case the OS has not applied the last move yet.
+func userMoved(x, y float64, last, prev move) bool {
+	return math.Hypot(x-last.x, y-last.y) > userMoveTolerance && math.Hypot(x-prev.x, y-prev.y) > userMoveTolerance
 }

@@ -776,3 +776,57 @@ func TestControllerStaysDegradedWithoutAnotherMethod(t *testing.T) {
 		t.Fatalf("status = %+v, want simulating via ydotool", st)
 	}
 }
+
+func TestControllerPausesWhenTheUserTakesThePointerMidBurst(t *testing.T) {
+	var ms *methods
+	h := newHarness(t, testCfg, withMethods(&ms, "uinput", "ydotool"))
+	h.runFor(2*time.Minute + 2*time.Second)
+	if h.last().State != StateSimulating {
+		t.Fatalf("state = %s, want simulating", h.last().State)
+	}
+	// The user grabs the mouse during the next two bursts.
+	h.m.set(func(m *machine) { m.playErr = errUserMoved })
+	h.runFor(41 * time.Second)
+	st := h.last()
+	if st.State != StatePausedUser || st.Reason != userReason {
+		t.Fatalf("status = %+v, want paused_user", st)
+	}
+	h.m.set(func(m *machine) { m.playErr = nil })
+	h.m.userInput()
+	h.userActiveFor(10 * time.Second)
+	if h.last().State != StatePausedUser {
+		t.Fatalf("state = %s while the user works, want paused_user", h.last().State)
+	}
+	h.runFor(2*time.Minute + 4*time.Second)
+	if st := h.last(); st.State != StateSimulating || st.Method != "uinput" {
+		t.Fatalf("after the user left again: %+v", st)
+	}
+	for _, s := range h.states() {
+		if s == StateDegraded {
+			t.Fatal("the user's hand counted as a failure")
+		}
+	}
+	if *ms.tries["ydotool"] != 0 {
+		t.Fatal("fell through to ydotool because the user moved the mouse")
+	}
+}
+
+func TestControllerFixedScheduleBacksOffWhenTheUserTakesThePointer(t *testing.T) {
+	h := newHarness(t, testCfg, func(m *machine, d *controllerDeps) { d.idle = nil })
+	h.runFor(2*time.Minute + 2*time.Second)
+	n := h.m.burstCount()
+	h.m.set(func(m *machine) { m.playErr = errUserMoved })
+	h.runFor(31 * time.Second)
+	h.m.set(func(m *machine) { m.playErr = nil })
+	if st := h.last(); st.State != StatePausedUser {
+		t.Fatalf("status = %+v, want paused_user", st)
+	}
+	h.runFor(110 * time.Second)
+	if st := h.last(); st.State != StatePausedUser || h.m.burstCount() != n {
+		t.Fatalf("burst again %v after the user took the pointer, status %+v", 110*time.Second, st)
+	}
+	h.runFor(12 * time.Second)
+	if h.m.burstCount() != n+1 || h.last().State != StateDegraded {
+		t.Fatalf("not back on the fixed schedule one idle threshold later: %+v", h.last())
+	}
+}

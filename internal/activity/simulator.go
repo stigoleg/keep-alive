@@ -2,6 +2,7 @@ package activity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"time"
@@ -165,6 +166,10 @@ func probe(ctx context.Context, b *backend, keys bool, r *rand.Rand, sleep sleep
 		}
 	}
 	res.Burst = time.Since(start)
+	if errors.Is(err, errUserMoved) {
+		res.Reason, res.Hint = "the mouse was moved during the probe", "keep the mouse still and probe again"
+		return res
+	}
 	if err != nil {
 		_, res.Hint = inj.Diagnose()
 		res.Reason = fmt.Sprintf("burst failed: %v", err)
