@@ -364,3 +364,29 @@ func TestShowAnnotatesSources(t *testing.T) {
 		t.Fatalf("show output does not parse: %v\n%s", err, out)
 	}
 }
+
+func TestShowDescribesTheNotifyDefault(t *testing.T) {
+	r, err := Resolve(Options{Env: env(nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := r.TOML()
+	want := "# notify is not set # default: on when headless or as a service, off in the interactive UI"
+	if !strings.Contains(strings.Join(strings.Fields(out), " "), want) {
+		t.Fatalf("show output lacks %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "notify = false") {
+		t.Fatalf("show claims notifications are off:\n%s", out)
+	}
+	if _, err := Resolve(Options{Path: writeFile(t, out), Env: env(nil)}); err != nil {
+		t.Fatalf("show output does not parse: %v\n%s", err, out)
+	}
+
+	r, err = Resolve(Options{Env: env(map[string]string{"KEEPALIVE_NOTIFY": "false"})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := r.TOML(); !strings.Contains(out, "notify = false") {
+		t.Fatalf("an explicit notify is not shown:\n%s", out)
+	}
+}
