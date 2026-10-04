@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
+	"github.com/stigoleg/keep-alive/v2/internal/power"
+	"github.com/stigoleg/keep-alive/v2/internal/session"
 )
 
 var now = time.Date(2024, 1, 1, 10, 0, 0, 0, time.Local)
@@ -406,6 +409,15 @@ func TestExitErrorCarriesCode(t *testing.T) {
 	}
 	if ExitCode(runtimeErr(errors.New("x"), "")) != ExitFailure {
 		t.Fatal("runtime error code wrong")
+	}
+}
+
+func TestPowerErrorHintReachesUser(t *testing.T) {
+	perr := &power.Error{Err: errors.New("logind said no"), Hint: "run it from your desktop"}
+	err := resultError(session.Result{Reason: session.ReasonError, Err: fmt.Errorf("keep the system awake: %w", perr)})
+	var ee *ExitError
+	if !errors.As(err, &ee) || ee.Code != ExitFailure || ee.Hint != "run it from your desktop" {
+		t.Fatalf("resultError = %#v", err)
 	}
 }
 

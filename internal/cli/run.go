@@ -11,6 +11,7 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/cli/output"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
+	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
 	"github.com/stigoleg/keep-alive/v2/internal/tui"
 )
@@ -65,10 +66,10 @@ func (a *App) runHeadless(ctx context.Context, p *Plan, deps session.Deps) error
 }
 
 // resultError maps a finished session to the command's error. User stop,
-// signals and reached limits are normal ends.
+// signals and reached limits are normal ends. A power error's hint is shown.
 func resultError(res session.Result) error {
 	if res.Err != nil {
-		return runtimeErr(res.Err, "")
+		return runtimeErr(res.Err, power.HintOf(res.Err))
 	}
 	return nil
 }
