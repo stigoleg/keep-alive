@@ -132,6 +132,7 @@ static int ka_pid_path(int pid, char *buf, int size) {
 import "C"
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -142,7 +143,7 @@ import (
 	"unsafe"
 )
 
-func newBackend(keys bool) *backend {
+func newBackend(_ context.Context, keys bool) *backend {
 	hid, combined := cgIdle{combined: false}, cgIdle{combined: true}
 	return &backend{
 		idle:    maxIdle{hid, combined},

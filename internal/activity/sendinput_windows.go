@@ -3,6 +3,7 @@
 package activity
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -113,7 +114,7 @@ type wtsInfoEx struct {
 	sessionFlags int32
 }
 
-func newBackend(keys bool) *backend {
+func newBackend(_ context.Context, keys bool) *backend {
 	idle := lastInputIdle{}
 	return &backend{
 		idle:    idle,

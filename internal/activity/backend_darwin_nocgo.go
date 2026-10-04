@@ -2,7 +2,9 @@
 
 package activity
 
-func newBackend(keys bool) *backend {
+import "context"
+
+func newBackend(_ context.Context, keys bool) *backend {
 	return &backend{open: func() (Injector, error) {
 		return nil, &Unavailable{
 			Reason: "unavailable: built without cgo",

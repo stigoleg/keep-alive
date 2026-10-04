@@ -15,13 +15,16 @@ import (
 // xdotool moves the pointer with XTest, which resets the X11 screensaver
 // idle counter. A whole burst runs as one chained xdotool process.
 type xdotool struct {
+	// ctx bounds the availability check; moves use their own timeout so an
+	// interrupted burst can still put the pointer back.
+	ctx      context.Context
 	run      cmdRunner
 	lookPath func(string) (string, error)
 	env      linuxEnv
 }
 
-func newXdotool(env linuxEnv) *xdotool {
-	return &xdotool{run: runCmd, lookPath: exec.LookPath, env: env}
+func newXdotool(ctx context.Context, env linuxEnv) *xdotool {
+	return &xdotool{ctx: ctx, run: runCmd, lookPath: exec.LookPath, env: env}
 }
 
 func (x *xdotool) Name() string { return "xdotool" }
@@ -36,7 +39,7 @@ func (x *xdotool) Available() error {
 	if x.env.display == "" {
 		return &Unavailable{Reason: "no X11 display (DISPLAY is not set)"}
 	}
-	if _, _, ok := x.Position(); !ok {
+	if _, _, ok := x.position(x.ctx); !ok {
 		return &Unavailable{Reason: "xdotool cannot reach the X server on " + x.env.display}
 	}
 	return nil
@@ -47,8 +50,10 @@ func (x *xdotool) xdo(ctx context.Context, timeout time.Duration, args ...string
 	return out, err
 }
 
-func (x *xdotool) Position() (float64, float64, bool) {
-	out, err := x.xdo(context.Background(), cmdTimeout, "getmouselocation", "--shell")
+func (x *xdotool) Position() (float64, float64, bool) { return x.position(context.Background()) }
+
+func (x *xdotool) position(ctx context.Context) (float64, float64, bool) {
+	out, err := x.xdo(ctx, cmdTimeout, "getmouselocation", "--shell")
 	if err != nil {
 		return 0, 0, false
 	}

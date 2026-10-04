@@ -21,6 +21,9 @@ const ydotoolDaemonHint = "start the ydotool daemon, e.g. systemctl --user enabl
 // 0.1.x (Ubuntu 22.04/24.04, Debian 12) has an incompatible command line
 // and is refused.
 type ydotool struct {
+	// ctx bounds the availability check; moves use their own timeout so an
+	// interrupted burst can still be undone.
+	ctx      context.Context
 	run      cmdRunner
 	lookPath func(string) (string, error)
 	getenv   func(string) string
@@ -30,8 +33,8 @@ type ydotool struct {
 	socket    string
 }
 
-func newYdotool() *ydotool {
-	return &ydotool{run: runCmd, lookPath: exec.LookPath, getenv: os.Getenv, isSocket: isSocket}
+func newYdotool(ctx context.Context) *ydotool {
+	return &ydotool{ctx: ctx, run: runCmd, lookPath: exec.LookPath, getenv: os.Getenv, isSocket: isSocket}
 }
 
 func isSocket(path string) bool {
@@ -48,7 +51,7 @@ func (y *ydotool) Available() error {
 		return &Unavailable{Reason: "ydotool is not installed", Hint: "install ydotool 1.x and run its daemon (ydotoold)"}
 	}
 	if !y.versionOK {
-		out, errOut, _ := y.run(context.Background(), cmdTimeout, nil, "ydotool", "help")
+		out, errOut, _ := y.run(y.ctx, cmdTimeout, nil, "ydotool", "help")
 		switch ydotoolGeneration(out + "\n" + errOut) {
 		case 1:
 			y.versionOK = true

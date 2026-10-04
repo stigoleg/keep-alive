@@ -33,6 +33,7 @@ type machine struct {
 	closed    int
 	opens     int
 	openErr   error
+	idleReads int
 }
 
 func newMachine() *machine {
@@ -64,6 +65,7 @@ func (fakeIdle) Name() string { return "fake idle" }
 func (f fakeIdle) Idle() (time.Duration, error) {
 	f.m.mu.Lock()
 	defer f.m.mu.Unlock()
+	f.m.idleReads++
 	if f.m.idleErr != nil {
 		return 0, f.m.idleErr
 	}
@@ -534,5 +536,37 @@ func TestControllerFixedCadenceFailureReasonIsStable(t *testing.T) {
 	}
 	if len(reasons) != 1 || !reasons["input ignored: xdotool: exit status 1"] {
 		t.Fatalf("reasons while failing = %v", reasons)
+	}
+}
+
+func TestControllerRunReturnsAtOnceWhenCancelled(t *testing.T) {
+	h := newHarness(t, testCfg, nil)
+	h.m.set(func(m *machine) { m.idleReads, m.opens = 0, 0 })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := h.c.run(ctx); err != nil {
+		t.Fatalf("run = %v, want nil", err)
+	}
+	if h.m.idleReads != 0 || h.m.opens != 0 || len(h.statuses) != 0 {
+		t.Fatalf("cancelled run read idle %d times, opened %d injectors, reported %d statuses", h.m.idleReads, h.m.opens, len(h.statuses))
+	}
+}
+
+func TestControllerNeverBurstsAfterCancel(t *testing.T) {
+	for name, tweak := range map[string]func(m *machine, d *controllerDeps){
+		"idle-gated":     nil,
+		"fixed schedule": func(m *machine, d *controllerDeps) { d.idle = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, testCfg, tweak)
+			h.runFor(2*time.Minute - 2*time.Second)
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			h.ctx = ctx
+			h.runFor(time.Minute)
+			if n := h.m.burstCount(); n != 0 {
+				t.Fatalf("%d bursts after the context was cancelled", n)
+			}
+		})
 	}
 }

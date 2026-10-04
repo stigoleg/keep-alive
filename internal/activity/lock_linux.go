@@ -3,6 +3,7 @@
 package activity
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,19 +14,19 @@ import (
 
 // newLinuxLock prefers logind's LockedHint and falls back to the
 // freedesktop screensaver; nil when neither is reachable.
-func newLinuxLock(sys, sess *dbus.Conn) LockSource {
+func newLinuxLock(ctx context.Context, sys, sess *dbus.Conn) LockSource {
 	if sys != nil {
-		path, err := logindSession(sys)
+		path, err := logindSession(ctx, sys)
 		if err == nil {
-			l := logindLock{conn: sys, path: path}
+			l := logindLock{ctx: ctx, conn: sys, path: path}
 			if _, err = l.Locked(); err == nil {
 				return l
 			}
 		}
 		slog.Debug("activity: logind lock state unavailable", "err", err)
 	}
-	if hasOwner(sess, "org.freedesktop.ScreenSaver") {
-		s := screensaverLock{conn: sess}
+	if hasOwner(ctx, sess, "org.freedesktop.ScreenSaver") {
+		s := screensaverLock{ctx: ctx, conn: sess}
 		if _, err := s.Locked(); err == nil {
 			return s
 		}
@@ -36,21 +37,21 @@ func newLinuxLock(sys, sess *dbus.Conn) LockSource {
 // logindSession finds our login session: by PID, then $XDG_SESSION_ID, then
 // the user's graphical session (a terminal started by the systemd user
 // manager belongs to no session).
-func logindSession(conn *dbus.Conn) (dbus.ObjectPath, error) {
+func logindSession(ctx context.Context, conn *dbus.Conn) (dbus.ObjectPath, error) {
 	const dest = "org.freedesktop.login1"
-	if body, err := dbusCall(conn, dest, "/org/freedesktop/login1", "org.freedesktop.login1.Manager.GetSessionByPID", uint32(os.Getpid())); err == nil {
+	if body, err := dbusCall(ctx, conn, dest, "/org/freedesktop/login1", "org.freedesktop.login1.Manager.GetSessionByPID", uint32(os.Getpid())); err == nil {
 		if p, ok := singlePath(body); ok {
 			return p, nil
 		}
 	}
 	if id := os.Getenv("XDG_SESSION_ID"); id != "" {
-		if body, err := dbusCall(conn, dest, "/org/freedesktop/login1", "org.freedesktop.login1.Manager.GetSession", id); err == nil {
+		if body, err := dbusCall(ctx, conn, dest, "/org/freedesktop/login1", "org.freedesktop.login1.Manager.GetSession", id); err == nil {
 			if p, ok := singlePath(body); ok {
 				return p, nil
 			}
 		}
 	}
-	body, err := dbusCall(conn, dest, "/org/freedesktop/login1/user/self", "org.freedesktop.DBus.Properties.Get",
+	body, err := dbusCall(ctx, conn, dest, "/org/freedesktop/login1/user/self", "org.freedesktop.DBus.Properties.Get",
 		"org.freedesktop.login1.User", "Display")
 	if err != nil {
 		return "", err
@@ -67,12 +68,13 @@ func logindSession(conn *dbus.Conn) (dbus.ObjectPath, error) {
 }
 
 type logindLock struct {
+	ctx  context.Context
 	conn *dbus.Conn
 	path dbus.ObjectPath
 }
 
 func (l logindLock) Locked() (bool, error) {
-	body, err := dbusCall(l.conn, "org.freedesktop.login1", l.path, "org.freedesktop.DBus.Properties.Get",
+	body, err := dbusCall(l.ctx, l.conn, "org.freedesktop.login1", l.path, "org.freedesktop.DBus.Properties.Get",
 		"org.freedesktop.login1.Session", "LockedHint")
 	if err != nil {
 		return false, err
@@ -85,10 +87,13 @@ func (l logindLock) Locked() (bool, error) {
 	return false, fmt.Errorf("unexpected LockedHint reply %v", body)
 }
 
-type screensaverLock struct{ conn *dbus.Conn }
+type screensaverLock struct {
+	ctx  context.Context
+	conn *dbus.Conn
+}
 
 func (s screensaverLock) Locked() (bool, error) {
-	body, err := dbusCall(s.conn, "org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver.GetActive")
+	body, err := dbusCall(s.ctx, s.conn, "org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver.GetActive")
 	if err != nil {
 		return false, err
 	}

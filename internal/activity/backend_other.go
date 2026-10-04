@@ -2,9 +2,12 @@
 
 package activity
 
-import "runtime"
+import (
+	"context"
+	"runtime"
+)
 
-func newBackend(keys bool) *backend {
+func newBackend(_ context.Context, keys bool) *backend {
 	return &backend{open: func() (Injector, error) {
 		return nil, &Unavailable{Reason: "activity simulation is not supported on " + runtime.GOOS}
 	}}

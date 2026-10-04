@@ -51,7 +51,10 @@ func (simulator) Run(ctx context.Context, cfg Config, report func(Status)) error
 	if cfg.Interval <= 0 {
 		cfg.Interval = DefaultInterval
 	}
-	b := newBackend(cfg.Keys)
+	if ctx.Err() != nil {
+		return nil
+	}
+	b := newBackend(ctx, cfg.Keys)
 	defer b.Close()
 	c := newController(cfg, controllerDeps{
 		clock:      clock.Real(),
@@ -101,7 +104,7 @@ type ProbeReading struct {
 // moves), reads them again and reports whether the burst registered as user
 // input.
 func Probe(ctx context.Context, keys bool) ProbeResult {
-	b := newBackend(keys)
+	b := newBackend(ctx, keys)
 	defer b.Close()
 	return probe(ctx, b, keys, newRand(), realSleep)
 }

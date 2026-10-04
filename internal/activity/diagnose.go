@@ -1,6 +1,7 @@
 package activity
 
 import (
+	"context"
 	"strings"
 	"time"
 )
@@ -81,7 +82,7 @@ func (d Diagnostics) Problem() (reason, hint string) {
 
 // Diagnose inspects the activity backends without simulating anything.
 func Diagnose() Diagnostics {
-	b := newBackend(false)
+	b := newBackend(context.Background(), false)
 	defer b.Close()
 	return diagnose(b)
 }

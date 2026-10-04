@@ -100,6 +100,10 @@ func (c *controller) init() {
 }
 
 func (c *controller) run(ctx context.Context) error {
+	// init reads the idle source, which may be a D-Bus call.
+	if ctx.Err() != nil {
+		return nil
+	}
 	c.init()
 	defer c.close()
 	t := c.deps.clock.NewTimer(c.step(ctx))
@@ -199,6 +203,9 @@ func (c *controller) disarm() {
 
 // burst plays one burst and verifies that it reset the idle counter.
 func (c *controller) burst(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	err := c.play(ctx)
 	if ctx.Err() != nil {
 		return
@@ -246,6 +253,9 @@ func (c *controller) fixedStep(ctx context.Context, now time.Time) time.Duration
 	if now.Before(c.nextBurst) {
 		c.publish(c.fixedStatus())
 		return min(tickInterval, c.nextBurst.Sub(now))
+	}
+	if ctx.Err() != nil {
+		return tickInterval
 	}
 	err := c.play(ctx)
 	if ctx.Err() != nil {

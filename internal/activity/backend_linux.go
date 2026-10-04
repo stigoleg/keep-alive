@@ -41,14 +41,17 @@ func (e linuxEnv) x11() bool { return e.display != "" && e.wayland == "" }
 
 func (e linuxEnv) kde() bool { return strings.Contains(e.desktop, "KDE") }
 
-func newBackend(keys bool) *backend {
+// newBackend probes the desktop. ctx bounds every D-Bus call and helper
+// process, now and for as long as the backend is used: both bus connections
+// close when ctx is done, which also ends a call waiting on a hung bus.
+func newBackend(ctx context.Context, keys bool) *backend {
 	env := currentEnv()
 	b := &backend{noIdleHint: noIdleHint(env)}
-	sess, err := connectSessionBus()
+	sess, err := connectSessionBus(ctx)
 	if err != nil {
 		slog.Debug("activity: no session bus", "err", err)
 	}
-	sys, err := dbus.ConnectSystemBus()
+	sys, err := dbus.ConnectSystemBus(dbus.WithContext(ctx))
 	if err != nil {
 		slog.Debug("activity: no system bus", "err", err)
 		sys = nil
@@ -60,19 +63,19 @@ func newBackend(keys bool) *backend {
 			}
 		}
 	}
-	b.sources = idleSources(env, sess, exec.LookPath)
+	b.sources = idleSources(ctx, env, sess, exec.LookPath)
 	if len(b.sources) > 0 {
 		b.idle = b.sources[0]
 	}
-	b.lock = newLinuxLock(sys, sess)
+	b.lock = newLinuxLock(ctx, sys, sess)
 	switch b.lock.(type) {
 	case logindLock:
 		b.lockName = "logind LockedHint"
 	case screensaverLock:
 		b.lockName = "org.freedesktop.ScreenSaver"
 	}
-	b.open = func() (Injector, error) { return openLinux(env, keys) }
-	b.candidates = func() []Injector { return linuxCandidates(env, keys) }
+	b.open = func() (Injector, error) { return openLinux(ctx, env, keys) }
+	b.candidates = func() []Injector { return linuxCandidates(ctx, env, keys) }
 	b.env = env.describe()
 	return b
 }
@@ -95,13 +98,15 @@ func (e linuxEnv) describe() []string {
 	return []string{"display server: " + server, "desktop: " + desktop}
 }
 
-func linuxCandidates(env linuxEnv, keys bool) []Injector {
-	return []Injector{newUinput(keys), newYdotool(), newXdotool(env)}
+// linuxCandidates lists the input methods in order; ctx bounds their
+// availability checks.
+func linuxCandidates(ctx context.Context, env linuxEnv, keys bool) []Injector {
+	return []Injector{newUinput(keys), newYdotool(ctx), newXdotool(ctx, env)}
 }
 
 // openLinux tries uinput, then ydotool 1.x, then xdotool (X11 only).
-func openLinux(env linuxEnv, keys bool) (Injector, error) {
-	candidates := linuxCandidates(env, keys)
+func openLinux(ctx context.Context, env linuxEnv, keys bool) (Injector, error) {
+	candidates := linuxCandidates(ctx, env, keys)
 	var reasons []string
 	hint := uinputPermissionHint
 	for i, inj := range candidates {
@@ -166,9 +171,10 @@ func runCmd(ctx context.Context, timeout time.Duration, env []string, name strin
 const dbusTimeout = 2 * time.Second
 
 // connectSessionBus connects to an existing session bus. Unlike
-// dbus.ConnectSessionBus it never starts one with dbus-launch.
-func connectSessionBus() (*dbus.Conn, error) {
-	conn, err := dbus.SessionBusPrivateNoAutoStartup()
+// dbus.ConnectSessionBus it never starts one with dbus-launch. The
+// connection closes when ctx is done, which also aborts a hung handshake.
+func connectSessionBus(ctx context.Context) (*dbus.Conn, error) {
+	conn, err := dbus.SessionBusPrivateNoAutoStartup(dbus.WithContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -183,11 +189,11 @@ func connectSessionBus() (*dbus.Conn, error) {
 	return conn, nil
 }
 
-func hasOwner(conn *dbus.Conn, name string) bool {
+func hasOwner(ctx context.Context, conn *dbus.Conn, name string) bool {
 	if conn == nil {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), dbusTimeout)
+	ctx, cancel := context.WithTimeout(ctx, dbusTimeout)
 	defer cancel()
 	var ok bool
 	err := conn.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.NameHasOwner", 0, name).Store(&ok)
@@ -195,8 +201,8 @@ func hasOwner(conn *dbus.Conn, name string) bool {
 }
 
 // dbusCall calls method on dest/path and returns the reply body.
-func dbusCall(conn *dbus.Conn, dest string, path dbus.ObjectPath, method string, args ...any) ([]any, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), dbusTimeout)
+func dbusCall(ctx context.Context, conn *dbus.Conn, dest string, path dbus.ObjectPath, method string, args ...any) ([]any, error) {
+	ctx, cancel := context.WithTimeout(ctx, dbusTimeout)
 	defer cancel()
 	call := conn.Object(dest, path).CallWithContext(ctx, method, 0, args...)
 	if call.Err != nil {

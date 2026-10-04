@@ -5,8 +5,11 @@ package activity
 import (
 	"context"
 	"errors"
+	"net"
+	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -97,12 +100,14 @@ type call struct {
 
 type fakeRunner struct {
 	calls []call
+	ctxs  []context.Context
 	reply func(c call) (string, string, error)
 }
 
 func (f *fakeRunner) run(ctx context.Context, timeout time.Duration, env []string, name string, args ...string) (string, string, error) {
 	c := call{timeout, env, name, args}
 	f.calls = append(f.calls, c)
+	f.ctxs = append(f.ctxs, ctx)
 	if f.reply != nil {
 		return f.reply(c)
 	}
@@ -249,5 +254,71 @@ func TestNoIdleHints(t *testing.T) {
 	}
 	if h := noIdleHint(linuxEnv{display: ":0"}); !strings.Contains(h, "xprintidle") {
 		t.Fatalf("X11 hint %q", h)
+	}
+}
+
+// hungBus accepts D-Bus connections and never answers, like a frozen
+// dbus-daemon.
+func hungBus(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "bus")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = l.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	})
+	return "unix:path=" + path
+}
+
+func TestNewBackendGivesUpOnAHungBusWhenCancelled(t *testing.T) {
+	addr := hungBus(t)
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", addr)
+	t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", addr)
+	t.Setenv("DISPLAY", "")
+	t.Setenv("WAYLAND_DISPLAY", "")
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan *backend, 1)
+	go func() { done <- newBackend(ctx, false) }()
+	select {
+	case b := <-done:
+		b.Close()
+		if b.lock != nil || len(b.sources) != 0 {
+			t.Fatalf("a hung bus produced lock %v, sources %v", b.lock, b.sources)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("newBackend still blocked on a hung bus 3s after its context ended")
+	}
+}
+
+func TestXprintidleRunsUnderTheBackendContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := &fakeRunner{reply: func(call) (string, string, error) { return "1000", "", nil }}
+	if _, err := (xprintidle{ctx: ctx, run: r.run}).Idle(); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.ctxs) != 1 || r.ctxs[0].Err() == nil {
+		t.Fatal("xprintidle did not run under the backend's context")
 	}
 }
