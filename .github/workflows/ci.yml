@@ -1,12 +1,36 @@
 name: CI
 
+# Releases are built, signed and notarized locally (make release, see
+# RELEASING.md); CI never publishes. A manual run (workflow_dispatch) also
+# uploads the unsigned snapshot artifacts as a fallback build.
 on:
   push:
-    branches: [ main ]
+    branches: ["**"]
   pull_request:
-    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  lint:
+    name: Lint
+    # macOS so that go vet also checks the darwin cgo files.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: make fmt-check
+      - name: go vet (darwin, linux, windows)
+        run: make vet
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -15,13 +39,117 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
-          cache: true
-      - name: Build
-        run: go build ./...
-      - name: Test (short)
-        run: go test -v -short ./...
+          go-version-file: go.mod
+      - name: go test -race
+        if: runner.os != 'Windows'
+        run: go test -race ./...
+      # The race detector needs cgo and the runner's MinGW gcc. Compile the
+      # race-enabled tests first; only if the toolchain cannot build them,
+      # fall back to a plain run instead of failing on the toolchain.
+      - name: go test -race (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          if go test -race -count=1 -run '^$' ./... >race-build.log 2>&1; then
+            go test -race ./...
+          else
+            cat race-build.log
+            echo "::warning::the race detector does not build on this runner; running without -race"
+            CGO_ENABLED=0 go test ./...
+          fi
+
+  cross-build:
+    name: Build (cgo=${{ matrix.cgo }}, ${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Release builds: darwin with cgo, everything else without.
+          - runner: macos-latest
+            cgo: "1"
+            targets: darwin/amd64 darwin/arm64
+          - runner: ubuntu-latest
+            cgo: "0"
+            targets: >-
+              linux/amd64 linux/arm64 linux/386 linux/arm
+              windows/amd64 windows/arm64 darwin/amd64 darwin/arm64
+          # Native cgo build on Linux (go install with a C toolchain).
+          - runner: ubuntu-latest
+            cgo: "1"
+            targets: linux/amd64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: go build
+        env:
+          CGO_ENABLED: ${{ matrix.cgo }}
+          TARGETS: ${{ matrix.targets }}
+        run: |
+          for t in $TARGETS; do
+            goos=${t%/*} goarch=${t#*/}
+            echo "::group::$goos/$goarch cgo=$CGO_ENABLED"
+            GOOS=$goos GOARCH=$goarch GOARM=7 go build -trimpath -o /dev/null ./cmd/keepalive
+            if [ "$goos" = windows ]; then
+              GOOS=$goos GOARCH=$goarch go build -trimpath -ldflags "-H windowsgui" -o /dev/null ./cmd/keepalive
+            fi
+            echo "::endgroup::"
+          done
+
+  goreleaser:
+    name: GoReleaser snapshot
+    # The release config builds darwin with cgo, so it needs a Mac.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
+      - name: goreleaser release --snapshot (unsigned)
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean
+        env:
+          KEEPALIVE_SIGN: "0"
+          KEEPALIVE_NOTARIZE: "0"
+      - name: Upload unsigned snapshot artifacts
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: keepalive-snapshot-unsigned
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.deb
+            dist/*.rpm
+            dist/*.apk
+            dist/checksums.txt
+          retention-days: 14
+
+  docker-e2e:
+    name: Linux E2E (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Sleep inhibitors against python-dbusmock
+        run: test/docker/power/run.sh
+      - name: Activity simulation on X11 (Xvfb)
+        run: |
+          docker build -f test/docker/activity/Dockerfile -t keepalive-activity-e2e .
+          docker run --rm keepalive-activity-e2e

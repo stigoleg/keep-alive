@@ -1,0 +1,4 @@
+# keepalive --active on Wayland injects input through /dev/uinput. Give the
+# user at the active seat access to it (systemd-logind applies uaccess), and
+# create the node even before the uinput module is loaded.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"
