@@ -78,3 +78,12 @@ func TestCanvasWidths(t *testing.T) {
 		t.Fatal("a spacer on a short terminal")
 	}
 }
+
+func TestHeaderKeepsTheWordmark(t *testing.T) {
+	st := NewStyles(nil, Look{})
+	c := newCanvas(st, 40, fitFull, true)
+	c.header(versionText("2.0.0-20261004134041-8d2f88dc573e"))
+	if got := c.lines[0]; got != "keepalive  v2.0.0-20261004134041-8d2f…" {
+		t.Fatalf("header %q", got)
+	}
+}

@@ -122,8 +122,15 @@ func (c *canvas) String() string {
 // labelWidth is the width of the dashboard's label column.
 const labelWidth = 10
 
-// header adds the wordmark on the left and right on the right.
-func (c *canvas) header(right string) { c.spread(c.st.wordmark(), right) }
+// header adds the wordmark on the left and right on the right; right is
+// cut short when both do not fit (a long development version).
+func (c *canvas) header(right string) {
+	mark := c.st.wordmark()
+	if room := c.width - lipgloss.Width(mark) - 2; lipgloss.Width(right) > room {
+		right = ansi.Truncate(right, max(room, 0), c.st.g.ellipsis)
+	}
+	c.spread(mark, right)
+}
 
 // fits reports whether a labelled row of value and right takes one line.
 func (c *canvas) fits(value, right string) bool {
