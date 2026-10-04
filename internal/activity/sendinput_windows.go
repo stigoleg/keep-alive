@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"syscall"
 	"time"
@@ -23,6 +24,10 @@ var (
 
 	procSendInput                     = user32.NewProc("SendInput")
 	procGetCursorPos                  = user32.NewProc("GetCursorPos")
+	procSetCursorPos                  = user32.NewProc("SetCursorPos")
+	procOpenInputDesktop              = user32.NewProc("OpenInputDesktop")
+	procCloseDesktop                  = user32.NewProc("CloseDesktop")
+	procGetUserObjectInformationW     = user32.NewProc("GetUserObjectInformationW")
 	procGetSystemMetrics              = user32.NewProc("GetSystemMetrics")
 	procGetLastInputInfo              = user32.NewProc("GetLastInputInfo")
 	procSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
@@ -53,6 +58,9 @@ const (
 	wtsSessionInfoEx      = 25
 	wtsSessionStateLock   = 0
 	wtsSessionStateUnlock = 1
+
+	desktopSwitchDesktop = 0x0100
+	uoiName              = 2
 
 	// DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 is the handle value -4.
 	dpiAwarenessPerMonitorV2 = ^uintptr(3)
@@ -123,7 +131,7 @@ func newBackend(_ context.Context, keys bool) *backend {
 		open:    openSendInput,
 
 		candidates: func() []Injector { return []Injector{sendInput{}} },
-		lockName:   "WTS session state",
+		lockName:   "WTS session state, else the input desktop",
 	}
 }
 
@@ -143,11 +151,17 @@ func (lastInputIdle) Idle() (time.Duration, error) {
 	return time.Duration(uint32(now)-lii.dwTime) * time.Millisecond, nil
 }
 
-// wtsLock reads the session lock flag. Windows 7 reports it inverted, but Go
-// no longer runs there.
+// wtsLock reads the session lock flag, and the input desktop when the flag
+// is unavailable or unknown.
 type wtsLock struct{}
 
 func (wtsLock) Locked() (bool, error) {
+	return lockedSessionOrDesktop(wtsSessionLocked, inputDesktopIsLocked)
+}
+
+// wtsSessionLocked reads the session lock flag. Windows 7 reports it
+// inverted, but Go no longer runs there.
+func wtsSessionLocked() (bool, error) {
 	var info *wtsInfoEx
 	var n uint32
 	r, _, err := procWTSQuerySessionInformationW.Call(0, wtsCurrentSession, wtsSessionInfoEx,
@@ -166,6 +180,23 @@ func (wtsLock) Locked() (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("unknown session lock state %d", info.sessionFlags)
+}
+
+// inputDesktopIsLocked opens the desktop that receives input: the user's
+// "Default" one, or Winlogon's secure desktop while the session is locked.
+func inputDesktopIsLocked() (bool, error) {
+	h, _, err := procOpenInputDesktop.Call(0, 0, desktopSwitchDesktop)
+	if h == 0 {
+		return inputDesktopLocked("", fmt.Errorf("OpenInputDesktop: %w", err), errors.Is(err, windows.ERROR_ACCESS_DENIED))
+	}
+	defer procCloseDesktop.Call(h)
+	var name [256]uint16
+	var n uint32
+	if r, _, err := procGetUserObjectInformationW.Call(h, uoiName, uintptr(unsafe.Pointer(&name[0])),
+		uintptr(len(name)*2), uintptr(unsafe.Pointer(&n))); r == 0 {
+		return false, fmt.Errorf("GetUserObjectInformation: %w", err)
+	}
+	return inputDesktopLocked(windows.UTF16ToString(name[:]), nil, false)
 }
 
 var dpiAware sync.Once
@@ -214,6 +245,19 @@ func (sendInput) Position() (float64, float64, bool) {
 func (sendInput) Bounds() (Rect, bool) {
 	r := virtualScreen()
 	return r, r.W > 0 && r.H > 0
+}
+
+// FinishAt corrects a return stroke that landed a pixel or two off.
+func (s sendInput) FinishAt(ox, oy float64) {
+	set := func(x, y int32) error {
+		if r, _, err := procSetCursorPos.Call(uintptr(x), uintptr(y)); r == 0 {
+			return fmt.Errorf("SetCursorPos: %w", err)
+		}
+		return nil
+	}
+	if _, err := snapBack(s.Position, set, ox, oy); err != nil {
+		slog.Debug("activity: cursor not put back exactly", "err", err)
+	}
 }
 
 func virtualScreen() Rect {

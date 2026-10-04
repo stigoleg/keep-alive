@@ -526,6 +526,9 @@ func playBurst(ctx context.Context, inj Injector, p Path, sleep sleepFunc) error
 			}
 			last, prev = move{x, y}, last
 		}
+		if f, ok := inj.(finisher); ok {
+			f.FinishAt(ox, oy)
+		}
 		return nil
 	case RelativeInjector:
 		p = p.ForUnknownPosition()
