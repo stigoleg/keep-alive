@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -55,6 +56,9 @@ type App struct {
 	logSetup func(logging.Options) (string, func() error, error)
 	// newPower is power.New; tests replace it.
 	newPower func() power.Inhibitor
+	// stateDir holds state kept across runs (the login service's
+	// notification times); tests replace it.
+	stateDir func() (string, error)
 	// doctorFacts, probe and probeWait back `keepalive doctor`; tests
 	// replace them.
 	doctorFacts func(*cobra.Command) doctorFacts
@@ -167,11 +171,21 @@ func (a *App) reportServiceFailure(err error) {
 		slog.Error("service: could not start", "err", msg)
 		_ = closeLog()
 	}
-	n := a.notifier()
+	a.notifyService("service-start", "Keep-Alive service could not start", msg)
+}
+
+// notifyService shows a notification from the login service, at most once
+// per kind every session.NotifyInterval across restarts. Failures are only
+// logged.
+func (a *App) notifyService(kind, title, body string) {
+	if lim := a.serviceLimiter(); lim != nil && !lim.Allow(kind, time.Now()) {
+		slog.Debug("service: notification held back", "kind", kind)
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), notify.Timeout)
 	defer cancel()
-	if nerr := n.Notify(ctx, "Keep-Alive service could not start", msg); nerr != nil {
-		slog.Debug("service: notification failed", "err", nerr)
+	if err := a.notifier().Notify(ctx, title, body); err != nil {
+		slog.Debug("service: notification failed", "kind", kind, "err", err)
 	}
 }
 
@@ -181,6 +195,28 @@ func (a *App) notifier() notify.Notifier {
 		return a.Notifier
 	}
 	return notify.New()
+}
+
+// serviceLimiter allows each kind of notification from the login service
+// once every session.NotifyInterval, across restarts: a service that fails
+// at every start would otherwise notify every few seconds. nil when there
+// is nowhere to keep the state.
+func (a *App) serviceLimiter() *notify.FileLimiter {
+	dir, err := a.stateDir()
+	if err != nil {
+		slog.Debug("service: no state directory for notification limits", "err", err)
+		return nil
+	}
+	return &notify.FileLimiter{Path: filepath.Join(dir, "notified.json"), Interval: session.NotifyInterval}
+}
+
+// defaultStateDir is the directory of the default log file.
+func defaultStateDir() (string, error) {
+	p, err := logging.DefaultPath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Dir(p), nil
 }
 
 func (a *App) color() bool {

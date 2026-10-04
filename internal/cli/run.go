@@ -64,6 +64,11 @@ func (a *App) deps(p *Plan) session.Deps {
 	}
 	if p.Notify {
 		d.Notifier = a.notifier()
+		if p.Origin == ipc.OriginService {
+			if lim := a.serviceLimiter(); lim != nil {
+				d.NotifyLimiter = lim
+			}
+		}
 	}
 	return d
 }

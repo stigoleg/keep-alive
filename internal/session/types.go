@@ -49,6 +49,16 @@ type Deps struct {
 	// Notifier shows desktop notifications for unusual stops and problems;
 	// nil disables them.
 	Notifier notify.Notifier
+	// NotifyLimiter decides whether a notification of a kind may be shown;
+	// the login service passes one that remembers across restarts. nil
+	// means once per kind every NotifyInterval within this session.
+	NotifyLimiter NotifyLimiter
+}
+
+// NotifyLimiter rate-limits notifications by kind ("stopped", "activity",
+// "power"). Allow records the notification when it returns true.
+type NotifyLimiter interface {
+	Allow(kind string, now time.Time) bool
 }
 
 // Reason says why a session ended.

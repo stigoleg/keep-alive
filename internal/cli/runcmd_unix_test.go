@@ -3,21 +3,11 @@
 package cli
 
 import (
-	"context"
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/stigoleg/keep-alive/v2/internal/power"
 )
-
-type failingPower struct{}
-
-func (failingPower) Name() string { return "failing" }
-
-func (failingPower) Acquire(context.Context, power.Options) (power.Hold, error) {
-	return nil, &power.Error{Err: errors.New("no inhibitor answered"), Hint: "start a desktop session"}
-}
 
 // TestRunWithoutPowerStillRunsTheCommand: a missing power hold is a warning;
 // the command runs and its exit code is keepalive's.

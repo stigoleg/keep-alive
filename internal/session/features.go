@@ -201,18 +201,24 @@ const (
 )
 
 // notify shows a desktop notification in the background, at most once per
-// kind every NotifyInterval. Failures are only logged; Run waits for
+// kind every NotifyInterval (or as Deps.NotifyLimiter decides). Failures are only logged; Run waits for
 // pending notifications before it returns.
 func (l *loop) notify(kind, title, body string) {
 	n := l.s.deps.Notifier
 	if n == nil {
 		return
 	}
-	now := l.clk.Now()
-	if last, ok := l.notified[kind]; ok && now.Sub(last) < NotifyInterval {
-		return
+	now := l.clk.Now().Round(0) // wall clock, so time asleep counts
+	if lim := l.s.deps.NotifyLimiter; lim != nil {
+		if !lim.Allow(kind, now) {
+			return
+		}
+	} else {
+		if last, ok := l.notified[kind]; ok && now.Sub(last) < NotifyInterval {
+			return
+		}
+		l.notified[kind] = now
 	}
-	l.notified[kind] = now
 	l.notifying.Add(1)
 	go func() {
 		defer l.notifying.Done()

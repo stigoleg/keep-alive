@@ -57,6 +57,7 @@ type testApp struct {
 
 func newTestApp(t *testing.T) *testApp {
 	t.Helper()
+	stateDir := t.TempDir()
 	ta := &testApp{
 		stdout:     &bytes.Buffer{},
 		stderr:     &bytes.Buffer{},
@@ -77,6 +78,7 @@ func newTestApp(t *testing.T) *testApp {
 		// Never touch the real login service from tests.
 		ServiceManager:    func() (service.Manager, error) { return nil, errors.New("no service manager in tests") },
 		ResolveExecutable: func() (string, string, error) { return "", "", errors.New("no executable in tests") },
+		stateDir:          func() (string, error) { return stateDir, nil },
 		Processes: fakeProcs{
 			alive: map[int]bool{12: true, 34: true, 56: true},
 			named: map[string][]proc.Process{"zoom": {{PID: 77, Name: "zoom.us"}}},

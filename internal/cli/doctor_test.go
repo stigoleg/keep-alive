@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -297,5 +298,33 @@ func TestDoctorProbeShowsReadingNote(t *testing.T) {
 	if !strings.Contains(out, "warn xprintidle (XWayland)") || !strings.Contains(out, "fix: "+xwaylandNote) ||
 		!strings.Contains(out, "ok   verdict") {
 		t.Fatalf("probe section:\n%s", out)
+	}
+}
+
+func TestDoctorServiceRestartingRepeatedly(t *testing.T) {
+	for _, tc := range []struct {
+		name, fix string
+		state     service.State
+	}{
+		{"launchd", "service.log", service.State{Installed: true, Running: true, Restarts: 6, Detail: "running (pid 777)", Path: "/Users/jane/Library/LaunchAgents/io.github.stigoleg.keepalive.plist"}},
+		{"systemd --user", "journalctl --user -u keepalive.service", service.State{Installed: true, Restarts: 12, Detail: "enabled, activating", Path: "/home/jane/.config/systemd/user/keepalive.service"}},
+	} {
+		f := macFacts()
+		f.ServiceName, f.Service = tc.name, tc.state
+		var buf bytes.Buffer
+		renderDoctor(&buf, buildDoctor(f), false, false)
+		out := buf.String()
+		want := fmt.Sprintf("restarting repeatedly (%d restarts); %s", tc.state.Restarts, tc.state.Detail)
+		if !strings.Contains(out, "warn "+tc.name) || !strings.Contains(out, want) || !strings.Contains(out, tc.fix) || !strings.Contains(out, `"keepalive service install"`) {
+			t.Errorf("%s: service row:\n%s", tc.name, out)
+		}
+	}
+	// A restart or two is not "repeatedly".
+	f := macFacts()
+	f.Service.Restarts = 2
+	var buf bytes.Buffer
+	renderDoctor(&buf, buildDoctor(f), false, false)
+	if strings.Contains(buf.String(), "restarting") {
+		t.Errorf("two restarts reported:\n%s", buf.String())
 	}
 }

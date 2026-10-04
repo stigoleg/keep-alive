@@ -64,6 +64,9 @@ func (a *App) Command() *cobra.Command {
 	if a.newPower == nil {
 		a.newPower = power.New
 	}
+	if a.stateDir == nil {
+		a.stateDir = defaultStateDir
+	}
 	if a.doctorFacts == nil {
 		a.doctorFacts = a.collectDoctor
 	}

@@ -244,6 +244,28 @@ const printExited = `gui/501/io.github.stigoleg.keepalive = {
 }
 `
 
+const printRestarting = `gui/501/io.github.stigoleg.keepalive = {
+	state = running
+	runs = 7
+	pid = 777
+	last exit code = 1
+}
+`
+
+func TestLaunchdRestarts(t *testing.T) {
+	for out, want := range map[string]int{
+		printRunning:    0, // never exited
+		printExited:     2, // runs = 3, last exit code 2
+		printRestarting: 6,
+		"gui/501/x = {\n\truns = 4\n\tlast exit code = 0\n}\n": 0, // ended normally
+	} {
+		m := newLaunchd(t, &fakeRunner{respond: func([]string) (string, error) { return out, nil }})
+		if st, err := m.Status(); err != nil || st.Restarts != want {
+			t.Errorf("restarts = %d, %v; want %d for\n%s", st.Restarts, err, want, out)
+		}
+	}
+}
+
 func TestLaunchdStatus(t *testing.T) {
 	tests := map[string]struct {
 		file      bool
@@ -255,6 +277,7 @@ func TestLaunchdStatus(t *testing.T) {
 	}{
 		"running":       {true, printRunning, nil, true, true, "running (pid 12345)"},
 		"exited":        {true, printExited, nil, true, false, "loaded, not running (last exit code 2)"},
+		"restarting":    {true, printRestarting, nil, true, true, "running (pid 777)"},
 		"not loaded":    {true, "", failed("Could not find service"), true, false, "installed but not loaded"},
 		"nothing":       {false, "", failed("Could not find service"), false, false, "not installed"},
 		"plist missing": {false, printRunning, nil, true, true, "plist file is missing"},
@@ -341,6 +364,8 @@ func systemdUp(active string) func([]string) (string, error) {
 			return "active\n", nil
 		case "is-enabled":
 			return "enabled\n", nil
+		case "show":
+			return "4\n", nil
 		}
 		return "", nil
 	}
@@ -438,9 +463,14 @@ func TestSystemdUninstallAndStatus(t *testing.T) {
 	}
 	f.calls = nil
 	st, err := m.Status()
-	if err != nil || !st.Installed || !st.Running || st.Detail != "enabled, active" || !strings.HasSuffix(st.Path, "keepalive.service") {
+	if err != nil || !st.Installed || !st.Running || st.Detail != "enabled, active" || !strings.HasSuffix(st.Path, "keepalive.service") ||
+		st.Restarts != 4 {
 		t.Fatalf("status = %+v, %v", st, err)
 	}
+	assertCalls(t, f,
+		"systemctl --user is-active keepalive.service",
+		"systemctl --user is-enabled keepalive.service",
+		"systemctl --user show --property=NRestarts --value keepalive.service")
 	f.calls = nil
 	if err := m.Uninstall(); err != nil {
 		t.Fatal(err)

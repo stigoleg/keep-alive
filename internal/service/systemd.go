@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -115,6 +116,9 @@ func (m *systemd) Status() (State, error) {
 		active := m.query("is-active")
 		st.Running = active == "active"
 		st.Detail = m.query("is-enabled") + ", " + active
+		if out, err := m.systemctl("show", "--property=NRestarts", "--value", UnitName); err == nil {
+			st.Restarts, _ = strconv.Atoi(strings.TrimSpace(string(out)))
+		}
 		return st, nil
 	case exists(m.desktopPath()):
 		return State{Installed: true, Path: m.desktopPath(), Detail: "autostart entry (starts at next login)"}, nil

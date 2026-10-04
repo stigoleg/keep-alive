@@ -509,3 +509,36 @@ func TestNotifyPowerLostAfterFirstRetry(t *testing.T) {
 }
 
 var _ clock.Clock = (*clock.Fake)(nil)
+
+type fakeLimiter struct {
+	mu    sync.Mutex
+	asked []string
+	allow bool
+}
+
+func (f *fakeLimiter) Allow(kind string, _ time.Time) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, kind)
+	return f.allow
+}
+
+func TestNotifyLimiterDecides(t *testing.T) {
+	for _, allow := range []bool{false, true} {
+		h := newHarness(t, Config{BatteryThreshold: 20})
+		n, lim := &fakeNotifier{}, &fakeLimiter{allow: allow}
+		h.s = New(Config{BatteryThreshold: 20}, Deps{Clock: h.clk, Power: h.power, Battery: h.batt.status, Notifier: n, NotifyLimiter: lim})
+		var unsub func()
+		h.events, unsub = h.s.Subscribe()
+		t.Cleanup(unsub)
+		h.batt.set(15, nil)
+		h.run()
+		h.finish(ReasonBattery)
+		if len(lim.asked) != 1 || lim.asked[0] != notifyStopped {
+			t.Fatalf("limiter asked %v", lim.asked)
+		}
+		if got := len(n.list()); got != map[bool]int{false: 0, true: 1}[allow] {
+			t.Fatalf("allow=%v: %d notifications", allow, got)
+		}
+	}
+}

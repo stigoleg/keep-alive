@@ -223,6 +223,10 @@ func buildDoctor(f doctorFacts) doctorReport {
 		s.add("service", checkWarn, f.ServiceErr.Error(), service.Hint(f.ServiceErr))
 	case !f.Service.Installed:
 		s.add(f.ServiceName, checkOK, `not installed (optional: "keepalive service install")`, "")
+	case f.Service.Restarts >= restartingRepeatedly:
+		s.add(f.ServiceName, checkWarn,
+			joinDetail(fmt.Sprintf("restarting repeatedly (%d restarts); %s", f.Service.Restarts, f.Service.Detail), f.Service.Path),
+			serviceLogHint(f.ServiceName)+`, fix the cause, then run "keepalive service install" again`)
 	case f.Service.Running:
 		s.add(f.ServiceName, checkOK, joinDetail(f.Service.Detail, f.Service.Path), "")
 	case f.ServiceName == "XDG autostart":
@@ -338,6 +342,21 @@ func instanceCheck(s *doctorSection, st ipc.Status, now time.Time) {
 		return
 	}
 	s.add("instance", checkOK, detail, "")
+}
+
+// restartingRepeatedly is the number of restarts after failures from which
+// doctor reports a service stuck in a restart loop.
+const restartingRepeatedly = 3
+
+// serviceLogHint says where the service manager keeps the service's output.
+func serviceLogHint(manager string) string {
+	switch manager {
+	case "launchd":
+		return "read ~/Library/Logs/keepalive/service.log"
+	case "systemd --user":
+		return `read "journalctl --user -u keepalive.service"`
+	}
+	return "read its log"
 }
 
 func powerFix(goos string) string {
