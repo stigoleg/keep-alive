@@ -328,3 +328,26 @@ func TestDoctorServiceRestartingRepeatedly(t *testing.T) {
 		t.Errorf("two restarts reported:\n%s", buf.String())
 	}
 }
+
+func TestDoctorFixedScheduleIsAWarning(t *testing.T) {
+	f := waylandLinux("")
+	st := *f.Instance
+	st.Snapshot.Activity = output.JSONActivity{State: string(activity.StateSimulating), Method: "ydotool on a fixed schedule",
+		Hint: "no idle source on this desktop, so simulated activity cannot pause while you use the computer"}
+	f.Instance = &st
+	var buf bytes.Buffer
+	r := buildDoctor(f)
+	renderDoctor(&buf, r, false, false)
+	out := buf.String()
+	if !strings.Contains(out, "warn instance") || !strings.Contains(out, "simulating input via ydotool on a fixed schedule") ||
+		!strings.Contains(out, "fix: no idle source on this desktop, so simulated activity cannot pause") {
+		t.Fatalf("instance row:\n%s", out)
+	}
+	for _, s := range r.Sections {
+		for _, c := range s.Checks {
+			if c.Status == checkFail && (c.Name == "instance" || c.Name == "idle time") {
+				t.Fatalf("%s fails:\n%s", c.Name, out)
+			}
+		}
+	}
+}

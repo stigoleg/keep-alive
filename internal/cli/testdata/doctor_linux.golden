@@ -16,7 +16,7 @@ Activity simulation
   ! ydotool         ydotool is not installed
                     fix: install ydotool 1.x
   ! idle time       no idle source; activity is simulated on a fixed schedule
-                    fix: install xprintidle for idle-aware simulation
+                    fix: simulated activity cannot pause while you use the computer; install xprintidle for idle-aware simulation
   ! screen lock     cannot tell when the screen is locked
                     fix: activity keeps running while the screen is locked; on Linux this needs logind or a desktop screensaver (GNOME, KDE, MATE, Cinnamon, XFCE)
   ✓ display server  Wayland

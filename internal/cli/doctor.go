@@ -276,8 +276,12 @@ func activitySection(s *doctorSection, d activity.Diagnostics) {
 		if len(parts) > 0 {
 			detail += " (read for information only: " + strings.Join(parts, ", ") + ")"
 		}
-		s.add("idle time", checkWarn, detail,
-			orDefault(d.NoIdleHint, "simulation still works, but also while you use the computer"))
+		// It works as designed, so a warning, never a failure.
+		fix := "simulated activity cannot pause while you use the computer"
+		if d.NoIdleHint != "" {
+			fix += "; " + d.NoIdleHint
+		}
+		s.add("idle time", checkWarn, detail, fix)
 	} else {
 		detail := "idle: " + strings.Join(parts, ", ")
 		if d.Verifier != "" {

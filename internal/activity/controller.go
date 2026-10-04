@@ -36,8 +36,10 @@ const (
 )
 
 const (
-	noIdleReason = "no idle source on this desktop; simulating on a fixed schedule"
-	userReason   = "you are using the computer"
+	// noIdleLimit is the hint on a fixed schedule: it works, but cannot
+	// tell when the user is at the computer.
+	noIdleLimit = "no idle source on this desktop, so simulated activity cannot pause while you use the computer"
+	userReason  = "you are using the computer"
 )
 
 const (
@@ -329,7 +331,7 @@ func (c *controller) fixedStep(ctx context.Context, now time.Time) time.Duration
 		if c.status.State == StatePausedUser {
 			c.publish(c.status)
 		} else {
-			c.publish(c.fixedStatus())
+			c.publish(c.fixedStatus(now))
 		}
 		return min(tickInterval, c.nextBurst.Sub(now))
 	}
@@ -355,14 +357,27 @@ func (c *controller) fixedStep(ctx context.Context, now time.Time) time.Duration
 	} else {
 		c.misses = 0
 	}
-	c.publish(c.fixedStatus())
+	c.publish(c.fixedStatus(end))
 	return c.untilNextBurst()
 }
 
-func (c *controller) fixedStatus() Status {
-	st := Status{State: StateDegraded, Method: c.inj.Name(), Reason: noIdleReason, Hint: c.deps.noIdleHint, LastBurst: c.lastBurst}
+// fixedStatus is the status on a fixed schedule. It works as designed, so
+// it is simulating (waiting before the first burst), with a hint about the
+// missing idle source; only bursts that fail make it degraded.
+func (c *controller) fixedStatus(now time.Time) Status {
 	if c.misses >= ineffectiveLimit {
-		st.Reason, st.Hint = c.diagnose(c.lastErr)
+		reason, hint := c.diagnose(c.lastErr)
+		return Status{State: StateDegraded, Method: c.inj.Name(), Reason: reason, Hint: hint, LastBurst: c.lastBurst}
+	}
+	hint := noIdleLimit
+	if c.deps.noIdleHint != "" {
+		hint += "; " + c.deps.noIdleHint
+	}
+	st := Status{State: StateSimulating, Method: c.inj.Name() + " on a fixed schedule", Hint: hint, LastBurst: c.lastBurst}
+	if c.lastBurst.IsZero() {
+		st.State = StateWaitingIdle
+		st.Idle = max(c.cfg.IdleThreshold-c.nextBurst.Sub(now), 0)
+		st.Reason = fmt.Sprintf("first burst after %s", c.cfg.IdleThreshold)
 	}
 	return st
 }
