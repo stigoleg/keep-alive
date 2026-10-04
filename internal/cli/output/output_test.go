@@ -280,8 +280,19 @@ func TestRunPrinterIsQuiet(t *testing.T) {
 	}
 
 	buf.Reset()
-	NewRun(&buf, false).Print(f["stopped"])
-	if got := buf.String(); got != "keepalive: stopped: duration reached\n" {
+	p = NewRun(&buf, false)
+	p.Print(f["started"])
+	p.Print(f["stopped"])
+	if got := buf.String(); !strings.HasSuffix(got, "\nkeepalive: stopped: duration reached\n") {
 		t.Fatalf("unusual stop = %q", got)
+	}
+
+	// A session that could not start is the command's error, not a line.
+	failed := f["stopped"]
+	failed.Reason, failed.Message = session.ReasonError, "keep the system awake: denied"
+	buf.Reset()
+	NewRun(&buf, false).Print(failed)
+	if buf.Len() != 0 {
+		t.Fatalf("start failure printed %q", buf.String())
 	}
 }

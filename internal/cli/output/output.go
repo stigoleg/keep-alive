@@ -82,6 +82,7 @@ type Run struct {
 	w        io.Writer
 	color    bool
 	degraded bool
+	started  bool
 }
 
 // NewRun returns the quiet printer for `keepalive run`.
@@ -89,7 +90,9 @@ func NewRun(w io.Writer, color bool) *Run { return &Run{w: w, color: color} }
 
 func (r *Run) Print(ev session.Event) error {
 	switch ev.Type {
-	case session.EventStarted, session.EventWarning, session.EventSchedule:
+	case session.EventStarted:
+		r.started = true
+	case session.EventWarning, session.EventSchedule:
 	case session.EventActivity:
 		was := r.degraded
 		r.degraded = ev.Snapshot.Activity.State == activity.StateDegraded
@@ -97,7 +100,8 @@ func (r *Run) Print(ev session.Event) error {
 			return nil
 		}
 	case session.EventStopped:
-		if ev.Reason == session.ReasonCommandExited {
+		// A session that never started is reported as the command's error.
+		if ev.Reason == session.ReasonCommandExited || !r.started {
 			return nil
 		}
 	default:
