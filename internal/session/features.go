@@ -23,6 +23,7 @@ func (l *loop) armSchedule(now time.Time) {
 		return
 	}
 	next, _ := sched.Next(now)
+	next = next.Round(0) // wall clock, like EndsAt
 	l.snap.NextChange = next
 	switch {
 	case next.IsZero(): // always on: nothing ever changes
@@ -44,7 +45,7 @@ func (l *loop) checkSchedule() {
 	if sched == nil {
 		return
 	}
-	now := l.clk.Now()
+	now := l.clk.Now().Round(0) // wall clock, like EndsAt
 	in := sched.In(now)
 	changed := in != l.inWindow
 	if changed && in {

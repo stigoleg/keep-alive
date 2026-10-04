@@ -153,7 +153,7 @@ func initialSnapshot(cfg Config) Snapshot {
 		snap.Schedule = cfg.Schedule.String()
 	}
 	if snap.Mode == ModeUntil {
-		snap.EndsAt = cfg.Until
+		snap.EndsAt = cfg.Until.Round(0) // wall clock; see run
 	}
 	return snap
 }
@@ -253,7 +253,11 @@ func (l *loop) run() Result {
 		l.watchPower()
 		l.snap.PowerHold = hold.Describe()
 	}
-	now := l.clk.Now()
+	// Session times are wall-clock times (Round(0) drops the monotonic
+	// reading): the monotonic clock stops while the machine sleeps, so a
+	// deadline compared through it would drift by the time spent asleep and
+	// disagree with the ends_at it shows.
+	now := l.clk.Now().Round(0)
 	l.snap.StartedAt = now
 	l.snap.Running = true
 	l.snap.InWindow = l.inWindow
@@ -336,7 +340,7 @@ func (l *loop) deadlinePassed() bool {
 	if l.snap.EndsAt.IsZero() {
 		return false
 	}
-	now := l.clk.Now()
+	now := l.clk.Now().Round(0) // wall clock; see run
 	if !now.Before(l.snap.EndsAt) {
 		return true
 	}
@@ -431,7 +435,7 @@ func stopMessage(r Reason, b Battery) string {
 func (l *loop) snapshot() Snapshot {
 	snap := l.snap
 	if snap.Running && !snap.EndsAt.IsZero() {
-		snap.Remaining = max(snap.EndsAt.Sub(l.clk.Now()), 0)
+		snap.Remaining = max(snap.EndsAt.Sub(l.clk.Now().Round(0)), 0)
 	}
 	return snap
 }
@@ -456,7 +460,7 @@ func (l *loop) extend(d time.Duration) {
 		l.warn("extend ignored: the session has no end time")
 		return
 	}
-	now := l.clk.Now()
+	now := l.clk.Now().Round(0) // wall clock; see run
 	end := l.snap.EndsAt.Add(d)
 	if d < 0 {
 		if floor := now.Add(MinRemainingAfterShorten); end.Before(floor) {
