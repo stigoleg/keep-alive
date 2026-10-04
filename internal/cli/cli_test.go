@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/stigoleg/keep-alive/v2/internal/logging"
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
 	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/proc"
@@ -522,6 +524,70 @@ func TestServiceOriginDefaults(t *testing.T) {
 	ta = newTestApp(t)
 	if code := ta.run("--origin", "cron"); code != ExitUsage {
 		t.Fatalf("--origin cron: exit %d", code)
+	}
+}
+
+// TestServiceIgnoresConfiguredDuration: a service that ends stays stopped
+// until the next login, so a duration from the config file or the
+// environment does not apply to it.
+func TestServiceIgnoresConfiguredDuration(t *testing.T) {
+	const fileNote = "duration from the config file is ignored by the service; use schedule"
+	ta := newTestApp(t)
+	if err := writeConfig(ta, "duration = \"2h\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if code := ta.run("--plain", "--origin", "service"); code != ExitOK {
+		t.Fatalf("exit %d: %s", code, ta.stderr)
+	}
+	if s := ta.plan.Session; s.Duration != 0 || ta.plan.AutoStart || !slices.Equal(s.StartWarnings, []string{fileNote}) {
+		t.Fatalf("service plan: duration %v, autostart %v, warnings %q", s.Duration, ta.plan.AutoStart, s.StartWarnings)
+	}
+
+	ta = newTestApp(t)
+	ta.env["KEEPALIVE_DURATION"] = "90"
+	ta.env["KEEPALIVE_ORIGIN"] = "service"
+	ta.run("--plain")
+	if s := ta.plan.Session; s.Duration != 0 ||
+		!slices.Equal(s.StartWarnings, []string{"duration from KEEPALIVE_DURATION is ignored by the service; use schedule"}) {
+		t.Fatalf("env: duration %v, warnings %q", s.Duration, s.StartWarnings)
+	}
+
+	// An explicit flag still applies (install refuses it), and so does the
+	// file outside a service.
+	ta = newTestApp(t)
+	writeConfig(ta, "duration = \"2h\"\n")
+	ta.run("--plain", "--origin", "service", "-d", "1h")
+	if s := ta.plan.Session; s.Duration != time.Hour || len(s.StartWarnings) != 0 {
+		t.Fatalf("flag: duration %v, warnings %q", s.Duration, s.StartWarnings)
+	}
+	ta = newTestApp(t)
+	writeConfig(ta, "duration = \"2h\"\n")
+	ta.run("--plain")
+	if s := ta.plan.Session; s.Duration != 2*time.Hour || len(s.StartWarnings) != 0 {
+		t.Fatalf("terminal: duration %v, warnings %q", s.Duration, s.StartWarnings)
+	}
+}
+
+// TestStartWarningsAreLoggedOnce: the plan's warnings go to the log once, at
+// info level, when logging starts.
+func TestStartWarningsAreLoggedOnce(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	ta := newTestApp(t)
+	ta.logSetup = func(logging.Options) (string, func() error, error) {
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+		return "", func() error { return nil }, nil
+	}
+	ta.Command() // wires the defaults
+	p := &Plan{Origin: "service", Session: session.Config{StartWarnings: []string{"note one"}}}
+	closeLog, err := ta.startLogging(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeLog()
+	if got := buf.String(); strings.Count(got, "note one") != 1 || !strings.Contains(got, "level=INFO msg=\"note one\"") {
+		t.Fatalf("log:\n%s", got)
 	}
 }
 

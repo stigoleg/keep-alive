@@ -371,6 +371,12 @@ func (a *App) plan(cmd *cobra.Command, f *sessionFlags, origin string) (*Plan, e
 		}
 		s.Until, s.Duration = until, 0 // an explicit --clock wins over a configured duration
 	}
+	if origin == ipc.OriginService && s.Duration > 0 && res.Sources["duration"] != config.SourceFlag {
+		// A service that ends stays stopped until the next login; only the
+		// command line, which "service install" refuses, sets an end.
+		s.Duration = 0
+		s.StartWarnings = append(s.StartWarnings, ignoredDurationWarning(res.Sources["duration"]))
+	}
 
 	if s.BatteryThreshold > 0 {
 		// The login service pauses at the threshold instead of stopping,
@@ -404,6 +410,16 @@ func (a *App) plan(cmd *cobra.Command, f *sessionFlags, origin string) (*Plan, e
 		p.Logging.Path = filepath.Join(filepath.Dir(res.Path), p.Logging.Path)
 	}
 	return p, nil
+}
+
+// ignoredDurationWarning says that the service ignores a duration from src
+// (the config file or KEEPALIVE_DURATION).
+func ignoredDurationWarning(src config.Source) string {
+	from := "the config file"
+	if src == config.SourceEnv {
+		from = config.EnvName("duration")
+	}
+	return fmt.Sprintf("duration from %s is ignored by the service; use schedule", from)
 }
 
 // checkWatch fails planning when nothing to watch is running, so a typo is

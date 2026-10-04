@@ -136,7 +136,9 @@ All notable changes to keepalive. Releases before 2.0.0 are described on the
   command).
 - `keepalive service install` takes the session flags except the one-shot
   limits (`-d`, `-c`/`--until`, `--pid`, `--while`), which it refuses with a
-  hint to use `--schedule` (exit status 2). When another keepalive is
+  hint to use `--schedule` (exit status 2); the service ignores a
+  `duration` from the config file or `KEEPALIVE_DURATION`, with a warning,
+  and install warns about one in the config file. When another keepalive is
   running it asks whether to stop it on a terminal, stops it with
   `--replace`, and otherwise installs and says why the service cannot start
   yet. In the service, `-b` pauses keeping awake while the battery is at or

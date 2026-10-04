@@ -40,6 +40,9 @@ type Config struct {
 	// Command names the command `keepalive run` waits for; it only shows up
 	// in Snapshot.Watching (the CLI stops the session when it exits).
 	Command string
+	// StartWarnings are shown as warning events right after the start
+	// event; the caller logs them.
+	StartWarnings []string
 }
 
 // Deps are the session's collaborators; tests pass fakes.

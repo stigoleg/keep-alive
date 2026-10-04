@@ -544,6 +544,19 @@ func TestNotifyLimiterDecides(t *testing.T) {
 	}
 }
 
+// TestStartWarningsFollowTheStart: warnings from planning (the service
+// ignoring a configured duration) are warning events right after the start.
+func TestStartWarningsFollowTheStart(t *testing.T) {
+	h := newHarness(t, Config{StartWarnings: []string{"duration from the config file is ignored by the service; use schedule"}})
+	h.start()
+	ev := h.waitFor(EventWarning)
+	if ev.Message != "duration from the config file is ignored by the service; use schedule" || !ev.Snapshot.Running {
+		t.Fatalf("warning event: %q %+v", ev.Message, ev.Snapshot)
+	}
+	h.s.Stop(ReasonUser)
+	h.finish(ReasonUser)
+}
+
 // ---- battery pause (login service) ----
 
 // poll moves to the next battery poll and returns its event.

@@ -102,6 +102,29 @@ func TestServiceInstallWithoutFlags(t *testing.T) {
 	}
 }
 
+// TestServiceInstallWarnsAboutConfiguredDuration: the service ignores a
+// duration from the config file; install says so.
+func TestServiceInstallWarnsAboutConfiguredDuration(t *testing.T) {
+	ta, m := newServiceApp(t)
+	if err := writeConfig(ta, "duration = \"2h\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if code := ta.run("service", "install"); code != ExitOK || m.installed == nil {
+		t.Fatalf("exit %d: %s", code, ta.stderr)
+	}
+	want := "keepalive: warning: duration from the config file is ignored by the service; use schedule\n" +
+		"hint: remove \"duration\" from " + ta.configPath + "\n"
+	if got := ta.stderr.String(); got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+
+	ta, _ = newServiceApp(t)
+	ta.env["KEEPALIVE_DURATION"] = "90" // the service does not inherit the shell's environment
+	if code := ta.run("service", "install"); code != ExitOK || ta.stderr.Len() != 0 {
+		t.Fatalf("env: exit %d, stderr %q", code, ta.stderr)
+	}
+}
+
 func TestServiceInstallValidatesLikeRoot(t *testing.T) {
 	for _, args := range [][]string{
 		{"-d", "0"},

@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/stigoleg/keep-alive/v2/internal/cli/output"
+	"github.com/stigoleg/keep-alive/v2/internal/config"
 	"github.com/stigoleg/keep-alive/v2/internal/ipc"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
 	"github.com/stigoleg/keep-alive/v2/internal/service"
@@ -73,8 +74,15 @@ started elsewhere runs: on a terminal install offers to stop it, and
 			if err := refuseOneShot(cmd.Flags()); err != nil {
 				return err
 			}
-			if _, err := a.plan(cmd, &sf, ipc.OriginService); err != nil {
+			p, err := a.plan(cmd, &sf, ipc.OriginService)
+			if err != nil {
 				return err
+			}
+			if p.Config.Sources["duration"] == config.SourceFile {
+				// The service does not inherit this shell's environment, so
+				// only the file's duration matters.
+				fmt.Fprintf(a.Stderr, "keepalive: warning: %s\n", ignoredDurationWarning(config.SourceFile))
+				fmt.Fprintf(a.Stderr, "hint: remove \"duration\" from %s\n", p.Config.Path)
 			}
 			args, err := serviceArgs(cmd.Flags())
 			if err != nil {

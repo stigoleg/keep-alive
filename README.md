@@ -299,7 +299,10 @@ systemd), and a Task Scheduler task on Windows. It takes the session flags
 except the limits that would end it for good (`-d`, `-c`/`--until`,
 `--pid`, `--while`): those exit with status 2 and a hint to use
 `--schedule`. Anything you do not pass is read from the config file each
-time the service starts. Installing again replaces the service.
+time the service starts. A `duration` there (or in `KEEPALIVE_DURATION`)
+does not apply to the service: it logs that and shows a warning, and
+`service install` warns about it too. Installing again replaces the
+service.
 
 The service cannot start while a keepalive started elsewhere runs. On a
 terminal, `service install` asks whether to stop that one; `--replace`

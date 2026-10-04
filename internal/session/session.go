@@ -276,6 +276,9 @@ func (l *loop) run() Result {
 	slog.Info("session: started", "mode", l.snap.Mode, "ends_at", l.snap.EndsAt, "hold", l.snap.PowerHold,
 		"schedule", l.snap.Schedule, "in_window", l.inWindow, "watching", l.snap.Watching)
 	l.emit(EventStarted, "", "")
+	for _, w := range cfg.StartWarnings {
+		l.emit(EventWarning, "", w)
+	}
 
 	if !l.snap.EndsAt.IsZero() && !now.Before(l.snap.EndsAt) {
 		return l.stop(l.timedReason(), nil)

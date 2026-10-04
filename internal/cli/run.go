@@ -53,6 +53,9 @@ func (a *App) startLogging(p *Plan) (func() error, error) {
 	}
 	slog.Info("keepalive starting", "version", a.Version, "origin", p.Origin, "tui", p.TUI, "json", p.JSON,
 		"notify", p.Notify, "config", p.Config.Path)
+	for _, w := range p.Session.StartWarnings {
+		slog.Info(w)
+	}
 	return closeLog, nil
 }
 
