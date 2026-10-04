@@ -177,7 +177,11 @@ func startedText(now time.Time, snap session.Snapshot) string {
 		limits = append(limits, fmt.Sprintf("during work hours (%s)", snap.Schedule))
 	}
 	if snap.Watching != "" {
-		limits = append(limits, fmt.Sprintf("while %s runs", snap.Watching))
+		verb := "runs"
+		if session.WatchingSeveral(snap.Watching) {
+			verb = "run"
+		}
+		limits = append(limits, fmt.Sprintf("while %s %s", snap.Watching, verb))
 	}
 	if len(limits) == 0 {
 		limits = append(limits, "indefinitely")

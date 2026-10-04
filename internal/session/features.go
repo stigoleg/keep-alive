@@ -198,8 +198,8 @@ func (l *loop) exitMessage(ex proc.Exit) string {
 	return ex.Reason
 }
 
-// watchDescription is Snapshot.Watching: "make", "zoom", "pid 42",
-// "zoom, pids 1, 2".
+// watchDescription is Snapshot.Watching: "make", "zoom", "process 42",
+// "processes 1, 2", "zoom and process 42".
 func watchDescription(command string, pids []int, name string) string {
 	var parts []string
 	if command != "" {
@@ -214,13 +214,22 @@ func watchDescription(command string, pids []int, name string) string {
 		for i, pid := range pids {
 			s[i] = strconv.Itoa(pid)
 		}
-		label := "pid "
+		label := "process "
 		if len(pids) > 1 {
-			label = "pids "
+			label = "processes "
 		}
 		parts = append(parts, label+strings.Join(s, ", "))
 	}
-	return strings.Join(parts, ", ")
+	if len(parts) < 2 {
+		return strings.Join(parts, "")
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
+}
+
+// WatchingSeveral reports whether a Snapshot.Watching names more than one
+// process ("processes 1, 2", "zoom and process 42"), for "run" or "runs".
+func WatchingSeveral(watching string) bool {
+	return strings.HasPrefix(watching, "processes ") || strings.Contains(watching, " and ")
 }
 
 // ---- notifications ----

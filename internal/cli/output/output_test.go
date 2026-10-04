@@ -194,7 +194,13 @@ func TestHumanStartedVariants(t *testing.T) {
 	watching.Watching = "zoom"
 
 	watchingTimed := snap
-	watchingTimed.Watching = "pid 42"
+	watchingTimed.Watching = "process 42"
+
+	watchingMany := indefinite
+	watchingMany.Watching = "processes 10, 11"
+
+	watchingMixed := indefinite
+	watchingMixed.Watching = "zoom and process 42"
 
 	tests := map[string]struct {
 		snap session.Snapshot
@@ -207,7 +213,9 @@ func TestHumanStartedVariants(t *testing.T) {
 		"outside schedule": {paused, "keeping system and display awake during work hours (Mon-Fri 08:00-16:00); outside work hours until Mon 08:00"},
 		"inside schedule":  {working, "keeping system and display awake for 2h0m (until 12:02), during work hours (daily 09:00-17:00)"},
 		"watching":         {watching, "keeping system and display awake while zoom runs"},
-		"watching, timed":  {watchingTimed, "keeping system and display awake for 2h0m (until 12:02), while pid 42 runs"},
+		"watching, timed":  {watchingTimed, "keeping system and display awake for 2h0m (until 12:02), while process 42 runs"},
+		"watching several": {watchingMany, "keeping system and display awake while processes 10, 11 run"},
+		"watching mixed":   {watchingMixed, "keeping system and display awake while zoom and process 42 run"},
 	}
 	for name, tt := range tests {
 		got := Text(session.Event{Time: start, Type: session.EventStarted, Snapshot: tt.snap})

@@ -9,10 +9,11 @@
  b      stop at a battery level
  k      tap Shift with activity
 
- Simulate activity moves the pointer a
- few pixels once you have been idle for
- a while, so Teams and Slack keep
- showing you as Active.
+ Simulate activity moves the pointer in
+ small arcs (up to about 130 px) and
+ back to where it was, once you have
+ been idle for a while, so Teams and
+ Slack keep showing you as Active.
  It pauses while you use the computer
  or the screen is locked; "keepalive
  doctor" checks that it works here.

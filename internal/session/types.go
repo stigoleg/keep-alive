@@ -133,7 +133,7 @@ type Snapshot struct {
 	Schedule   string
 	InWindow   bool
 	NextChange time.Time
-	// Watching describes the watched processes, e.g. "zoom" or "pid 4242".
+	// Watching describes the watched processes, e.g. "zoom" or "process 4242".
 	Watching string
 	// Paused is why the session holds no power and simulates nothing right
 	// now; the work hours win when both apply.

@@ -278,7 +278,7 @@ func TestWatchedPIDExitStops(t *testing.T) {
 	l := &fakeLister{alive: map[int]bool{42: true}}
 	h := newWatchHarness(t, Config{WatchPIDs: []int{42}}, l)
 	h.start()
-	if w := h.seen[0].Snapshot.Watching; w != "pid 42" {
+	if w := h.seen[0].Snapshot.Watching; w != "process 42" {
 		t.Fatalf("Watching = %q", w)
 	}
 	l.set(func(f *fakeLister) { f.alive[42] = false })
@@ -318,10 +318,11 @@ func TestWatchDescriptions(t *testing.T) {
 		name    string
 		want    string
 	}{
-		{"", []int{42}, "", "pid 42"},
-		{"", []int{11, 10}, "", "pids 10, 11"},
+		{"", []int{42}, "", "process 42"},
+		{"", []int{11, 10}, "", "processes 10, 11"},
 		{"", nil, "zoom", "zoom"},
-		{"", []int{42}, "zoom", "zoom, pid 42"},
+		{"", []int{42}, "zoom", "zoom and process 42"},
+		{"make", []int{2, 1}, "zoom", "make, zoom and processes 1, 2"},
 		{"make", nil, "", "make"},
 	} {
 		if got := watchDescription(tt.command, tt.pids, tt.name); got != tt.want {
