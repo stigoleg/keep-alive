@@ -13,7 +13,6 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/clock"
 	"github.com/stigoleg/keep-alive/v2/internal/ipc"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
-	"github.com/stigoleg/keep-alive/v2/internal/notify"
 	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
 	"github.com/stigoleg/keep-alive/v2/internal/tui"
@@ -58,13 +57,13 @@ func (a *App) startLogging(p *Plan) (func() error, error) {
 func (a *App) deps(p *Plan) session.Deps {
 	d := session.Deps{
 		Clock:     clock.Real(),
-		Power:     power.New(),
+		Power:     a.newPower(),
 		Activity:  activity.New(),
 		Battery:   a.Battery,
 		Processes: a.Processes,
 	}
 	if p.Notify {
-		d.Notifier = notify.New()
+		d.Notifier = a.notifier()
 	}
 	return d
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/activity"
 	"github.com/stigoleg/keep-alive/v2/internal/config"
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
+	"github.com/stigoleg/keep-alive/v2/internal/power"
 )
 
 const rootLong = `keepalive keeps your computer awake: for a while, until a time, during work
@@ -58,6 +59,9 @@ func (a *App) Command() *cobra.Command {
 	}
 	if a.logSetup == nil {
 		a.logSetup = logging.Setup
+	}
+	if a.newPower == nil {
+		a.newPower = power.New
 	}
 	if a.doctorFacts == nil {
 		a.doctorFacts = a.collectDoctor

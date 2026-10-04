@@ -24,6 +24,7 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
 	"github.com/stigoleg/keep-alive/v2/internal/notify"
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
+	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/proc"
 	"github.com/stigoleg/keep-alive/v2/internal/schedule"
 	"github.com/stigoleg/keep-alive/v2/internal/service"
@@ -44,7 +45,7 @@ type App struct {
 	DefaultConfigPath              func() (string, error)
 	// Processes checks --pid and --while targets during planning.
 	Processes proc.Lister
-	// Notifier reports a service that cannot start; nil means notify.New().
+	// Notifier shows desktop notifications; nil means notify.New().
 	Notifier notify.Notifier
 	// ServiceManager and ResolveExecutable back `keepalive service`.
 	ServiceManager    func() (service.Manager, error)
@@ -52,6 +53,8 @@ type App struct {
 
 	// logSetup is logging.Setup; tests replace it.
 	logSetup func(logging.Options) (string, func() error, error)
+	// newPower is power.New; tests replace it.
+	newPower func() power.Inhibitor
 	// doctorFacts, probe and probeWait back `keepalive doctor`; tests
 	// replace them.
 	doctorFacts func(*cobra.Command) doctorFacts
@@ -164,15 +167,20 @@ func (a *App) reportServiceFailure(err error) {
 		slog.Error("service: could not start", "err", msg)
 		_ = closeLog()
 	}
-	n := a.Notifier
-	if n == nil {
-		n = notify.New()
-	}
+	n := a.notifier()
 	ctx, cancel := context.WithTimeout(context.Background(), notify.Timeout)
 	defer cancel()
 	if nerr := n.Notify(ctx, "Keep-Alive service could not start", msg); nerr != nil {
 		slog.Debug("service: notification failed", "err", nerr)
 	}
+}
+
+// notifier is a.Notifier, or the system's.
+func (a *App) notifier() notify.Notifier {
+	if a.Notifier != nil {
+		return a.Notifier
+	}
+	return notify.New()
 }
 
 func (a *App) color() bool {

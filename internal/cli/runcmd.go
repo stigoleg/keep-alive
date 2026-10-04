@@ -9,15 +9,18 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 
 	"github.com/stigoleg/keep-alive/v2/internal/cli/output"
+	"github.com/stigoleg/keep-alive/v2/internal/power"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
 )
 
 // executeRun keeps the machine awake while argv runs. The child inherits
 // stdin, stdout and stderr; keepalive's own few lines go to stderr. Signals
 // are passed on to the child, and the session ends when it exits. The exit
-// code is the child's (128+N when a signal killed it).
+// code is the child's (128+N when a signal killed it), also when the
+// machine could not be kept awake.
 func (a *App) executeRun(ctx context.Context, p *Plan, argv []string) error {
 	closeLog, err := a.startLogging(p)
 	if err != nil {
@@ -74,21 +77,26 @@ func (a *App) executeRun(ctx context.Context, p *Plan, argv []string) error {
 		stopServing()
 		result <- res
 	}()
-	finish := func(r session.Reason) session.Result {
-		s.Stop(r)
-		res := <-result
-		<-printed
-		return res
+	var ended *session.Result
+	finish := func(r session.Reason) session.Result { // may be called twice
+		if ended == nil {
+			s.Stop(r)
+			res := <-result
+			<-printed
+			ended = &res
+		}
+		return *ended
 	}
 
 	select {
 	case ok := <-started:
 		if !ok {
+			// Nothing keeps the machine awake, but the command matters
+			// more: run it anyway and say so.
 			res := finish(session.ReasonError)
-			if err := resultError(res); err != nil {
-				return err
+			if res.Err != nil && !p.JSON { // --json printed the error event
+				a.warnNoPower(res.Err)
 			}
-			return runtimeErr(errors.New("the session ended before the command could start"), "")
 		}
 	case sig := <-sigs:
 		finish(session.ReasonSignal)
@@ -132,6 +140,18 @@ func (a *App) executeRun(ctx context.Context, p *Plan, argv []string) error {
 		return nil
 	}
 	return &ExitError{Code: code}
+}
+
+// warnNoPower reports a session that could not start, so the command runs
+// without keeping the machine awake.
+func (a *App) warnNoPower(err error) {
+	msg := strings.TrimPrefix(err.Error(), "keep the system awake: ")
+	hint := power.HintOf(err)
+	if hint == "" {
+		hint = `"keepalive doctor" shows what can keep this machine awake`
+	}
+	fmt.Fprintf(a.Stderr, "keepalive: warning: could not keep the system awake: %s\n", msg)
+	fmt.Fprintf(a.Stderr, "hint: %s; the command runs anyway, but the machine may sleep\n", hint)
 }
 
 // startError maps a command that could not be started to the shell's exit
