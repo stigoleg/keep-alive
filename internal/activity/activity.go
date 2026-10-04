@@ -22,7 +22,8 @@ const (
 // Status is reported by a Simulator whenever its state changes.
 type Status struct {
 	State State
-	// Method names the input mechanism, e.g. "CoreGraphics mouse events".
+	// Method names the input mechanism: "CoreGraphics", "SendInput",
+	// "uinput", "ydotool" or "xdotool".
 	Method string
 	// Reason explains the state, Hint suggests a fix (mostly for degraded).
 	Reason, Hint string
@@ -54,4 +55,4 @@ type Simulator interface {
 }
 
 // New returns the simulator for the current OS.
-func New() Simulator { return newLegacy() }
+func New() Simulator { return simulator{} }
