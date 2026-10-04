@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -83,11 +85,26 @@ func (m Model) helpPage(level int) *canvas {
 
 	c.wrapped("Simulate activity makes small pointer arcs (up to 130 px) once you are idle, so Teams and Slack show you as Active.", "", st.Muted)
 	c.wrapped(`It pauses while you use the computer or the screen is locked; "keepalive doctor" checks that it works.`, "", st.Muted)
-	logs := "Logs: " + m.logPath
+	path := homeRelative(m.logPath)
+	logs := "Logs: " + path
 	if !m.logOn {
-		logs = "Logs: off; start with --log to write " + m.logPath
+		logs = "Logs: off; start with --log to write " + path
 	}
 	c.wrapped(logs, "", st.Muted)
 	c.keyHints(keyHint{"esc", "close", ""}, keyHint{"ctrl+c", "quit", ""})
 	return c
+}
+
+// homeRelative shortens a path under the home directory to "~/…", so the
+// log path fits on one line of the help.
+func homeRelative(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	rel, err := filepath.Rel(home, path)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return path
+	}
+	return "~" + string(filepath.Separator) + rel
 }

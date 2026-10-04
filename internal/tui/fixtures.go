@@ -279,6 +279,8 @@ func Fixtures() []Fixture {
 			s.PowerHold, s.Paused = "", session.PauseBattery
 			return s
 		}),
+		// Activity is on, but the simulator has not reported its first state.
+		dashFixture("dash_starting", indefiniteFixture(activity.Status{State: activity.StateOff})),
 		dashFixture("dash_battery_paused_until_charging", func() session.Snapshot {
 			// -b 100 in a service: no level ends the pause, only charging.
 			s := indefiniteFixture(activity.Status{State: activity.StateOff})()

@@ -636,9 +636,9 @@ func (m Model) activityRow(c *canvas, s session.Snapshot, now time.Time) {
 		if !strings.Contains(a.Hint, "60 s") { // the hint may say so itself
 			fix.note = "keepalive checks again every 60 s"
 		}
-	case a.State == activity.StateOff:
-		state = st.Muted.Render("off")
 	default:
+		// Active, but the simulator has not reported yet (StateOff or no
+		// state): it is starting, not off.
 		state = st.Muted.Render(t("starting…"))
 	}
 	ago := ""

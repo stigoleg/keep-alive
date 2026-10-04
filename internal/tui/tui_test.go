@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -545,5 +547,21 @@ func TestTicksOnlyOnTheDashboard(t *testing.T) {
 	h.settle()
 	if _, cmd := h.m.Update(tickMsg{gen: gen}); cmd != nil {
 		t.Fatal("ticks continue on Home")
+	}
+}
+
+func TestHomeRelative(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	inside := filepath.Join(home, "Library", "Caches", "keepalive", "keepalive.log")
+	if got, want := homeRelative(inside), filepath.Join("~", "Library", "Caches", "keepalive", "keepalive.log"); got != want {
+		t.Errorf("homeRelative(%q) = %q, want %q", inside, got, want)
+	}
+	for _, p := range []string{"/var/log/keepalive.log", home} {
+		if got := homeRelative(p); got != p {
+			t.Errorf("homeRelative(%q) = %q, want it unchanged", p, got)
+		}
 	}
 }
