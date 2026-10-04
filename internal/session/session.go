@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/clock"
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
 	"github.com/stigoleg/keep-alive/v2/internal/power"
+	"github.com/stigoleg/keep-alive/v2/internal/proc"
 )
 
 // Session is a single-use keep-alive session. Create it with New, then call
@@ -31,10 +33,13 @@ type Session struct {
 
 // New prepares a session. A nil Clock means the real clock; a nil Activity
 // simulator turns an activity request into a warning; a nil Battery func
-// disables battery polling.
+// disables battery polling; nil Processes means SystemProcesses().
 func New(cfg Config, deps Deps) *Session {
 	if deps.Clock == nil {
 		deps.Clock = clock.Real()
+	}
+	if deps.Processes == nil {
+		deps.Processes = SystemProcesses()
 	}
 	if cfg.Activity.IdleThreshold <= 0 {
 		cfg.Activity.IdleThreshold = activity.DefaultIdleThreshold
@@ -70,9 +75,11 @@ func (s *Session) Run(ctx context.Context) Result {
 		batteryResults: make(chan batteryResult, 1),
 		actStatus:      make(chan activityMsg, 16),
 		actExit:        make(chan activityExit, 4),
+		notified:       map[string]time.Time{},
 	}
 	res := l.run()
 	s.running.Store(false)
+	l.notifying.Wait()
 	return res
 }
 
@@ -139,6 +146,11 @@ func initialSnapshot(cfg Config) Snapshot {
 		Activity:    activity.Status{State: activity.StateOff},
 		Battery:     Battery{Threshold: cfg.BatteryThreshold},
 		KeepDisplay: cfg.KeepDisplay,
+		InWindow:    cfg.Schedule == nil,
+		Watching:    watchDescription(cfg.WatchPIDs, cfg.WatchProcess),
+	}
+	if cfg.Schedule != nil {
+		snap.Schedule = cfg.Schedule.String()
 	}
 	if snap.Mode == ModeUntil {
 		snap.EndsAt = cfg.Until
@@ -173,7 +185,9 @@ type loop struct {
 	ctx  context.Context
 	clk  clock.Clock
 	snap Snapshot
-	hold power.Hold
+	hold power.Hold // nil outside the work hours
+	// stopMsg overrides the stopped event's message.
+	stopMsg string
 
 	deadline    clock.Timer
 	heartbeat   clock.Ticker
@@ -192,6 +206,15 @@ type loop struct {
 	actRunning int
 	actStatus  chan activityMsg
 	actExit    chan activityExit
+
+	inWindow   bool        // inside the schedule (always true without one)
+	schedTimer clock.Timer // fires at the next schedule change
+
+	watchExit   <-chan proc.Exit
+	cancelWatch context.CancelFunc
+
+	notified  map[string]time.Time // last notification per kind
+	notifying sync.WaitGroup
 }
 
 func (l *loop) run() Result {
@@ -214,19 +237,27 @@ func (l *loop) run() Result {
 	}
 
 	l.s.running.Store(true)
-	hold, err := l.s.deps.Power.Acquire(l.ctx, l.powerOptions())
-	if err != nil {
-		if l.ctx.Err() != nil {
-			return l.finish(ReasonSignal, nil)
-		}
-		return l.finish(ReasonError, fmt.Errorf("keep the system awake: %w", err))
+	if err := l.startWatch(); err != nil {
+		return l.finish(ReasonError, err)
 	}
-	l.hold = hold
-	l.watchPower()
+	l.inWindow = cfg.Schedule == nil || cfg.Schedule.In(l.clk.Now())
+	if l.inWindow {
+		hold, err := l.s.deps.Power.Acquire(l.ctx, l.powerOptions())
+		if err != nil {
+			if l.ctx.Err() != nil {
+				return l.finish(ReasonSignal, nil)
+			}
+			return l.finish(ReasonError, fmt.Errorf("keep the system awake: %w", err))
+		}
+		l.hold = hold
+		l.watchPower()
+		l.snap.PowerHold = hold.Describe()
+	}
 	now := l.clk.Now()
 	l.snap.StartedAt = now
 	l.snap.Running = true
-	l.snap.PowerHold = hold.Describe()
+	l.snap.InWindow = l.inWindow
+	l.armSchedule(now)
 	if cfg.Duration > 0 {
 		l.snap.EndsAt = now.Add(cfg.Duration)
 	}
@@ -237,7 +268,8 @@ func (l *loop) run() Result {
 	if cfg.BatteryThreshold > 0 && l.s.deps.Battery != nil {
 		l.batteryTick = l.clk.NewTicker(BatteryPollInterval)
 	}
-	slog.Info("session: started", "mode", l.snap.Mode, "ends_at", l.snap.EndsAt, "hold", l.snap.PowerHold)
+	slog.Info("session: started", "mode", l.snap.Mode, "ends_at", l.snap.EndsAt, "hold", l.snap.PowerHold,
+		"schedule", l.snap.Schedule, "in_window", l.inWindow, "watching", l.snap.Watching)
 	l.emit(EventStarted, "", "")
 
 	if !l.snap.EndsAt.IsZero() && !now.Before(l.snap.EndsAt) {
@@ -246,7 +278,7 @@ func (l *loop) run() Result {
 	if l.batteryTick != nil {
 		l.pollBattery()
 	}
-	if cfg.Active {
+	if cfg.Active && l.inWindow {
 		l.startActivity()
 	}
 	return l.loop()
@@ -269,7 +301,17 @@ func (l *loop) loop() Result {
 			if l.deadlinePassed() {
 				return l.stop(l.timedReason(), nil)
 			}
+			l.checkSchedule()
 			l.emit(EventSnapshot, "", "")
+		case <-timerC(l.schedTimer):
+			l.checkSchedule()
+		case ex, ok := <-l.watchExit:
+			if !ok {
+				l.watchExit = nil
+				continue
+			}
+			l.stopMsg = l.exitMessage(ex)
+			return l.stop(ReasonProcessExited, nil)
 		case <-tickerC(l.batteryTick):
 			l.pollBattery()
 		case r := <-l.batteryResults:
@@ -322,17 +364,15 @@ func (l *loop) stop(reason Reason, err error) Result {
 	if l.powerRetry != nil {
 		l.powerRetry.Stop()
 	}
+	if l.schedTimer != nil {
+		l.schedTimer.Stop()
+	}
 	l.stopActivity()
 	l.waitForActivity()
 
-	if rerr := l.hold.Release(); rerr != nil {
-		slog.Warn("session: releasing the power hold failed", "err", rerr)
-		l.emit(EventWarning, "", fmt.Sprintf("could not release the power hold: %v", rerr))
-		if err == nil {
-			err = fmt.Errorf("release power hold: %w", rerr)
-		}
+	if rerr := l.releaseHold(); rerr != nil && err == nil {
+		err = fmt.Errorf("release power hold: %w", rerr)
 	}
-	l.hold = nil
 	return l.finish(reason, err)
 }
 
@@ -341,13 +381,24 @@ func (l *loop) finish(reason Reason, err error) Result {
 	l.s.running.Store(false)
 	l.snap.Running = false
 	l.snap.Activity = activity.Status{State: activity.StateOff}
+	if l.cancelWatch != nil {
+		l.cancelWatch()
+	}
 	msg := stopMessage(reason, l.snap.Battery)
+	if l.stopMsg != "" {
+		msg = l.stopMsg
+	}
 	if reason == ReasonError && err != nil {
 		msg = err.Error()
 	}
 	slog.Info("session: stopped", "reason", reason, "err", err)
 	ev := l.emit(EventStopped, reason, msg)
 	l.s.bus.close()
+	switch reason {
+	case ReasonUser, ReasonSignal, ReasonIPC:
+	default:
+		l.notify(notifyStopped, "Keep-Alive stopped", msg)
+	}
 	return Result{Reason: reason, Err: err, StartedAt: l.snap.StartedAt, EndedAt: ev.Time}
 }
 
@@ -363,6 +414,12 @@ func stopMessage(r Reason, b Battery) string {
 		return fmt.Sprintf("battery at %d%% (threshold %d%%)", b.Percent, b.Threshold)
 	case ReasonSignal:
 		return "interrupted"
+	case ReasonIPC:
+		return `stopped by "keepalive stop"`
+	case ReasonCommandExited:
+		return "command exited"
+	case ReasonProcessExited:
+		return "watched process exited"
 	case ReasonError:
 		return "error"
 	default:
@@ -414,12 +471,14 @@ func (l *loop) extend(d time.Duration) {
 }
 
 func (l *loop) setActive(on bool) {
-	if on == l.snap.Active && (!on || l.act != nil) {
+	if on == l.snap.Active && (!on || l.act != nil || !l.inWindow) {
 		return
 	}
 	l.snap.Active = on
 	if on {
-		l.startActivity()
+		if l.inWindow { // outside the work hours it starts on entering them
+			l.startActivity()
+		}
 		l.emit(EventSnapshot, "", "")
 		return
 	}
@@ -439,6 +498,7 @@ func (l *loop) startActivity() {
 	if sim == nil {
 		l.snap.Activity = activity.Status{State: activity.StateDegraded, Reason: "activity simulation is not available"}
 		l.warn("activity simulation is not available")
+		l.notifyDegraded(l.snap.Activity)
 		return
 	}
 	l.actGen++
@@ -501,6 +561,9 @@ func (l *loop) handleActivityStatus(m activityMsg) {
 		return
 	}
 	l.emit(EventActivity, "", "")
+	if m.status.State == activity.StateDegraded && prev.State != activity.StateDegraded {
+		l.notifyDegraded(m.status)
+	}
 }
 
 func (l *loop) handleActivityExit(e activityExit) {
@@ -518,6 +581,7 @@ func (l *loop) handleActivityExit(e activityExit) {
 	l.snap.Activity = activity.Status{State: activity.StateDegraded, Reason: reason}
 	l.warn(reason)
 	l.emit(EventActivity, "", "")
+	l.notifyDegraded(l.snap.Activity)
 }
 
 // sameActivity compares statuses ignoring the constantly changing idle time.
@@ -565,14 +629,23 @@ func (l *loop) schedulePowerRetry() {
 }
 
 func (l *loop) reacquirePower() {
+	if !l.inWindow {
+		return
+	}
 	hold, err := l.s.deps.Power.Acquire(l.ctx, l.powerOptions())
 	if err != nil {
 		slog.Warn("session: re-acquiring the power hold failed", "attempt", l.powerRetries, "err", err)
+		if l.powerRetries == 1 {
+			l.notify(notifyPower, "Keep-Alive: cannot keep the system awake",
+				fmt.Sprintf("the sleep prevention was lost and could not be restored (%v); still retrying", err))
+		}
 		l.schedulePowerRetry()
 		return
 	}
-	if rerr := l.hold.Release(); rerr != nil {
-		slog.Warn("session: releasing the lost power hold failed", "err", rerr)
+	if l.hold != nil {
+		if rerr := l.hold.Release(); rerr != nil {
+			slog.Warn("session: releasing the lost power hold failed", "err", rerr)
+		}
 	}
 	l.hold = hold
 	l.watchPower()

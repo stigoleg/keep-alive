@@ -13,8 +13,19 @@ import (
 
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
 	"github.com/stigoleg/keep-alive/v2/internal/power"
+	"github.com/stigoleg/keep-alive/v2/internal/proc"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
 )
+
+// fakeProcs is a process table for --pid and --while.
+type fakeProcs struct {
+	alive map[int]bool
+	named map[string][]proc.Process
+}
+
+func (f fakeProcs) Alive(pid int) (bool, error) { return f.alive[pid], nil }
+
+func (f fakeProcs) FindByName(name string) ([]proc.Process, error) { return f.named[name], nil }
 
 var now = time.Date(2024, 1, 1, 10, 0, 0, 0, time.Local)
 
@@ -45,6 +56,10 @@ func newTestApp(t *testing.T) *testApp {
 			return platform.BatteryStatus{Percentage: 80, Available: true}, nil
 		},
 		DefaultConfigPath: func() (string, error) { return ta.configPath, nil },
+		Processes: fakeProcs{
+			alive: map[int]bool{12: true, 34: true, 56: true},
+			named: map[string][]proc.Process{"zoom": {{PID: 77, Name: "zoom.us"}}},
+		},
 	}
 	ta.App.runSession = func(_ context.Context, p *Plan) error {
 		ta.plan = p
@@ -161,6 +176,12 @@ func TestUsageErrorsExit2(t *testing.T) {
 		{"--active-idle", "5s"},
 		{"--active-interval", "1s"},
 		{"--schedule", ""},
+		{"--schedule", "Mnday 08:00-16:00"},
+		{"--schedule", "mon-fri 9-17"},
+		{"--pid", "999"},
+		{"--pid", "0"},
+		{"--pid", "-3"},
+		{"--while", "nothing"},
 		{"--bogus"},
 		{"-x"},
 		{"extra"},
@@ -266,19 +287,52 @@ func TestAutoStartMatchesV1(t *testing.T) {
 	}
 }
 
-func TestPhase4FlagsAreStored(t *testing.T) {
+func TestSessionFlagsAreStored(t *testing.T) {
 	ta := newTestApp(t)
-	code := ta.run("--pid", "12", "--pid", "34,56", "--while", "zoom", "--schedule", "mon-fri 9-17", "--notify",
+	code := ta.run("--pid", "12", "--pid", "34,56", "--while", "zoom", "--schedule", "mon-fri 09:00-17:00", "--notify",
 		"--keep-display=false", "--active-keys", "--active-idle", "90s", "--active-interval", "45s")
 	if code != ExitOK {
 		t.Fatalf("exit %d: %s", code, ta.stderr)
 	}
 	s := ta.plan.Session
-	if len(s.WatchPIDs) != 3 || s.WatchPIDs[2] != 56 || s.WatchProcess != "zoom" || s.ScheduleSpec != "mon-fri 9-17" {
+	if len(s.WatchPIDs) != 3 || s.WatchPIDs[2] != 56 || s.WatchProcess != "zoom" {
 		t.Fatalf("session = %+v", s)
+	}
+	if s.Schedule == nil || s.Schedule.String() != "Mon-Fri 09:00-17:00" {
+		t.Fatalf("schedule = %v", s.Schedule)
 	}
 	if !ta.plan.Notify || s.KeepDisplay || !s.Activity.Keys || s.Activity.IdleThreshold != 90*time.Second || s.Activity.Interval != 45*time.Second {
 		t.Fatalf("plan = %+v", ta.plan)
+	}
+}
+
+func TestWatchErrorsHaveHints(t *testing.T) {
+	for args, want := range map[string]string{
+		"--while nothing": `no process named "nothing" is running`,
+		"--pid 999":       "process 999 is not running",
+		"--pid 0":         "--pid: invalid process ID 0",
+	} {
+		ta := newTestApp(t)
+		if code := ta.run(strings.Fields(args)...); code != ExitUsage {
+			t.Fatalf("%s: exit %d", args, code)
+		}
+		errOut := ta.stderr.String()
+		if !strings.Contains(errOut, want) || !strings.Contains(errOut, "hint: ") {
+			t.Errorf("%s: stderr = %q", args, errOut)
+		}
+	}
+	ta := newTestApp(t)
+	ta.run("--while", "nothing")
+	if !strings.Contains(ta.stderr.String(), `hint: start the app first, or check the name with "ps"`) {
+		t.Errorf("stderr = %q", ta.stderr)
+	}
+}
+
+func TestScheduleErrorNamesTheFlag(t *testing.T) {
+	ta := newTestApp(t)
+	ta.run("--schedule", "Mnday 08:00-16:00")
+	if got := ta.stderr.String(); !strings.HasPrefix(got, `keepalive: error: --schedule: unknown day "Mnday"`) {
+		t.Fatalf("stderr = %q", got)
 	}
 }
 

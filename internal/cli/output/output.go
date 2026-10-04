@@ -85,7 +85,7 @@ func Text(ev session.Event) string {
 	snap := ev.Snapshot
 	switch ev.Type {
 	case session.EventStarted:
-		return startedText(snap)
+		return startedText(ev.Time, snap)
 	case session.EventSnapshot:
 		return remainingText(snap)
 	case session.EventActivity:
@@ -114,26 +114,38 @@ func Text(ev session.Event) string {
 	return ev.Message
 }
 
-func startedText(snap session.Snapshot) string {
+func startedText(now time.Time, snap session.Snapshot) string {
 	var b strings.Builder
 	b.WriteString("keeping system ")
 	if snap.KeepDisplay {
 		b.WriteString("and display ")
 	}
-	b.WriteString("awake ")
+	b.WriteString("awake")
+	var limits []string
 	switch snap.Mode {
 	case session.ModeDuration:
-		fmt.Fprintf(&b, "for %s (until %s)", FormatDuration(snap.Remaining), clockText(snap.EndsAt))
+		limits = append(limits, fmt.Sprintf("for %s (until %s)", FormatDuration(snap.Remaining), clockText(snap.EndsAt)))
 	case session.ModeUntil:
-		fmt.Fprintf(&b, "until %s (%s)", clockText(snap.EndsAt), FormatDuration(snap.Remaining))
-	default:
-		b.WriteString("indefinitely")
+		limits = append(limits, fmt.Sprintf("until %s (%s)", clockText(snap.EndsAt), FormatDuration(snap.Remaining)))
 	}
+	if snap.Schedule != "" {
+		limits = append(limits, fmt.Sprintf("during work hours (%s)", snap.Schedule))
+	}
+	if snap.Watching != "" {
+		limits = append(limits, fmt.Sprintf("while %s runs", snap.Watching))
+	}
+	if len(limits) == 0 {
+		limits = append(limits, "indefinitely")
+	}
+	b.WriteString(" " + strings.Join(limits, ", "))
 	if snap.Battery.Threshold > 0 {
 		fmt.Fprintf(&b, ", stopping at %d%% battery", snap.Battery.Threshold)
 	}
 	if snap.Active {
 		b.WriteString(", simulating activity")
+	}
+	if snap.Schedule != "" && !snap.InWindow && !snap.NextChange.IsZero() {
+		fmt.Fprintf(&b, "; outside work hours until %s", session.ClockText(now.Local(), snap.NextChange.Local()))
 	}
 	return b.String()
 }
@@ -232,6 +244,10 @@ type JSONSnapshot struct {
 	Battery       JSONBattery  `json:"battery"`
 	KeepDisplay   bool         `json:"keep_display"`
 	PowerHold     string       `json:"power_hold"`
+	Schedule      string       `json:"schedule"`
+	InWindow      bool         `json:"in_window"`
+	NextChange    *string      `json:"next_change"`
+	Watching      string       `json:"watching"`
 }
 
 // JSONActivity is the activity part of a JSONSnapshot.
@@ -284,6 +300,10 @@ func NewJSONSnapshot(snap session.Snapshot) JSONSnapshot {
 		Battery:     JSONBattery{Percent: snap.Battery.Percent, Available: snap.Battery.Available, Threshold: snap.Battery.Threshold},
 		KeepDisplay: snap.KeepDisplay,
 		PowerHold:   snap.PowerHold,
+		Schedule:    snap.Schedule,
+		InWindow:    snap.InWindow,
+		NextChange:  timePtr(snap.NextChange),
+		Watching:    snap.Watching,
 	}
 	if !snap.EndsAt.IsZero() {
 		r := seconds(snap.Remaining)

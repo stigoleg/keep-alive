@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/stigoleg/keep-alive/v2/internal/activity"
+	"github.com/stigoleg/keep-alive/v2/internal/schedule"
 )
 
 // Config is the effective configuration.
@@ -271,6 +272,9 @@ func setKey(c *Config, k, raw string) error {
 	case "schedule":
 		if raw == "" {
 			return errors.New("schedule must not be empty")
+		}
+		if _, err := schedule.Parse(raw); err != nil {
+			return errors.New(strings.TrimPrefix(err.Error(), "schedule: "))
 		}
 		c.Schedule = raw
 	case "log_file":

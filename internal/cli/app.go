@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -20,6 +21,8 @@ import (
 	"github.com/stigoleg/keep-alive/v2/internal/logging"
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
 	"github.com/stigoleg/keep-alive/v2/internal/power"
+	"github.com/stigoleg/keep-alive/v2/internal/proc"
+	"github.com/stigoleg/keep-alive/v2/internal/schedule"
 	"github.com/stigoleg/keep-alive/v2/internal/session"
 	"github.com/stigoleg/keep-alive/v2/internal/util"
 )
@@ -35,6 +38,8 @@ type App struct {
 	Now                            func() time.Time
 	Battery                        func() (platform.BatteryStatus, error)
 	DefaultConfigPath              func() (string, error)
+	// Processes checks --pid and --while targets during planning.
+	Processes proc.Lister
 
 	// runSession executes a resolved plan; tests replace it.
 	runSession func(ctx context.Context, p *Plan) error
@@ -71,6 +76,7 @@ func NewApp(version string) *App {
 		Now:               time.Now,
 		Battery:           platform.GetBatteryStatus,
 		DefaultConfigPath: config.DefaultPath,
+		Processes:         session.SystemProcesses(),
 	}
 }
 
@@ -135,9 +141,9 @@ func addSessionFlags(fs *pflag.FlagSet, f *sessionFlags) {
 	fs.Duration("active-idle", def.ActiveIdle, "idle time before activity is simulated (at least 10s)")
 	fs.Duration("active-interval", def.ActiveInterval, "mean gap between simulated activity bursts (at least 5s)")
 	fs.Bool("active-keys", false, "also send a harmless key press with each activity burst")
-	fs.String("schedule", "", "only keep awake during this schedule (not applied yet)")
-	fs.IntSliceVar(&f.pids, "pid", nil, "keep awake while these processes run (not applied yet)")
-	fs.StringVar(&f.while, "while", "", "keep awake while a process with this name runs (not applied yet)")
+	fs.String("schedule", "", `only keep awake during these work hours, e.g. "Mon-Fri 08:00-16:00"`)
+	fs.IntSliceVar(&f.pids, "pid", nil, "keep awake until these processes exit (repeatable)")
+	fs.StringVar(&f.while, "while", "", `keep awake while a process with this name runs, e.g. "zoom"`)
 	fs.Bool("keep-display", def.KeepDisplay, "keep the display on too (false keeps only the system awake)")
 	fs.BoolVar(&f.json, "json", false, "print NDJSON events on stdout (implies --plain)")
 	fs.BoolVar(&f.plain, "plain", false, "run headless even on a terminal")
@@ -186,9 +192,18 @@ func (a *App) plan(cmd *cobra.Command, f *sessionFlags) (*Plan, error) {
 		Active:           res.Active,
 		Activity:         activity.Config{IdleThreshold: res.ActiveIdle, Interval: res.ActiveInterval, Keys: res.ActiveKeys},
 		KeepDisplay:      res.KeepDisplay,
-		ScheduleSpec:     res.Schedule,
 		WatchPIDs:        f.pids,
 		WatchProcess:     f.while,
+	}
+	if res.Schedule != "" {
+		sched, err := schedule.Parse(res.Schedule)
+		if err != nil { // config.Resolve validated it already
+			return nil, usageErr(err, `example: --schedule "Mon-Fri 08:00-16:00"`)
+		}
+		s.Schedule = sched
+	}
+	if err := a.checkWatch(s.WatchPIDs, s.WatchProcess); err != nil {
+		return nil, err
 	}
 
 	if fs.Changed("clock") {
@@ -217,6 +232,38 @@ func (a *App) plan(cmd *cobra.Command, f *sessionFlags) (*Plan, error) {
 		Logging:   logging.Options{Enabled: res.Log, Debug: res.Log, Path: res.LogFile},
 		Config:    res,
 	}, nil
+}
+
+// checkWatch fails planning when nothing to watch is running, so a typo is
+// a usage error instead of a session that ends at once.
+func (a *App) checkWatch(pids []int, name string) error {
+	if len(pids) == 0 && name == "" {
+		return nil
+	}
+	for _, pid := range pids {
+		if pid <= 0 {
+			return usageErr(fmt.Errorf("--pid: invalid process ID %d", pid), "process IDs are positive whole numbers")
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // only the start-up check; the session watches for real
+	_, err := proc.NewWatcher(clock.Real(), session.WatchInterval, a.Processes).Watch(ctx, pids, name)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, proc.ErrNotRunning) && name != "":
+		return usageErr(err, fmt.Sprintf("start the app first, or check the name with %q", processListCommand()))
+	case errors.Is(err, proc.ErrNotRunning):
+		return usageErr(err, fmt.Sprintf("check the process ID with %q", processListCommand()))
+	}
+	return runtimeErr(err, "")
+}
+
+func processListCommand() string {
+	if runtime.GOOS == "windows" {
+		return "tasklist"
+	}
+	return "ps"
 }
 
 func (a *App) checkBattery(threshold int) error {

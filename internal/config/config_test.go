@@ -146,6 +146,7 @@ func TestFileTypeErrors(t *testing.T) {
 		`active_idle = "5s"`,
 		`active_interval = "1s"`,
 		`schedule = ""`,
+		`schedule = "Mnday 08:00-16:00"`,
 		`not toml at all`,
 	} {
 		if _, err := Resolve(Options{Path: writeFile(t, body+"\n"), Env: env(nil)}); err == nil {
@@ -220,6 +221,7 @@ func TestFlagValidation(t *testing.T) {
 		{"--active-idle", "9s"},
 		{"--active-interval", "4s"},
 		{"--schedule", ""},
+		{"--schedule", "mon-fri 9-17"},
 	} {
 		if _, err := Resolve(Options{Env: env(nil), Flags: flags(t, args...)}); err == nil {
 			t.Errorf("%v accepted", args)

@@ -38,6 +38,7 @@ func runningSnap() session.Snapshot {
 		Battery:     session.Battery{Percent: 80, Available: true, Threshold: 20},
 		KeepDisplay: true,
 		PowerHold:   "caffeinate -dims",
+		InWindow:    true,
 	}
 }
 
@@ -55,6 +56,10 @@ func fixtures() map[string]session.Event {
 	burst := waiting
 	burst.Activity = activity.Status{State: activity.StateSimulating, Method: "CoreGraphics mouse events", LastBurst: start.Add(5 * time.Minute)}
 
+	paused := snap
+	paused.Schedule, paused.InWindow, paused.PowerHold = "Mon-Fri 08:00-16:00", false, ""
+	paused.NextChange = time.Date(2026, 3, 2, 8, 0, 0, 0, time.UTC)
+
 	stopped := snap
 	stopped.Running = false
 	stopped.Remaining = 0
@@ -67,6 +72,7 @@ func fixtures() map[string]session.Event {
 		"battery":  {Time: start.Add(30 * time.Second), Type: session.EventBattery, Snapshot: snap},
 		"snapshot": {Time: start.Add(150 * time.Second), Type: session.EventSnapshot, Snapshot: heartbeat},
 		"warning":  {Time: start.Add(time.Minute), Type: session.EventWarning, Snapshot: snap, Message: "battery status unavailable: no battery"},
+		"schedule": {Time: start.Add(3 * time.Minute), Type: session.EventSchedule, Snapshot: paused, Message: "outside work hours until Mon 08:00"},
 		"stopping": {Time: ends, Type: session.EventStopping, Snapshot: snap, Reason: session.ReasonDuration},
 		"stopped":  {Time: ends, Type: session.EventStopped, Snapshot: stopped, Reason: session.ReasonDuration, Message: "duration reached"},
 	}
@@ -128,7 +134,7 @@ func TestHumanGolden(t *testing.T) {
 	f := fixtures()
 	var buf bytes.Buffer
 	p := NewHuman(&buf, false)
-	for _, name := range []string{"started", "battery", "warning", "activity", "snapshot", "burst", "stopping", "stopped"} {
+	for _, name := range []string{"started", "battery", "warning", "activity", "schedule", "snapshot", "burst", "stopping", "stopped"} {
 		if err := p.Print(f[name]); err != nil {
 			t.Fatal(err)
 		}
@@ -177,20 +183,60 @@ func TestHumanStartedVariants(t *testing.T) {
 	systemOnly := indefinite
 	systemOnly.KeepDisplay = false
 
+	paused := indefinite
+	paused.Schedule, paused.InWindow, paused.PowerHold = "Mon-Fri 08:00-16:00", false, ""
+	paused.NextChange = time.Date(2026, 3, 2, 8, 0, 0, 0, time.UTC)
+
+	working := snap
+	working.Schedule, working.NextChange = "daily 09:00-17:00", time.Date(2026, 3, 1, 17, 0, 0, 0, time.UTC)
+
+	watching := indefinite
+	watching.Watching = "zoom"
+
+	watchingTimed := snap
+	watchingTimed.Watching = "pid 42"
+
 	tests := map[string]struct {
 		snap session.Snapshot
 		want string
 	}{
-		"duration":    {snap, "keeping system and display awake for 2h0m (until 12:02)"},
-		"indefinite":  {indefinite, "keeping system and display awake indefinitely"},
-		"until":       {until, "keeping system and display awake until 22:00 (11h58m)"},
-		"system only": {systemOnly, "keeping system awake indefinitely"},
+		"duration":         {snap, "keeping system and display awake for 2h0m (until 12:02)"},
+		"indefinite":       {indefinite, "keeping system and display awake indefinitely"},
+		"until":            {until, "keeping system and display awake until 22:00 (11h58m)"},
+		"system only":      {systemOnly, "keeping system awake indefinitely"},
+		"outside schedule": {paused, "keeping system and display awake during work hours (Mon-Fri 08:00-16:00); outside work hours until Mon 08:00"},
+		"inside schedule":  {working, "keeping system and display awake for 2h0m (until 12:02), during work hours (daily 09:00-17:00)"},
+		"watching":         {watching, "keeping system and display awake while zoom runs"},
+		"watching, timed":  {watchingTimed, "keeping system and display awake for 2h0m (until 12:02), while pid 42 runs"},
 	}
 	for name, tt := range tests {
-		got := Text(session.Event{Type: session.EventStarted, Snapshot: tt.snap})
+		got := Text(session.Event{Time: start, Type: session.EventStarted, Snapshot: tt.snap})
 		if got != tt.want {
 			t.Errorf("%s: %q, want %q", name, got, tt.want)
 		}
+	}
+}
+
+func TestJSONScheduleFields(t *testing.T) {
+	var buf bytes.Buffer
+	if err := NewJSON(&buf).Print(fixtures()["schedule"]); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Type     string `json:"type"`
+		Snapshot struct {
+			Schedule   string  `json:"schedule"`
+			InWindow   bool    `json:"in_window"`
+			NextChange *string `json:"next_change"`
+			Watching   string  `json:"watching"`
+		} `json:"snapshot"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != "schedule" || got.Snapshot.Schedule != "Mon-Fri 08:00-16:00" || got.Snapshot.InWindow ||
+		got.Snapshot.NextChange == nil || *got.Snapshot.NextChange != "2026-03-02T08:00:00Z" {
+		t.Fatalf("decoded = %+v", got)
 	}
 }
 

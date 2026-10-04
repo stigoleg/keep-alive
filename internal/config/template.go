@@ -36,8 +36,9 @@ const Template = `# keepalive configuration file.
 # Also send a harmless key press with each burst.
 # active_keys = false
 
-# Only keep awake during these times (format arrives with schedules).
-# schedule = "mon-fri 09:00-17:00"
+# Only keep awake during these work hours (local time); outside them keepalive
+# pauses. Days: Mon-Sun, ranges (Mon-Fri), weekdays, weekends, daily.
+# schedule = "Mon-Fri 08:00-16:00"
 
 # Keep the display on too; false keeps only the system awake.
 # keep_display = true

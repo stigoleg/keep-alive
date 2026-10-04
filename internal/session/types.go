@@ -10,8 +10,11 @@ import (
 
 	"github.com/stigoleg/keep-alive/v2/internal/activity"
 	"github.com/stigoleg/keep-alive/v2/internal/clock"
+	"github.com/stigoleg/keep-alive/v2/internal/notify"
 	"github.com/stigoleg/keep-alive/v2/internal/platform"
 	"github.com/stigoleg/keep-alive/v2/internal/power"
+	"github.com/stigoleg/keep-alive/v2/internal/proc"
+	"github.com/stigoleg/keep-alive/v2/internal/schedule"
 )
 
 // Config describes what the session should do.
@@ -22,9 +25,13 @@ type Config struct {
 	Active           bool
 	Activity         activity.Config
 	KeepDisplay      bool
-	ScheduleSpec     string // phase 4
-	WatchPIDs        []int  // phase 4
-	WatchProcess     string // phase 4
+	// Schedule limits keeping awake to its windows; outside them the
+	// session is paused (no power hold, no simulated activity). nil = always.
+	Schedule *schedule.Schedule
+	// WatchPIDs and WatchProcess end the session (ReasonProcessExited) once
+	// none of the processes is running.
+	WatchPIDs    []int
+	WatchProcess string
 }
 
 // Deps are the session's collaborators; tests pass fakes.
@@ -33,6 +40,12 @@ type Deps struct {
 	Power    power.Inhibitor
 	Activity activity.Simulator
 	Battery  func() (platform.BatteryStatus, error)
+	// Processes looks up watched processes; nil means the system, without
+	// this process.
+	Processes proc.Lister
+	// Notifier shows desktop notifications for unusual stops and problems;
+	// nil disables them.
+	Notifier notify.Notifier
 }
 
 // Reason says why a session ended.
@@ -45,9 +58,9 @@ const (
 	ReasonBattery       Reason = "battery"
 	ReasonSignal        Reason = "signal"
 	ReasonError         Reason = "error"
-	ReasonProcessExited Reason = "process_exited" // phase 4
-	ReasonCommandExited Reason = "command_exited" // phase 4
-	ReasonIPC           Reason = "ipc"            // phase 5
+	ReasonProcessExited Reason = "process_exited"
+	ReasonCommandExited Reason = "command_exited"
+	ReasonIPC           Reason = "ipc"
 )
 
 // Result is returned by Run.
@@ -86,6 +99,15 @@ type Snapshot struct {
 	Battery     Battery
 	KeepDisplay bool
 	PowerHold   string
+	// Schedule is the normalized work-hours spec ("" = none). InWindow is
+	// false while the session is paused outside the work hours (always true
+	// without a schedule); NextChange is the next enter or leave (zero when
+	// there is none).
+	Schedule   string
+	InWindow   bool
+	NextChange time.Time
+	// Watching describes the watched processes, e.g. "zoom" or "pid 4242".
+	Watching string
 }
 
 // EventType names an Event.
@@ -97,6 +119,7 @@ const (
 	EventActivity EventType = "activity" // activity status changed
 	EventBattery  EventType = "battery"  // every battery poll
 	EventWarning  EventType = "warning"
+	EventSchedule EventType = "schedule" // entered or left the work hours
 	EventStopping EventType = "stopping"
 	EventStopped  EventType = "stopped"
 )
@@ -118,6 +141,11 @@ const (
 	MinRemainingAfterShorten = time.Minute
 	// ActivityStopTimeout bounds how long stopping waits for the simulator.
 	ActivityStopTimeout = 5 * time.Second
+	// WatchInterval is how often watched processes are checked.
+	WatchInterval = 2 * time.Second
+	// NotifyInterval is the minimum gap between two notifications of the
+	// same kind.
+	NotifyInterval = 10 * time.Minute
 )
 
 func (c Config) mode() Mode {
