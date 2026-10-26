@@ -8,6 +8,7 @@ Sleep prevention
 
 Activity simulation
   ✓ CoreGraphics   Accessibility granted to "Ghostty"
+  ✓ user input     CoreGraphics user input; simulation stops when you use the mouse or keyboard
   ✓ idle time      idle: HIDSystemState 3s, CombinedSessionState 3s; bursts are checked against CombinedSessionState (what Teams/Slack read)
   ✓ screen lock    session dictionary, polled every 2 s (unlocked now)
 

@@ -15,8 +15,8 @@ import (
 
 // linuxIdle is what the desktop tells about idle time.
 type linuxIdle struct {
-	// gate decides when to simulate and verifies bursts; nil means a fixed
-	// schedule.
+	// gate seeds initial inactivity and verifies bursts; nil means that
+	// only real-input monitoring is available.
 	gate IdleSource
 	// xwayland is XWayland's counter on a Wayland session, read for
 	// information only.

@@ -26,8 +26,7 @@ const cmdTimeout = 3 * time.Second
 const uinputPermissionHint = `give your login session access to /dev/uinput: ` +
 	`echo 'KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/60-keepalive-uinput.rules, ` +
 	`then sudo udevadm control --reload && sudo udevadm trigger ` +
-	`(or log out and back in, or sudo modprobe -r uinput && sudo modprobe uinput). ` +
-	`Adding yourself to the "input" group also works, but then every program you run can read your keyboard`
+	`(or log out and back in, or sudo modprobe -r uinput && sudo modprobe uinput)`
 
 // xwaylandNote warns that apps under XWayland may keep counting idle time:
 // XWayland only sees input while one of its windows has the pointer.
@@ -57,7 +56,7 @@ func (e linuxEnv) kde() bool { return strings.Contains(e.desktop, "KDE") }
 // close when ctx is done, which also ends a call waiting on a hung bus.
 func newBackend(ctx context.Context, keys bool) *backend {
 	env := currentEnv()
-	b := &backend{noIdleHint: noIdleHint(env)}
+	b := &backend{noIdleHint: noIdleHint(env), monitor: linuxMonitor(env)}
 	sess, err := connectSessionBus(ctx)
 	if err != nil {
 		slog.Debug("activity: no session bus", "err", err)

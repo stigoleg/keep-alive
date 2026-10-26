@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestAppNameFromPath(t *testing.T) {
@@ -93,5 +94,40 @@ func TestProbeResetsCombinedSessionIdle(t *testing.T) {
 	}
 	if !res.Effective {
 		t.Fatalf("probe not effective: %s", res.Reason)
+	}
+}
+
+func TestMacInitialIdleUsesMostRecentCounter(t *testing.T) {
+	m := newMachine()
+	m.clk.Advance(10 * time.Minute)
+	m.xwLast = m.clk.Now()
+	idle, err := (minIdle{fakeIdle{m}, fakeXWayland{m}}).Idle()
+	if err != nil || idle != 0 {
+		t.Fatalf("recent input overridden by stale counter: %v, %v", idle, err)
+	}
+}
+
+func TestCoreGraphicsInputMonitorReadOnly(t *testing.T) {
+	monitor, err := openCGMonitor(context.Background())
+	if err != nil {
+		t.Skipf("input monitoring is unavailable (no prompt): %v", err)
+	}
+	defer monitor.Close()
+	t.Logf("initial input held=%v generation=%d", monitor.Snapshot().Held, monitor.Snapshot().Generation)
+	for i := 0; i < 3; i++ {
+		time.Sleep(10 * time.Millisecond)
+		if snap := monitor.Snapshot(); snap.Err != nil {
+			t.Fatalf("observer failed: %v", snap.Err)
+		}
+	}
+}
+
+func TestProbeWithShiftIgnoresOwnInput(t *testing.T) {
+	if os.Getenv("KEEPALIVE_E2E_INPUT") != "1" {
+		t.Skip("moves the pointer and taps Shift; set KEEPALIVE_E2E_INPUT=1 to run")
+	}
+	res := Probe(context.Background(), true)
+	if res.Method != "CoreGraphics" || !res.Effective || res.Reason != "" {
+		t.Fatalf("tagged input was not effective: %+v", res)
 	}
 }

@@ -4,6 +4,7 @@ package activity
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"strings"
@@ -116,7 +117,7 @@ func TestUinputCreatesAPointerLibinputAccepts(t *testing.T) {
 	if *opens != 0 {
 		t.Fatal("device created before the first burst")
 	}
-	if err := u.MoveBy(3, -2); err != nil {
+	if err := u.MoveBy(context.Background(), 3, -2); err != nil {
 		t.Fatal(err)
 	}
 
@@ -186,7 +187,7 @@ func TestUinputCreatesAPointerLibinputAccepts(t *testing.T) {
 	}
 
 	// Later moves reuse the device and never send a zero axis.
-	if err := u.MoveBy(0, 5); err != nil {
+	if err := u.MoveBy(context.Background(), 0, 5); err != nil {
 		t.Fatal(err)
 	}
 	if *opens != 1 {
@@ -209,7 +210,7 @@ func TestUinputCreatesAPointerLibinputAccepts(t *testing.T) {
 func TestUinputFallsBackToUserDevOnOldKernels(t *testing.T) {
 	rec := &uinputRecorder{setupErr: syscall.EINVAL}
 	u, _, _ := newRecordedUinput(true, rec)
-	if err := u.MoveBy(1, 1); err != nil {
+	if err := u.MoveBy(context.Background(), 1, 1); err != nil {
 		t.Fatal(err)
 	}
 	if !contains(rec.bits(uiSetKeybit), keyRightShift) {
@@ -235,7 +236,7 @@ func TestUinputFallsBackToUserDevOnOldKernels(t *testing.T) {
 		t.Fatal("UI_DEV_CREATE not called after the fallback")
 	}
 
-	if err := u.Tap(); err != nil {
+	if err := u.Tap(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	got := decodeEvents(t, rec.ops[len(rec.ops)-1].data)
@@ -250,7 +251,7 @@ func TestUinputFallsBackToUserDevOnOldKernels(t *testing.T) {
 func TestUinputOtherSetupErrorsFail(t *testing.T) {
 	rec := &uinputRecorder{setupErr: syscall.EPERM}
 	u, _, _ := newRecordedUinput(false, rec)
-	if err := u.MoveBy(1, 1); err == nil {
+	if err := u.MoveBy(context.Background(), 1, 1); err == nil {
 		t.Fatal("MoveBy succeeded although UI_DEV_SETUP failed")
 	}
 	if rec.ops[len(rec.ops)-1].kind != "close" {
@@ -277,14 +278,12 @@ func TestUinputPermissionHintUsesTheSeatNotTheInputGroup(t *testing.T) {
 		`echo 'KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/60-keepalive-uinput.rules`,
 		"sudo udevadm control --reload && sudo udevadm trigger",
 		"sudo modprobe -r uinput && sudo modprobe uinput",
-		`"input" group`, // only as an alternative, with its caveat
-		"read your keyboard",
 	} {
 		if !strings.Contains(h, want) {
 			t.Errorf("hint lacks %q:\n%s", want, h)
 		}
 	}
-	if strings.Contains(h, "usermod") || strings.Contains(h, `GROUP="input"`) {
+	if strings.Contains(h, "usermod") || strings.Contains(h, `GROUP="input"`) || strings.Contains(h, "Adding yourself") {
 		t.Errorf("hint still tells the user to join the input group:\n%s", h)
 	}
 	// Every Linux hint that sends the user to uinput carries it.

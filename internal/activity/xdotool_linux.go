@@ -50,7 +50,7 @@ func (x *xdotool) xdo(ctx context.Context, timeout time.Duration, args ...string
 	return out, err
 }
 
-func (x *xdotool) Position() (float64, float64, bool) { return x.position(context.Background()) }
+func (x *xdotool) Position() (float64, float64, bool) { return x.position(x.ctx) }
 
 func (x *xdotool) position(ctx context.Context) (float64, float64, bool) {
 	out, err := x.xdo(ctx, cmdTimeout, "getmouselocation", "--shell")
@@ -84,7 +84,7 @@ func parseMouseLocation(out string) (float64, float64, bool) {
 }
 
 func (x *xdotool) Bounds() (Rect, bool) {
-	out, err := x.xdo(context.Background(), cmdTimeout, "getdisplaygeometry")
+	out, err := x.xdo(x.ctx, cmdTimeout, "getdisplaygeometry")
 	if err != nil {
 		return Rect{}, false
 	}
@@ -105,20 +105,23 @@ func parseDisplayGeometry(out string) (Rect, bool) {
 	return Rect{W: float64(w), H: float64(h)}, true
 }
 
-func (x *xdotool) MoveTo(px, py float64) error {
-	_, err := x.xdo(context.Background(), cmdTimeout, "mousemove", "--",
+func (x *xdotool) MoveTo(ctx context.Context, px, py float64) error {
+	if err := inputError(ctx); err != nil {
+		return err
+	}
+	_, err := x.xdo(ctx, cmdTimeout, "mousemove", "--",
 		strconv.Itoa(int(math.Round(px))), strconv.Itoa(int(math.Round(py))))
 	return err
 }
 
 // Play runs the burst as one chained process; an interrupted or failed
-// chain still puts the pointer back.
+// chain only restores the pointer when the user has not taken over.
 func (x *xdotool) Play(ctx context.Context, ox, oy float64, p Path) error {
 	_, err := x.xdo(ctx, p.Duration()+cmdTimeout, xdotoolChain(ox, oy, p)...)
 	if err != nil {
-		_ = x.MoveTo(ox, oy)
+		restore(ctx, func(cleanup context.Context) { _ = x.MoveTo(cleanup, ox, oy) })
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return inputError(ctx)
 		}
 		return fmt.Errorf("xdotool burst: %w", err)
 	}
@@ -145,8 +148,11 @@ func xdotoolChain(ox, oy float64, p Path) []string {
 	return args
 }
 
-func (x *xdotool) Tap() error {
-	_, err := x.xdo(context.Background(), cmdTimeout, "key", "Shift_R")
+func (x *xdotool) Tap(ctx context.Context) error {
+	if err := inputError(ctx); err != nil {
+		return err
+	}
+	_, err := x.xdo(ctx, cmdTimeout, "key", "Shift_R")
 	return err
 }
 

@@ -63,6 +63,7 @@ func macFacts() doctorFacts {
 		Activity: activity.Diagnostics{
 			Injectors: []activity.InjectorCheck{{Name: "CoreGraphics", Available: true, Detail: `Accessibility granted to "Ghostty"`}},
 			Idle:      []activity.IdleCheck{{Name: "HIDSystemState", Idle: 3 * time.Second}, {Name: "CombinedSessionState", Idle: 3 * time.Second}},
+			Monitor:   activity.MonitorCheck{Method: "CoreGraphics user input", Available: true},
 			Gate:      "CoreGraphics", Verifier: "CombinedSessionState",
 			Lock: activity.LockCheck{Method: "session dictionary, polled every 2 s", Known: true},
 		},
@@ -240,6 +241,7 @@ func waylandLinux(gate string) doctorFacts {
 	f.ConfigErr = nil
 	f.Activity = activity.Diagnostics{
 		Injectors:   []activity.InjectorCheck{{Name: "uinput", Available: true}},
+		Monitor:     activity.MonitorCheck{Method: "evdev user input", Available: true},
 		Idle:        []activity.IdleCheck{{Name: "xprintidle (XWayland)", Idle: 3 * time.Second}},
 		Gate:        gate,
 		Verifier:    gate,
@@ -264,7 +266,7 @@ func TestDoctorShowsXWaylandWarnings(t *testing.T) {
 		"warn XWayland",
 		xwaylandNote,
 		"warn idle time",
-		"activity is simulated on a fixed schedule",
+		"no idle counter; simulated input cannot be verified",
 		"xprintidle (XWayland) 3s",
 		"warn instance",
 		"fix: " + xwaylandNote,
@@ -329,25 +331,16 @@ func TestDoctorServiceRestartingRepeatedly(t *testing.T) {
 	}
 }
 
-func TestDoctorFixedScheduleIsAWarning(t *testing.T) {
+func TestDoctorMissingMonitoringPausesSimulation(t *testing.T) {
 	f := waylandLinux("")
+	f.Activity.Monitor = activity.MonitorCheck{Reason: "cannot monitor every input device", Hint: "use a session with complete input coverage"}
 	st := *f.Instance
-	st.Snapshot.Activity = output.JSONActivity{State: string(activity.StateSimulating), Method: "ydotool on a fixed schedule",
-		Hint: "no idle source on this desktop, so simulated activity cannot pause while you use the computer"}
+	st.Snapshot.Activity = output.JSONActivity{State: string(activity.StateDegraded), Reason: "user input monitoring unavailable: cannot monitor every input device"}
 	f.Instance = &st
 	var buf bytes.Buffer
-	r := buildDoctor(f)
-	renderDoctor(&buf, r, false, false)
+	renderDoctor(&buf, buildDoctor(f), false, false)
 	out := buf.String()
-	if !strings.Contains(out, "warn instance") || !strings.Contains(out, "simulating input via ydotool on a fixed schedule") ||
-		!strings.Contains(out, "fix: no idle source on this desktop, so simulated activity cannot pause") {
-		t.Fatalf("instance row:\n%s", out)
-	}
-	for _, s := range r.Sections {
-		for _, c := range s.Checks {
-			if c.Status == checkFail && (c.Name == "instance" || c.Name == "idle time") {
-				t.Fatalf("%s fails:\n%s", c.Name, out)
-			}
-		}
+	if !strings.Contains(out, "activity simulation is paused") || !strings.Contains(out, "cannot monitor every input device") || strings.Contains(out, "fixed schedule") {
+		t.Fatalf("monitoring row:\n%s", out)
 	}
 }

@@ -142,14 +142,20 @@ func (e *socketError) Unwrap() error { return e.err }
 
 func (y *ydotool) env() []string { return []string{"YDOTOOL_SOCKET=" + y.socket} }
 
-func (y *ydotool) MoveBy(dx, dy int) error {
-	_, _, err := y.run(context.Background(), cmdTimeout, y.env(), "ydotool", "mousemove",
+func (y *ydotool) MoveBy(ctx context.Context, dx, dy int) error {
+	if err := inputError(ctx); err != nil {
+		return err
+	}
+	_, _, err := y.run(ctx, cmdTimeout, y.env(), "ydotool", "mousemove",
 		"-x", strconv.Itoa(dx), "-y", strconv.Itoa(dy))
 	return err
 }
 
-func (y *ydotool) Tap() error {
-	_, _, err := y.run(context.Background(), cmdTimeout, y.env(), "ydotool", "key", "54:1", "54:0")
+func (y *ydotool) Tap(ctx context.Context) error {
+	if err := inputError(ctx); err != nil {
+		return err
+	}
+	_, _, err := y.run(ctx, cmdTimeout, y.env(), "ydotool", "key", "54:1", "54:0")
 	return err
 }
 

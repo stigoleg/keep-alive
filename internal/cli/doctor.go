@@ -265,6 +265,11 @@ func activitySection(s *doctorSection, d activity.Diagnostics) {
 	if len(unused) > 0 {
 		s.add("not needed", checkOK, "not available here: "+strings.Join(unused, "; "), "")
 	}
+	if d.Monitor.Available {
+		s.add("user input", checkOK, d.Monitor.Method+"; simulation stops when you use the mouse or keyboard", "")
+	} else {
+		s.add("user input", checkWarn, orDefault(d.Monitor.Reason, "user input monitoring unavailable")+"; activity simulation is paused", d.Monitor.Hint)
+	}
 	var parts []string
 	for _, i := range d.Idle {
 		parts = append(parts, fmt.Sprintf("%s %s", i.Name, output.FormatDuration(i.Idle.Truncate(time.Second))))
@@ -272,12 +277,12 @@ func activitySection(s *doctorSection, d activity.Diagnostics) {
 	if d.Gate == "" {
 		// Counters that answer but cannot be trusted (XWayland on Wayland)
 		// are listed for information.
-		detail := "no idle source; activity is simulated on a fixed schedule"
+		detail := "no idle counter; simulated input cannot be verified"
 		if len(parts) > 0 {
 			detail += " (read for information only: " + strings.Join(parts, ", ") + ")"
 		}
 		// It works as designed, so a warning, never a failure.
-		fix := "simulated activity cannot pause while you use the computer"
+		fix := "user input monitoring is required before activity can run"
 		if d.NoIdleHint != "" {
 			fix += "; " + d.NoIdleHint
 		}

@@ -13,6 +13,7 @@ func noSleep(ctx context.Context, d time.Duration) error { return ctx.Err() }
 func probeBackend(m *machine) *backend {
 	return &backend{
 		idle:    fakeIdle{m},
+		monitor: func(context.Context) (inputMonitor, error) { return fakeMonitor{m.input}, nil },
 		sources: []IdleSource{fakeIdle{m}},
 		lock:    fakeLock{m},
 		open: func() (Injector, error) {
@@ -85,7 +86,7 @@ func TestProbeReportsAMouseMovedDuringTheBurst(t *testing.T) {
 	m := newMachine()
 	m.playErr = errUserMoved
 	res := probe(context.Background(), probeBackend(m), false, seeded(1), noSleep)
-	if res.Effective || res.Reason != "the mouse was moved during the probe" || res.Hint != "keep the mouse still and probe again" {
+	if res.Effective || res.Reason != "user input interrupted the probe" || res.Hint != "leave the mouse and keyboard idle and probe again" {
 		t.Fatalf("probe = %+v", res)
 	}
 }
@@ -113,11 +114,11 @@ type absRecorder struct {
 	positions int
 }
 
-func (*absRecorder) Name() string               { return "abs" }
-func (*absRecorder) Available() error           { return nil }
-func (*absRecorder) Tap() error                 { return nil }
-func (*absRecorder) Diagnose() (string, string) { return "", "" }
-func (*absRecorder) Close() error               { return nil }
+func (*absRecorder) Name() string                  { return "abs" }
+func (*absRecorder) Available() error              { return nil }
+func (*absRecorder) Tap(ctx context.Context) error { return nil }
+func (*absRecorder) Diagnose() (string, string)    { return "", "" }
+func (*absRecorder) Close() error                  { return nil }
 func (a *absRecorder) Position() (float64, float64, bool) {
 	a.positions++
 	if a.userAt > 0 && len(a.moves) >= a.userAt {
@@ -129,7 +130,7 @@ func (a *absRecorder) Position() (float64, float64, bool) {
 	return a.ox, a.oy, true
 }
 func (a *absRecorder) Bounds() (Rect, bool) { return a.bounds, a.bounds.W > 0 }
-func (a *absRecorder) MoveTo(x, y float64) error {
+func (a *absRecorder) MoveTo(ctx context.Context, x, y float64) error {
 	a.moves = append(a.moves, move{x, y})
 	if a.failAt > 0 && len(a.moves) == a.failAt {
 		return errors.New("move failed")
@@ -142,12 +143,12 @@ type relRecorder struct {
 	minStep time.Duration
 }
 
-func (*relRecorder) Name() string               { return "rel" }
-func (*relRecorder) Available() error           { return nil }
-func (*relRecorder) Tap() error                 { return nil }
-func (*relRecorder) Diagnose() (string, string) { return "", "" }
-func (*relRecorder) Close() error               { return nil }
-func (r *relRecorder) MoveBy(dx, dy int) error {
+func (*relRecorder) Name() string                  { return "rel" }
+func (*relRecorder) Available() error              { return nil }
+func (*relRecorder) Tap(ctx context.Context) error { return nil }
+func (*relRecorder) Diagnose() (string, string)    { return "", "" }
+func (*relRecorder) Close() error                  { return nil }
+func (r *relRecorder) MoveBy(ctx context.Context, dx, dy int) error {
 	r.moves = append(r.moves, [2]int{dx, dy})
 	return nil
 }
@@ -439,7 +440,9 @@ type finishingRecorder struct {
 	finished []move
 }
 
-func (f *finishingRecorder) FinishAt(x, y float64) { f.finished = append(f.finished, move{x, y}) }
+func (f *finishingRecorder) FinishAt(ctx context.Context, x, y float64) {
+	f.finished = append(f.finished, move{x, y})
+}
 
 func TestPlayBurstFinishesExactlyAtTheOrigin(t *testing.T) {
 	f := &finishingRecorder{absRecorder: absRecorder{ox: 700, oy: 400, bounds: Rect{0, 0, 1440, 900}}}

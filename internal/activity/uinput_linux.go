@@ -3,6 +3,7 @@
 package activity
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -211,7 +212,20 @@ func (u *uinputInjector) setup(f uinputFile) error {
 	return nil
 }
 
-func (u *uinputInjector) MoveBy(dx, dy int) error {
+// Prepare creates the virtual device without posting input. X11 observes a
+// stable device hierarchy before it starts waiting for real-user inactivity.
+func (u *uinputInjector) Prepare(ctx context.Context) error {
+	if err := inputError(ctx); err != nil {
+		return err
+	}
+	_, err := u.device()
+	return err
+}
+
+func (u *uinputInjector) MoveBy(ctx context.Context, dx, dy int) error {
+	if err := inputError(ctx); err != nil {
+		return err
+	}
 	// The kernel drops EV_REL events with value 0.
 	var b []byte
 	if dx != 0 {
@@ -223,10 +237,13 @@ func (u *uinputInjector) MoveBy(dx, dy int) error {
 	if len(b) == 0 {
 		return nil
 	}
-	return u.emit(append(b, inputEvent(evSyn, synReport, 0)...))
+	return u.emit(ctx, append(b, inputEvent(evSyn, synReport, 0)...))
 }
 
-func (u *uinputInjector) Tap() error {
+func (u *uinputInjector) Tap(ctx context.Context) error {
+	if err := inputError(ctx); err != nil {
+		return err
+	}
 	if !u.keys {
 		return errors.New("the virtual device was created without keys")
 	}
@@ -235,12 +252,15 @@ func (u *uinputInjector) Tap() error {
 	b = append(b, inputEvent(evSyn, synReport, 0)...)
 	b = append(b, inputEvent(evKey, keyRightShift, 0)...)
 	b = append(b, inputEvent(evSyn, synReport, 0)...)
-	return u.emit(b)
+	return u.emit(ctx, b)
 }
 
-func (u *uinputInjector) emit(b []byte) error {
+func (u *uinputInjector) emit(ctx context.Context, b []byte) error {
 	dev, err := u.device()
 	if err != nil {
+		return err
+	}
+	if err := inputError(ctx); err != nil {
 		return err
 	}
 	return dev.write(b)

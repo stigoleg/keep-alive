@@ -3,6 +3,7 @@
 package activity
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -21,10 +22,10 @@ func TestUinputDeviceOnRealKernel(t *testing.T) {
 	if err := u.Available(); err != nil {
 		t.Fatal(err)
 	}
-	if err := u.MoveBy(2, -1); err != nil {
+	if err := u.MoveBy(context.Background(), 2, -1); err != nil {
 		t.Fatalf("MoveBy: %v", err)
 	}
-	if err := u.Tap(); err != nil {
+	if err := u.Tap(context.Background()); err != nil {
 		t.Fatalf("Tap: %v", err)
 	}
 	block := inputDeviceBlock(t, uinputName)

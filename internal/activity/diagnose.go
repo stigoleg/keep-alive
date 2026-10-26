@@ -11,10 +11,11 @@ import (
 type Diagnostics struct {
 	// Injectors are the input methods in the order they are tried.
 	Injectors []InjectorCheck
+	// Monitor must cover both keyboard and pointer input before simulation.
+	Monitor MonitorCheck
 	// Idle holds every idle counter that answered.
 	Idle []IdleCheck
-	// Gate is the idle source that decides when to simulate; empty means a
-	// fixed schedule (see NoIdleHint).
+	// Gate is the OS counter used to seed initial inactivity, when available.
 	Gate string
 	// Verifier is the idle source bursts are judged by (the one chat apps
 	// read).
@@ -26,6 +27,13 @@ type Diagnostics struct {
 	// Notes warn about limits of this desktop, as "name: text", e.g. that
 	// apps running under XWayland may not see simulated input.
 	Notes []string
+}
+
+// MonitorCheck describes whether safe user-input detection is available.
+type MonitorCheck struct {
+	Method       string
+	Available    bool
+	Reason, Hint string
 }
 
 // InjectorCheck is one input method.
@@ -51,8 +59,11 @@ type LockCheck struct {
 	Err           string
 }
 
-// Usable reports whether any input method is available.
+// Usable requires an injector and complete user-input monitoring.
 func (d Diagnostics) Usable() bool {
+	if !d.Monitor.Available {
+		return false
+	}
 	for _, c := range d.Injectors {
 		if c.Available {
 			return true
@@ -65,6 +76,15 @@ func (d Diagnostics) Usable() bool {
 func (d Diagnostics) Problem() (reason, hint string) {
 	if d.Usable() {
 		return "", ""
+	}
+	for _, c := range d.Injectors {
+		if c.Available && !d.Monitor.Available {
+			reason := d.Monitor.Reason
+			if reason == "" {
+				reason = "no user input monitor on this system"
+			}
+			return "user input monitoring unavailable: " + reason, d.Monitor.Hint
+		}
 	}
 	var reasons []string
 	for _, c := range d.Injectors {
@@ -113,6 +133,24 @@ func diagnose(b *backend) Diagnostics {
 	} else {
 		d.Injectors = append(d.Injectors, InjectorCheck{Name: inj.Name(), Available: true})
 		_ = inj.Close()
+	}
+
+	if b.monitor == nil {
+		d.Monitor.Reason = "no user input monitor on this system"
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if monitor, err := b.monitor(ctx); err != nil {
+			d.Monitor.Reason, d.Monitor.Hint = explain(err)
+		} else {
+			d.Monitor.Method = monitor.Name()
+			if err := monitor.Snapshot().Err; err != nil {
+				d.Monitor.Reason, d.Monitor.Hint = explain(err)
+			} else {
+				d.Monitor.Available = true
+			}
+			_ = monitor.Close()
+		}
 	}
 
 	for _, s := range b.sources {

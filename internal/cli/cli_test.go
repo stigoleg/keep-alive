@@ -156,7 +156,7 @@ func TestFlagCompatibility(t *testing.T) {
 			if p.Logging.Enabled != tt.log || p.Logging.Debug != tt.log {
 				t.Fatalf("logging = %+v, want enabled=%v", p.Logging, tt.log)
 			}
-			if !s.KeepDisplay || s.Activity.IdleThreshold != 2*time.Minute || s.Activity.Interval != 30*time.Second {
+			if !s.KeepDisplay || s.Activity.IdleThreshold != 3*time.Minute || s.Activity.Interval != 30*time.Second {
 				t.Fatalf("defaults lost: %+v", s)
 			}
 		})

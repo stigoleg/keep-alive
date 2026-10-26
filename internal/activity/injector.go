@@ -14,7 +14,7 @@ type Injector interface {
 	// *Unavailable error carries a hint.
 	Available() error
 	// Tap presses and releases a harmless key (right Shift).
-	Tap() error
+	Tap(ctx context.Context) error
 	// Diagnose explains why bursts may not reset the idle timer.
 	Diagnose() (reason, hint string)
 	Close() error
@@ -23,7 +23,7 @@ type Injector interface {
 // AbsoluteInjector warps the pointer to absolute screen coordinates.
 type AbsoluteInjector interface {
 	Injector
-	MoveTo(x, y float64) error
+	MoveTo(ctx context.Context, x, y float64) error
 	// Position is the current pointer location.
 	Position() (x, y float64, ok bool)
 	// Bounds is the display area the pointer may move in.
@@ -33,7 +33,7 @@ type AbsoluteInjector interface {
 // RelativeInjector can only move the pointer by a delta.
 type RelativeInjector interface {
 	Injector
-	MoveBy(dx, dy int) error
+	MoveBy(ctx context.Context, dx, dy int) error
 }
 
 // pathPlayer is implemented by injectors that replay a whole burst at once,
@@ -46,7 +46,7 @@ type pathPlayer interface {
 // land a pixel off the origin (SendInput); FinishAt puts the pointer back
 // exactly without generating input.
 type finisher interface {
-	FinishAt(ox, oy float64)
+	FinishAt(ctx context.Context, ox, oy float64)
 }
 
 // minStepper is implemented by relative injectors that are too slow for a

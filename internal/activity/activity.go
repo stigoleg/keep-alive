@@ -43,7 +43,7 @@ type Config struct {
 
 // Default values for Config.
 const (
-	DefaultIdleThreshold = 2 * time.Minute
+	DefaultIdleThreshold = 3 * time.Minute
 	DefaultInterval      = 30 * time.Second
 	MinIdleThreshold     = 10 * time.Second
 	MinInterval          = 5 * time.Second

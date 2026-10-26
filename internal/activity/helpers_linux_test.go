@@ -167,14 +167,14 @@ func TestYdotoolAvailability(t *testing.T) {
 	}
 
 	r.calls = nil
-	if err := y.MoveBy(-5, 3); err != nil {
+	if err := y.MoveBy(context.Background(), -5, 3); err != nil {
 		t.Fatal(err)
 	}
 	want := call{cmdTimeout, []string{"YDOTOOL_SOCKET=/tmp/.ydotool_socket"}, "ydotool", []string{"mousemove", "-x", "-5", "-y", "3"}}
 	if !reflect.DeepEqual(r.calls, []call{want}) {
 		t.Fatalf("MoveBy ran %+v, want %+v", r.calls, want)
 	}
-	if err := y.Tap(); err != nil {
+	if err := y.Tap(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if got := r.calls[1].args; !reflect.DeepEqual(got, []string{"key", "54:1", "54:0"}) {

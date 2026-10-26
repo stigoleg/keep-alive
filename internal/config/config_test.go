@@ -55,7 +55,7 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Config{ActiveIdle: 2 * time.Minute, ActiveInterval: 30 * time.Second, KeepDisplay: true}
+	want := Config{ActiveIdle: 3 * time.Minute, ActiveInterval: 30 * time.Second, KeepDisplay: true}
 	if r.Config != want {
 		t.Fatalf("defaults = %+v, want %+v", r.Config, want)
 	}
@@ -353,7 +353,7 @@ func TestShowAnnotatesSources(t *testing.T) {
 		`duration = "45m0s"`, "# flag",
 		"battery = 20", "# file",
 		"active = true", "# env",
-		`active_idle = "2m0s"`, "# default",
+		`active_idle = "3m0s"`, "# default",
 		path,
 	} {
 		if !strings.Contains(out, want) {

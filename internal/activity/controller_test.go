@@ -34,6 +34,7 @@ type machine struct {
 	opens     int
 	openErr   error
 	idleReads int
+	input     *inputState
 	// xwLast is the last input a second counter (XWayland) saw; xwFollows
 	// makes injected input reach it.
 	xwLast    time.Time
@@ -42,13 +43,14 @@ type machine struct {
 
 func newMachine() *machine {
 	clk := clock.NewFake(time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC))
-	return &machine{clk: clk, lastInput: clk.Now(), xwLast: clk.Now()}
+	return &machine{clk: clk, lastInput: clk.Now(), xwLast: clk.Now(), input: newInputState(clk.Now)}
 }
 
 func (m *machine) userInput() {
 	m.mu.Lock()
 	m.lastInput = m.clk.Now()
 	m.mu.Unlock()
+	m.input.input(0, false)
 }
 
 func (m *machine) set(f func(m *machine)) {
@@ -98,13 +100,13 @@ func (f fakeLock) Locked() (bool, error) {
 // fakeInjector is an AbsoluteInjector that replays whole bursts.
 type fakeInjector struct{ m *machine }
 
-func (fakeInjector) Name() string                       { return "Fake" }
-func (fakeInjector) Available() error                   { return nil }
-func (fakeInjector) Diagnose() (string, string)         { return "input ignored", "grant it" }
-func (fakeInjector) MoveTo(x, y float64) error          { return nil }
-func (fakeInjector) Position() (float64, float64, bool) { return 500, 500, true }
-func (fakeInjector) Bounds() (Rect, bool)               { return Rect{0, 0, 1000, 1000}, true }
-func (f fakeInjector) Tap() error {
+func (fakeInjector) Name() string                                   { return "Fake" }
+func (fakeInjector) Available() error                               { return nil }
+func (fakeInjector) Diagnose() (string, string)                     { return "input ignored", "grant it" }
+func (fakeInjector) MoveTo(ctx context.Context, x, y float64) error { return nil }
+func (fakeInjector) Position() (float64, float64, bool)             { return 500, 500, true }
+func (fakeInjector) Bounds() (Rect, bool)                           { return Rect{0, 0, 1000, 1000}, true }
+func (f fakeInjector) Tap(ctx context.Context) error {
 	f.m.mu.Lock()
 	f.m.taps++
 	f.m.mu.Unlock()
@@ -149,9 +151,10 @@ func newHarness(t *testing.T, cfg Config, tweak func(m *machine, d *controllerDe
 	m := newMachine()
 	h := &harness{t: t, m: m, ctx: context.Background()}
 	d := controllerDeps{
-		clock: m.clk,
-		idle:  fakeIdle{m},
-		lock:  fakeLock{m},
+		clock:   m.clk,
+		idle:    fakeIdle{m},
+		monitor: func(context.Context) (inputMonitor, error) { return fakeMonitor{m.input}, nil },
+		lock:    fakeLock{m},
 		open: func() (Injector, error) {
 			m.mu.Lock()
 			defer m.mu.Unlock()
@@ -306,7 +309,7 @@ func TestControllerPausesWhenUserReturns(t *testing.T) {
 	}
 }
 
-func TestControllerUserReturnBetweenBurstsNeedsTolerance(t *testing.T) {
+func TestControllerOwnBurstsDoNotCountAsUserInput(t *testing.T) {
 	h := newHarness(t, testCfg, nil)
 	h.runFor(2*time.Minute + 2*time.Second)
 	// Right after a burst the idle counter is tiny; that is our own input.
@@ -384,54 +387,36 @@ func TestControllerBurstErrorsCountAsIneffective(t *testing.T) {
 	}
 }
 
-func TestControllerFixedCadenceWithoutIdleSource(t *testing.T) {
-	for name, tweak := range map[string]func(m *machine, d *controllerDeps){
-		"nil source":     func(m *machine, d *controllerDeps) { d.idle = nil },
-		"failing source": func(m *machine, d *controllerDeps) { m.idleErr = errors.New("NotSupported") },
-	} {
-		t.Run(name, func(t *testing.T) {
-			h := newHarness(t, testCfg, tweak)
-			h.runFor(time.Second)
-			// Working as designed: no degraded state (and so no "not
-			// working" notification), only a hint about its limit.
-			st := h.last()
-			if st.State != StateWaitingIdle || st.Method != "Fake on a fixed schedule" ||
-				st.Hint != fixedHint || st.Reason != "first burst after 2m0s" {
-				t.Fatalf("status = %+v", st)
-			}
-			// The user just started keepalive: the first burst waits one idle threshold.
-			h.runFor(2*time.Minute - 2*time.Second)
-			if n := h.m.burstCount(); n != 0 {
-				t.Fatalf("%d bursts before the first threshold", n)
-			}
-			if st := h.last(); st.State != StateWaitingIdle || st.Idle < 2*time.Minute-3*time.Second {
-				t.Fatalf("waiting status shows no progress: %+v", st)
-			}
-			h.runFor(2 * time.Second)
-			h.runFor(10 * time.Minute)
-			b := h.m.bursts
-			if len(b) != 21 {
-				t.Fatalf("bursts = %d, want 21 (one every 30s)", len(b))
-			}
-			for i := 1; i < len(b); i++ {
-				if gap := b[i].Sub(b[i-1]); gap != 30*time.Second {
-					t.Fatalf("gap %d = %v, want exactly 30s", i, gap)
-				}
-			}
-			if st := h.last(); st.State != StateSimulating || st.LastBurst.IsZero() || st.Method != "Fake on a fixed schedule" ||
-				st.Hint != fixedHint || st.Reason != "" {
-				t.Fatalf("status = %+v", st)
-			}
-			for _, st := range h.statuses {
-				if st.State == StateDegraded {
-					t.Fatalf("degraded on the fixed schedule: %+v", st)
+func TestControllerNeverBurstsWithoutInputMonitoring(t *testing.T) {
+	for _, missing := range []bool{true, false} {
+		h := newHarness(t, testCfg, func(m *machine, d *controllerDeps) {
+			if missing {
+				d.monitor = nil
+			} else {
+				d.monitor = func(context.Context) (inputMonitor, error) {
+					return nil, &Unavailable{Reason: "permission denied", Hint: "check monitoring access"}
 				}
 			}
 		})
+		h.runFor(20 * time.Minute)
+		if h.m.burstCount() != 0 || h.m.taps != 0 || h.last().State != StateDegraded {
+			t.Fatalf("simulation without monitoring: %+v", h.last())
+		}
 	}
 }
 
-const fixedHint = "no idle source on this desktop, so simulated activity cannot pause while you use the computer; install an idle source"
+func TestControllerMonitorsUsersWithoutVerificationCounter(t *testing.T) {
+	h := newHarness(t, testCfg, func(m *machine, d *controllerDeps) { d.idle = nil })
+	h.runFor(3 * time.Minute)
+	if h.m.burstCount() == 0 || h.last().State != StateSimulating || h.last().Hint == "" {
+		t.Fatalf("unverified activity: %+v", h.last())
+	}
+	n := h.m.burstCount()
+	h.userActiveFor(5 * time.Minute)
+	if h.m.burstCount() != n || h.last().State != StatePausedUser {
+		t.Fatalf("simulated while working without an idle counter: %+v", h.last())
+	}
+}
 
 func TestControllerReprobesUnavailableInjector(t *testing.T) {
 	h := newHarness(t, testCfg, func(m *machine, d *controllerDeps) {
@@ -552,12 +537,12 @@ func TestControllerRunBlocksUntilCancelledAndCloses(t *testing.T) {
 	}
 }
 
-func TestControllerFixedCadenceFailureReasonIsStable(t *testing.T) {
+func TestControllerFailureReasonWithoutVerifierIsStable(t *testing.T) {
 	h := newHarness(t, testCfg, func(m *machine, d *controllerDeps) {
 		d.idle = nil
 		m.playErr = errors.New("xdotool: exit status 1")
 	})
-	h.runFor(2*time.Minute + 31*time.Second) // two failed bursts
+	h.runFor(2*time.Minute + 41*time.Second) // two failed bursts
 	h.mu.Lock()
 	h.statuses = nil
 	h.mu.Unlock()
@@ -586,8 +571,8 @@ func TestControllerRunReturnsAtOnceWhenCancelled(t *testing.T) {
 
 func TestControllerNeverBurstsAfterCancel(t *testing.T) {
 	for name, tweak := range map[string]func(m *machine, d *controllerDeps){
-		"idle-gated":     nil,
-		"fixed schedule": func(m *machine, d *controllerDeps) { d.idle = nil },
+		"idle-gated":  nil,
+		"no verifier": func(m *machine, d *controllerDeps) { d.idle = nil },
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, testCfg, tweak)
@@ -825,12 +810,12 @@ func TestControllerPausesWhenTheUserTakesThePointerMidBurst(t *testing.T) {
 	}
 }
 
-func TestControllerFixedScheduleBacksOffWhenTheUserTakesThePointer(t *testing.T) {
+func TestControllerWithoutVerifierBacksOffWhenTheUserTakesThePointer(t *testing.T) {
 	h := newHarness(t, testCfg, func(m *machine, d *controllerDeps) { d.idle = nil })
 	h.runFor(2*time.Minute + 2*time.Second)
 	n := h.m.burstCount()
 	h.m.set(func(m *machine) { m.playErr = errUserMoved })
-	h.runFor(31 * time.Second)
+	h.runFor(41 * time.Second)
 	h.m.set(func(m *machine) { m.playErr = nil })
 	if st := h.last(); st.State != StatePausedUser {
 		t.Fatalf("status = %+v, want paused_user", st)
@@ -841,6 +826,11 @@ func TestControllerFixedScheduleBacksOffWhenTheUserTakesThePointer(t *testing.T)
 	}
 	h.runFor(12 * time.Second)
 	if h.m.burstCount() != n+1 || h.last().State != StateSimulating {
-		t.Fatalf("not back on the fixed schedule one idle threshold later: %+v", h.last())
+		t.Fatalf("not simulating one idle threshold later: %+v", h.last())
 	}
 }
+
+type fakeMonitor struct{ *inputState }
+
+func (fakeMonitor) Name() string { return "fake user input" }
+func (fakeMonitor) Close() error { return nil }

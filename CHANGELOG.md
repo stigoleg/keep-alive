@@ -3,6 +3,22 @@
 All notable changes to keepalive. Releases before 2.0.0 are described on the
 [GitHub releases page](https://github.com/stigoleg/keep-alive/releases).
 
+## [2.0.1] - 2026-10-27
+
+### Fixed
+
+- Activity simulation now waits for three minutes of inactivity by default.
+  Explicit `--active-idle`, environment, and config values are preserved.
+- Real keyboard, mouse, button, scroll, and drag input cancels a burst without
+  moving the pointer back or tapping Shift. A fresh idle wait follows takeover.
+- User-input monitoring is separate from synthetic-input verification. macOS
+  uses the most recent input counter when seeding inactivity and no longer
+  suppresses local input during synthetic movement.
+- Activity stays paused when complete user-input monitoring is unavailable;
+  the unsafe fixed-schedule fallback has been removed. X11 requires `xinput`;
+  Wayland uses existing input-device read access only. `doctor` explains the
+  missing monitoring, while sleep prevention continues independently.
+
 ## [2.0.0] - 2026-10-04
 
 ### Highlights

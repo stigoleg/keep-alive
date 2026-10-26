@@ -48,7 +48,7 @@ func fixtures() map[string]session.Event {
 
 	waiting := snap
 	waiting.Remaining = 2*time.Hour - 2*time.Minute
-	waiting.Activity = activity.Status{State: activity.StateWaitingIdle, Method: "CoreGraphics mouse events", Reason: "needs 2m0s", Idle: 5 * time.Second}
+	waiting.Activity = activity.Status{State: activity.StateWaitingIdle, Method: "CoreGraphics mouse events", Reason: "needs 3m0s", Idle: 5 * time.Second}
 
 	heartbeat := waiting
 	heartbeat.Remaining = 2*time.Hour - 150*time.Second

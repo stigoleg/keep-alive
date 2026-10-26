@@ -13,8 +13,9 @@ import (
 // backend is what the OS offers the controller. Each OS builds one in
 // newBackend.
 type backend struct {
-	// idle gates simulation; nil when the desktop exposes no idle time.
-	idle IdleSource
+	// idle seeds initial inactivity; nil when the desktop exposes no idle time.
+	idle    IdleSource
+	monitor func(context.Context) (inputMonitor, error)
 	// verify checks bursts; nil means idle.
 	verify IdleSource
 	// sources is every idle source that could be read, for Probe.
@@ -70,6 +71,7 @@ func (simulator) Run(ctx context.Context, cfg Config, report func(Status)) error
 	c := newController(cfg, controllerDeps{
 		clock:         clock.Real(),
 		idle:          b.idle,
+		monitor:       b.monitor,
 		verify:        b.verify,
 		lock:          b.lock,
 		open:          b.open,
@@ -158,16 +160,34 @@ func probe(ctx context.Context, b *backend, keys bool, r *rand.Rand, sleep sleep
 	defer inj.Close()
 	res.Method = inj.Name()
 
+	if b.monitor == nil {
+		res.Reason = "user input monitoring is unavailable; probe cancelled"
+		return res
+	}
+	monitor, err := b.monitor(ctx)
+	if err != nil {
+		res.Reason, res.Hint = explain(err)
+		return res
+	}
+	defer monitor.Close()
+	ctx, stop := watchInput(ctx, monitor, monitor.Snapshot().Generation)
+	defer stop()
 	start := time.Now()
 	err = playBurst(ctx, inj, NewPath(r), sleep)
+	if interrupted := inputError(ctx); interrupted != nil {
+		err = interrupted
+	}
 	if err == nil && keys {
-		if terr := inj.Tap(); terr != nil {
+		if terr := inj.Tap(ctx); terr != nil {
 			res.Reason = fmt.Sprintf("key tap failed: %v", terr)
 		}
 	}
+	if interrupted := inputError(ctx); interrupted != nil {
+		err = interrupted
+	}
 	res.Burst = time.Since(start)
 	if errors.Is(err, errUserMoved) {
-		res.Reason, res.Hint = "the mouse was moved during the probe", "keep the mouse still and probe again"
+		res.Reason, res.Hint = "user input interrupted the probe", "leave the mouse and keyboard idle and probe again"
 		return res
 	}
 	if err != nil {

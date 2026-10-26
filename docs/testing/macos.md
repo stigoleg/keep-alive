@@ -5,8 +5,21 @@ Checks keepalive 2.0.0 on a real Mac. Items marked `[x]` were verified on
 the screen unlocked, and do not touch the mouse or keyboard while a step
 says "hands off".
 
+## Activity takeover regression
+
+Run `keepalive --plain -a --active-idle 10s --active-interval 10s` only after
+`doctor` confirms complete user-input monitoring. While a burst runs, try
+keyboard input, mouse movement, clicking, scrolling, and dragging separately.
+Each must stop movement immediately, with no return to the old position or
+Shift tap. Continued work must prevent new bursts; after release and ten
+seconds idle, simulation may resume. Also interrupt within a second of a
+completed burst. With default settings, repeat the idle check at three minutes.
+Loss of monitoring must pause activity while sleep prevention continues.
+
 ## Prerequisites
 
+- Accessibility and Input Monitoring granted to the terminal app; `doctor`
+  must check both without prompting.
 - macOS 13 or later, signed in to Microsoft Teams (new Teams) and, if you
   use it, Slack.
 - keepalive from the release: `brew install --cask stigoleg/tap/keepalive`,
@@ -194,7 +207,7 @@ keepalive service status
   Accessibility for "keepalive".
 - [ ] `service status` shows `login service (launchd): running (pid N)` and
   a status that says `started by the login service`.
-- [ ] After 2 minutes hands off, macOS asks for Accessibility for
+- [ ] With monitoring granted and after 3 minutes hands off, macOS asks for Accessibility for
   `keepalive` (not the terminal). After granting, `keepalive doctor`
   (Running instance) and `keepalive status` show `simulating`.
 - [ ] Log out and back in: `keepalive status` shows it running again.

@@ -139,6 +139,7 @@ func newBackend(_ context.Context, keys bool) *backend {
 	idle := lastInputIdle{}
 	return &backend{
 		idle:    idle,
+		monitor: openWindowsMonitor,
 		sources: []IdleSource{idle},
 		lock:    wtsLock{},
 		open:    openSendInput,
@@ -284,8 +285,11 @@ func monitorAt(x, y float64) (Rect, bool) {
 }
 
 // FinishAt corrects a return stroke that landed a pixel or two off.
-func (s sendInput) FinishAt(ox, oy float64) {
+func (s sendInput) FinishAt(ctx context.Context, ox, oy float64) {
 	set := func(x, y int32) error {
+		if err := inputError(ctx); err != nil {
+			return err
+		}
 		if r, _, err := procSetCursorPos.Call(uintptr(x), uintptr(y)); r == 0 {
 			return fmt.Errorf("SetCursorPos: %w", err)
 		}
@@ -304,18 +308,24 @@ func virtualScreen() Rect {
 	return Rect{X: metric(smXVirtualScreen), Y: metric(smYVirtualScreen), W: metric(smCXVirtualScreen), H: metric(smCYVirtualScreen)}
 }
 
-func (sendInput) MoveTo(x, y float64) error {
+func (sendInput) MoveTo(ctx context.Context, x, y float64) error {
+	if err := inputError(ctx); err != nil {
+		return err
+	}
 	nx, ny := virtualDeskAbsolute(x, y, virtualScreen())
 	in := []mouseInputEvent{{inputType: inputMouse, mi: mouseInput{
-		dx: nx, dy: ny, dwFlags: mouseeventfMove | mouseeventfAbsolute | mouseeventfVirtualDesk,
+		dx: nx, dy: ny, dwExtraInfo: inputMarker, dwFlags: mouseeventfMove | mouseeventfAbsolute | mouseeventfVirtualDesk,
 	}}}
 	return send(len(in), unsafe.Pointer(&in[0]))
 }
 
-func (sendInput) Tap() error {
+func (sendInput) Tap(ctx context.Context) error {
+	if err := inputError(ctx); err != nil {
+		return err
+	}
 	in := []keyInputEvent{
-		{inputType: inputKeyboard, ki: keybdInput{wVk: vkRShift, wScan: scanRShift}},
-		{inputType: inputKeyboard, ki: keybdInput{wVk: vkRShift, wScan: scanRShift, dwFlags: keyeventfKeyUp}},
+		{inputType: inputKeyboard, ki: keybdInput{wVk: vkRShift, wScan: scanRShift, dwExtraInfo: inputMarker}},
+		{inputType: inputKeyboard, ki: keybdInput{wVk: vkRShift, wScan: scanRShift, dwExtraInfo: inputMarker, dwFlags: keyeventfKeyUp}},
 	}
 	return send(len(in), unsafe.Pointer(&in[0]))
 }

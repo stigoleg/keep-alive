@@ -5,11 +5,10 @@ Docker (Xvfb and xdotool), the uinput device against a real kernel in a
 privileged container, and the sleep inhibitors against python-dbusmock. This
 is the first run on a real Plasma desktop.
 
-Plasma on Wayland does not share idle time with other programs, so
-keepalive cannot tell whether you are using the computer. It then simulates
-activity on a fixed schedule (the first burst after `--active-idle`, then
-every `--active-interval`) and reports it as working, with a hint that it
-cannot pause while you use the computer. This checklist tests that mode.
+Plasma's idle counter is unavailable, but simulation can run when evdev can
+monitor every session keyboard and pointer using existing permissions.
+Otherwise activity must stay paused. Do not grant additional input-device
+permissions for this test; sleep prevention must continue in either case.
 
 Run every step in a terminal (Konsole) inside the Plasma session (not over
 SSH), with the screen unlocked. Do not touch the mouse or keyboard while a
@@ -56,48 +55,35 @@ keepalive doctor; echo "exit $?"
 - [ ] Activity simulation: `uinput` ✓; `screen lock` ✓ with
   `logind LockedHint, org.freedesktop.ScreenSaver (unlocked now)`;
   `display server  Wayland (with XWayland)`; `desktop  KDE`.
-- [ ] `! idle time  no idle source; activity is simulated on a fixed
-  schedule (read for information only: xprintidle (XWayland) …)` with the
-  fix `simulated activity cannot pause while you use the computer; KDE
-  Plasma on Wayland does not share idle time with other programs; log in to
-  a Plasma (X11) session for idle-aware simulation`.
+- [ ] `user input` is healthy only with complete existing input-device access;
+  otherwise it explains that activity simulation is paused.
+- [ ] `! idle time` explains that simulated input cannot be verified. The
+  XWayland counter, if present, is informational only.
 - [ ] A `!` `XWayland` row.
 
 ## 3. doctor --probe
 
-```sh
-keepalive doctor --probe
-```
+Run `keepalive doctor --probe`. With complete monitoring, confirm and leave
+input idle: the pointer moves and the verdict says that no idle counter can
+verify it. Without complete monitoring, the probe must not move the pointer.
 
-Confirm, then hands off until it finishes.
+## 4. User-input protection
 
-- [ ] `input` row: `moved the pointer via uinput in …`.
-- [ ] Verdict `! moved the pointer, but this desktop exposes no idle time to
-  verify it`; exit 0.
-- [ ] The pointer ends roughly where it started; no screen edge or corner
-  action fired.
+Run `keepalive --plain -a`. Without complete monitoring, leave it running for
+five minutes while working: it must remain degraded, produce no simulated
+input, and retain the sleep inhibitor. Do not run the later movement and
+presence checks unless `doctor` confirms complete input monitoring.
 
-## 4. Fixed-cadence mode
+With existing complete monitoring:
 
-```sh
-keepalive --json -a | jq -r 'select(.type=="activity") | [.time, .snapshot.activity.state, .snapshot.activity.last_burst // ""] | @tsv'
-```
-
-Hands off for 4 minutes, then use the computer normally for 2 minutes.
-
-- [ ] The activity lines go from `waiting_idle` to `simulating`, never
-  `degraded`.
-- [ ] The first burst comes 2 minutes (`--active-idle`) after the start;
-  after that `last_burst` advances every 20 to 40 seconds, both while hands
-  off and while you work (expected in this mode: keepalive cannot see your
-  input).
-- [ ] In another terminal, `keepalive status` shows `activity  simulating
-  input via uinput on a fixed schedule`, and `keepalive doctor` has a `!`
-  `instance` row whose fix starts with `no idle source on this desktop, so
-  simulated activity cannot pause while you use the computer`.
-- [ ] No desktop notification `Keep-Alive: activity simulation not working`
-  appears.
-- [ ] Ctrl+C stops it; the pointer is not left somewhere odd.
+- [ ] Hands off: the first burst starts after three minutes, then repeats at
+  the configured interval with jitter.
+- [ ] Typing, moving the mouse, clicking, scrolling, and dragging each stop
+  an active burst immediately, without moving the pointer back.
+- [ ] Continuous work prevents new bursts. Releasing held input and leaving
+  the computer idle restarts the full three-minute wait.
+- [ ] Unplugging or adding an input device pauses simulation until monitoring
+  has refreshed and a new idle period has elapsed.
 
 ## 5. Slack away test (15 minutes)
 
@@ -251,11 +237,9 @@ systemctl --user status keepalive.service
 keepalive --plain -a --active-idle 10s --active-interval 10s
 ```
 
-- [ ] At once: `active: waiting for idle (first burst after 10s); no idle
-  source on this desktop, …`; about 10 seconds later `active: simulating
-  input via uinput on a fixed schedule; …`.
-- [ ] Meta+L, wait a minute, unlock: `active: paused while the screen is
-  locked` while locked, then `simulating … on a fixed schedule` again.
+- [ ] With complete monitoring: wait for idle, then observe simulation.
+- [ ] Meta+L pauses simulation; unlocking requires a fresh idle wait.
+- [ ] Without complete monitoring: activity remains paused throughout.
 
 ## 13. Notifications
 
@@ -273,7 +257,7 @@ keepalive --plain --notify=false -d 1
 Log in to a "Plasma (X11)" session and run `keepalive doctor`.
 
 - [ ] `idle time` is ✓ (KDE ScreenSaver or xprintidle) and
-  `keepalive --plain -a` waits for idle instead of using a fixed schedule.
+  `keepalive --plain -a` uses XInput2 monitoring and waits for idle. Install `xinput` if needed.
 
 ## 15. Shared runtime directory
 

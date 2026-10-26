@@ -12,6 +12,17 @@ checklists cover the packaged udev rule. Run every step in a terminal inside
 the desktop session (not over SSH), with the screen unlocked. Do not touch
 the mouse or keyboard while a step says "hands off".
 
+## Activity takeover regression
+
+Run `keepalive --plain -a --active-idle 10s --active-interval 10s` only after
+`doctor` confirms complete user-input monitoring. While a burst runs, try
+keyboard input, mouse movement, clicking, scrolling, and dragging separately.
+Each must stop movement immediately, with no return to the old position or
+Shift tap. Continued work must prevent new bursts; after release and ten
+seconds idle, simulation may resume. Also interrupt within a second of a
+completed burst. With default settings, repeat the idle check at three minutes.
+Loss of monitoring must pause activity while sleep prevention continues.
+
 ## Prerequisites
 
 - An X11 session (Xfce, Cinnamon, MATE, GNOME on Xorg, Plasma (X11), …):
@@ -19,7 +30,7 @@ the mouse or keyboard while a step says "hands off".
   desktop.
 - The `keepalive_<version>_linux_<arch>.tar.gz` archive, **no** keepalive
   package installed, and no `/etc/udev/rules.d/60-keepalive-uinput.rules`.
-- `xdotool`, `xprintidle` and `jq` installed.
+- `xinput`, `xdotool`, `xprintidle` and `jq` installed.
 - The Slack desktop app, signed in.
 - A second device or a colleague to watch your Slack presence. Do not open
   Slack on your phone during the away test: the mobile app marks you active

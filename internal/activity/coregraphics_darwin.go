@@ -18,6 +18,12 @@ static pthread_once_t ka_source_once = PTHREAD_ONCE_INIT;
 // idle counters; the latter is what Chromium/Electron (Teams, Slack) read.
 static void ka_init_source(void) {
 	ka_source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+	if (ka_source != NULL) {
+		// Synthetic movement must never suppress physical input.
+		CGEventSourceSetLocalEventsSuppressionInterval(ka_source, 0);
+		CGEventSourceSetLocalEventsFilterDuringSuppressionState(ka_source, kCGEventFilterMaskPermitAllEvents, kCGEventSuppressionStateSuppressionInterval);
+		CGEventSourceSetLocalEventsFilterDuringSuppressionState(ka_source, kCGEventFilterMaskPermitAllEvents, kCGEventSuppressionStateRemoteMouseDrag);
+	}
 }
 
 static CGEventSourceRef ka_get_source(void) {
@@ -80,7 +86,7 @@ static int ka_move(double x, double y) {
 	if (e == NULL) {
 		return 0;
 	}
-	CGEventSetIntegerValueField(e, kCGEventSourceUserData, (int64_t)getpid());
+	CGEventSetIntegerValueField(e, kCGEventSourceUserData, 0x4b414c56);
 	CGEventPost(kCGHIDEventTap, e);
 	CFRelease(e);
 	return 1;
@@ -105,6 +111,8 @@ static int ka_tap_right_shift(void) {
 	CGEventSetFlags(down, kCGEventFlagMaskShift | kCGEventFlagMaskNonCoalesced | 0x4);
 	CGEventSetType(up, kCGEventFlagsChanged);
 	CGEventSetFlags(up, kCGEventFlagMaskNonCoalesced);
+	CGEventSetIntegerValueField(down, kCGEventSourceUserData, 0x4b414c56);
+	CGEventSetIntegerValueField(up, kCGEventSourceUserData, 0x4b414c56);
 	CGEventPost(kCGHIDEventTap, down);
 	CGEventPost(kCGHIDEventTap, up);
 	CFRelease(down);
@@ -146,7 +154,8 @@ import (
 func newBackend(_ context.Context, keys bool) *backend {
 	hid, combined := cgIdle{combined: false}, cgIdle{combined: true}
 	return &backend{
-		idle:    maxIdle{hid, combined},
+		idle:    minIdle{hid, combined},
+		monitor: openCGMonitor,
 		verify:  combined,
 		sources: []IdleSource{hid, combined},
 		lock:    sessionLock{},
@@ -180,20 +189,21 @@ func (s cgIdle) Idle() (time.Duration, error) {
 	return time.Duration(secs * float64(time.Second)), nil
 }
 
-// maxIdle gates on the larger of several counters, so real input on any of
-// them counts as the user being present.
-type maxIdle []IdleSource
+// minIdle seeds inactivity from the most recent input any counter saw.
+type minIdle []IdleSource
 
-func (maxIdle) Name() string { return "CoreGraphics" }
+func (minIdle) Name() string { return "CoreGraphics" }
 
-func (m maxIdle) Idle() (time.Duration, error) {
+func (m minIdle) Idle() (time.Duration, error) {
 	var out time.Duration
-	for _, s := range m {
+	for i, s := range m {
 		d, err := s.Idle()
 		if err != nil {
 			return 0, err
 		}
-		out = max(out, d)
+		if i == 0 || d < out {
+			out = d
+		}
 	}
 	return out, nil
 }
@@ -230,7 +240,10 @@ func (cgInjector) Available() error {
 	return accessibilityMissing()
 }
 
-func (cgInjector) MoveTo(x, y float64) error {
+func (cgInjector) MoveTo(ctx context.Context, x, y float64) error {
+	if err := inputError(ctx); err != nil {
+		return err
+	}
 	if C.ka_move(C.double(x), C.double(y)) == 0 {
 		return errPostFailed
 	}
@@ -257,7 +270,10 @@ func (i cgInjector) Bounds() (Rect, bool) {
 	return Rect{X: float64(x), Y: float64(y), W: float64(w), H: float64(h)}, true
 }
 
-func (cgInjector) Tap() error {
+func (cgInjector) Tap(ctx context.Context) error {
+	if err := inputError(ctx); err != nil {
+		return err
+	}
 	if C.ka_tap_right_shift() == 0 {
 		return errPostFailed
 	}

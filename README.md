@@ -53,14 +53,15 @@ Download the package for your architecture (`amd64`, `arm64`, `386` or
 `armv7`) from the [releases page](https://github.com/stigoleg/keep-alive/releases/latest):
 
 ```sh
-sudo apt install ./keepalive_2.0.0_linux_amd64.deb            # Debian, Ubuntu
-sudo dnf install ./keepalive_2.0.0_linux_amd64.rpm            # Fedora, RHEL
-sudo apk add --allow-untrusted keepalive_2.0.0_linux_amd64.apk  # Alpine
+sudo apt install ./keepalive_2.0.1_linux_amd64.deb            # Debian, Ubuntu
+sudo dnf install ./keepalive_2.0.1_linux_amd64.rpm            # Fedora, RHEL
+sudo apk add --allow-untrusted keepalive_2.0.1_linux_amd64.apk  # Alpine
 ```
 
 The packages install a udev rule (`/usr/lib/udev/rules.d/60-keepalive-uinput.rules`)
 that gives the user at the seat access to `/dev/uinput` and load the
-`uinput` module at boot, so `-a` works on Wayland without further setup
+`uinput` module at boot, making input injection available on Wayland.
+Activity also requires complete user-input monitoring, described below
 (see [Linux](#linux) for what that rule allows). They also install man
 pages and bash, zsh and fish completions.
 
@@ -75,7 +76,7 @@ Every release has these archives, plus `checksums.txt`:
 | Windows | `keepalive_<version>_windows_<arch>.zip` (`amd64`, `arm64`) |
 
 ```sh
-VERSION=2.0.0
+VERSION=2.0.1
 curl -LO "https://github.com/stigoleg/keep-alive/releases/download/v$VERSION/keepalive_${VERSION}_darwin_universal.tar.gz"
 tar xzf "keepalive_${VERSION}_darwin_universal.tar.gz" keepalive
 sudo install -m 755 keepalive /usr/local/bin/
@@ -135,7 +136,7 @@ keepalive runs, it attaches to that one; quitting then leaves it running.
 ## Activity simulation
 
 Teams and Slack mark you Away after a few minutes without input. With `-a`,
-keepalive waits until you have been idle for 2 minutes (`--active-idle`),
+keepalive waits until you have been idle for 3 minutes (`--active-idle`),
 then about every 30 seconds (`--active-interval`, ±35 %) moves the pointer
 along a short, curved, human-like path and back to where it was. A burst
 takes 1 to 2.5 seconds, stays within about 130 px and, when keepalive can
@@ -143,8 +144,11 @@ see the pointer position, keeps clear of screen edges and hot corners.
 `--active-keys` also taps Shift with each burst.
 
 - **It gets out of your way.** It pauses as soon as you use the mouse or
-  keyboard (on macOS and Windows even in the middle of a burst), and while
-  the screen is locked.
+  keyboard, including in the middle of a burst, and while the screen is
+  locked. Typing, clicking, scrolling, or dragging cancels movement without
+  pulling the pointer back. It waits for a fresh full idle period before
+  resuming. If complete input monitoring is unavailable, simulation pauses
+  with an explanation; sleep prevention continues.
 - **It checks its own work.** After every burst keepalive reads the system
   idle time that chat apps read (CombinedSessionState on macOS,
   `GetLastInputInfo` on Windows, Mutter, KDE or `xprintidle` on Linux). If
@@ -155,7 +159,9 @@ see the pointer position, keeps clear of screen edges and hot corners.
   default settings, presence stayed Available through 25 minutes away from
   the computer.
 
-`keepalive doctor` shows which input method and idle source will be used.
+`keepalive doctor` shows the input method, user-input monitor, and idle counters.
+A working monitor is required even when the OS exposes an idle counter. Where
+no verification counter exists, keepalive says that it cannot verify the input.
 `keepalive doctor --probe` moves the pointer once and checks that the idle
 time was reset.
 
@@ -169,8 +175,10 @@ time was reset.
 
 ### macOS
 
-`-a` needs the Accessibility permission (System Settings → Privacy &
-Security → Accessibility). macOS asks for it the first time; which app gets
+`-a` needs Accessibility to post input and Input Monitoring to detect real
+keyboard and mouse activity (System Settings → Privacy & Security).
+`keepalive doctor` checks monitoring without prompting. If it is unavailable,
+activity stays paused and explains which permission is needed. Which app gets
 the entry depends on how keepalive runs:
 
 - **In a terminal:** the terminal app (Terminal, iTerm2, Ghostty, …).
@@ -209,12 +217,17 @@ session. If you never use `-a`, remove the packaged rule
 (`/usr/lib/udev/rules.d/60-keepalive-uinput.rules`), or mask it with an
 empty file of the same name in `/etc/udev/rules.d/`.
 
-| Session | Idle-aware? | Notes |
+| Session | User-input monitoring | Idle verification |
 |---|---|---|
-| GNOME on Wayland | yes (Mutter) | |
-| KDE Plasma on Wayland | no | Plasma does not share idle time, so keepalive simulates activity on a fixed schedule (first after `--active-idle`, then every `--active-interval`), also while you use the computer, and says so |
-| Other Wayland compositors (sway, Hyprland, …) | no | fixed schedule, as above |
-| X11 | yes | GNOME and KDE report idle time themselves; other desktops need `xprintidle` (`sudo apt install xprintidle`) |
+| GNOME on Wayland | evdev, only with existing access to every session input device | Mutter |
+| KDE Plasma and other Wayland compositors | evdev, only with existing complete input-device access | Usually unavailable |
+| X11 | `xinput` (install the `xinput` package) | Mutter, KDE, or `xprintidle` |
+
+On Wayland, access to `/dev/uinput` only permits posting input; it does not
+permit monitoring the physical keyboard and pointer. If any relevant device
+cannot be monitored, activity stays paused. keepalive never changes input-device
+permissions or falls back to movement while you work. Use an X11 session with
+`xinput` if your Wayland session does not already grant complete access.
 
 **XWayland.** On Wayland, apps that run under XWayland (some Slack and Teams
 builds) only see input while the pointer is over one of their windows, so
@@ -334,7 +347,7 @@ keepalive stop
 ```
 
 ```
-keepalive 2.0.0 · pid 4242 · started in a terminal at 10:02
+keepalive 2.0.1 · pid 4242 · started in a terminal at 10:02
   session     1h12m left (until 12:02); keeps the system and display awake
   activity    simulating input via CoreGraphics
   power       IOPMAssertion(PreventUserIdleSystemSleep, PreventUserIdleDisplaySleep, PreventSystemSleep)
@@ -390,7 +403,7 @@ Headless output is one line per event:
 
 ```
 10:02:11 keeping system and display awake for 2h0m (until 12:02), stopping at 20% battery, simulating activity
-10:04:11 active: waiting for idle (needs 2m0s)
+10:04:11 active: waiting for idle (needs 3m0s)
 10:07:11 active: simulating input via CoreGraphics mouse events
 12:02:11 stopped: duration reached
 ```
@@ -444,7 +457,7 @@ keepalive doctor --probe    # also move the pointer once and verify the idle res
 | macOS: "Accessibility permission is missing" | Turn on the app `doctor` names under Privacy & Security → Accessibility. After an update, remove the entry and add it again. |
 | macOS: no notifications | They come from Script Editor; allow it under System Settings → Notifications. |
 | Linux: "no write access to /dev/uinput" | Install the package, or add the udev rule under [Linux](#linux). |
-| Linux: "… on a fixed schedule" | KDE Plasma or another compositor on Wayland does not share idle time, so activity is simulated even while you work. Use GNOME, or a Plasma (X11) session. |
+| "user input monitoring unavailable" | Activity stays paused until complete keyboard and pointer monitoring works. On macOS check Input Monitoring; on X11 install `xinput`; on Wayland use existing complete input-device access or an X11 session. |
 | Linux: the XWayland warning | Start Slack or Teams with `--ozone-platform=wayland`. |
 | Linux: the inhibitor is refused | logind's polkit rules refuse it outside a desktop session; run keepalive from the desktop. |
 | Windows: "Windows dropped the synthetic input" | An administrator window has focus; see [Windows](#windows). |
