@@ -211,8 +211,8 @@ release:
   prerelease: auto
   replace_existing_artifacts: true
 
-# Package managers are only updated when PUBLISH_PACKAGE_MANAGERS is set (and
-# GH_PAT can push to the tap and the bucket).
+# Every release updates the Homebrew tap and Scoop bucket. Snapshot builds
+# generate the manifests without publishing them.
 homebrew_casks:
   - name: keepalive
     ids: [default]
@@ -253,8 +253,8 @@ homebrew_casks:
     # notarized, so the quarantine bit stays: Gatekeeper checks the ticket
     # online on first run.
     caveats: |
-      keepalive --active needs the Accessibility permission on macOS:
-      System Settings > Privacy & Security > Accessibility.
+      keepalive --active needs Accessibility and Input Monitoring on macOS:
+      System Settings > Privacy & Security.
       Run "keepalive doctor" to check.
     repository:
       owner: stigoleg
@@ -263,7 +263,7 @@ homebrew_casks:
     commit_author:
       name: GoReleaser Bot
       email: bot@goreleaser.com
-    skip_upload: '{{ not (isEnvSet "PUBLISH_PACKAGE_MANAGERS") }}'
+    skip_upload: false
 
 scoops:
   - name: keepalive
@@ -278,4 +278,4 @@ scoops:
     commit_author:
       name: GoReleaser Bot
       email: bot@goreleaser.com
-    skip_upload: '{{ not (isEnvSet "PUBLISH_PACKAGE_MANAGERS") }}'
+    skip_upload: false

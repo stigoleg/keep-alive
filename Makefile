@@ -2,10 +2,10 @@ GO      ?= go
 VERSION ?= dev
 BIN     ?= bin/keepalive
 
-.PHONY: check fmt-check vet test build docs snapshot release
+.PHONY: check fmt-check vet test test-release build docs snapshot release
 
-## check: formatting, vet for every target OS, and the race-enabled test suite
-check: fmt-check vet test
+## check: formatting, vet for every target OS, race-enabled tests and release checks
+check: fmt-check vet test test-release
 
 fmt-check:
 	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
@@ -17,6 +17,9 @@ vet:
 
 test:
 	$(GO) test -race ./...
+
+test-release:
+	python3 scripts/release_test.py
 
 build:
 	$(GO) build -ldflags "-X main.version=$(VERSION)" -o $(BIN) ./cmd/keepalive

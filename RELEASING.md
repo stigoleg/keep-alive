@@ -7,8 +7,8 @@ Actions only runs CI. Pushing a tag does not start any workflow.
 ## One-time setup
 
 1. **Tools:** Xcode or the Command Line Tools (`codesign`, `xcrun notarytool`),
-   and GoReleaser v2: `brew install goreleaser`. Docker is optional, for
-   checking the Linux packages.
+   GoReleaser v2 and GitHub CLI: `brew install goreleaser gh`. Docker is
+   optional, for checking the Linux packages.
 
 2. **Signing identity.** This command must list
    `Developer ID Application: Stig-Ole Gundersen (49P95434EE)`:
@@ -41,13 +41,13 @@ Actions only runs CI. Pushing a tag does not start any workflow.
    To use another profile name, set `KEEPALIVE_NOTARY_PROFILE`.
 
 4. **Tokens.**
-   - `GITHUB_TOKEN`: lets GoReleaser create the release and upload assets to
-     `stigoleg/keep-alive`. Use a fine-grained token with *Contents: read and
-     write* on that repository, or `export GITHUB_TOKEN=$(gh auth token)`.
-   - `GH_PAT`: pushes the cask to `stigoleg/homebrew-tap` and the manifest to
-     `stigoleg/scoop-bucket`. Use a fine-grained token with *Contents: read
-     and write* on both repositories. It is only used when
-     `PUBLISH_PACKAGE_MANAGERS` is set.
+   - Sign in with `gh auth login`, or set `GITHUB_TOKEN`. The release script
+     uses the signed-in CLI token when `GITHUB_TOKEN` is unset. It needs
+     *Contents: read and write* on `stigoleg/keep-alive`,
+     `stigoleg/homebrew-tap`, and `stigoleg/scoop-bucket`.
+   - `GH_PAT` optionally supplies a separate token for the tap and bucket;
+     otherwise the script uses `GITHUB_TOKEN` for them too. Access to both
+     repositories is checked before building or publishing.
 
 5. **Homebrew formula to cask (2.0.0 only).** 1.x was
    `Formula/keepalive.rb`; 2.x publishes `Casks/keepalive.rb`, because
@@ -74,8 +74,6 @@ Actions only runs CI. Pushing a tag does not start any workflow.
 5. Release:
 
    ```sh
-   export GITHUB_TOKEN=…
-   export PUBLISH_PACKAGE_MANAGERS=1 GH_PAT=…   # to update Homebrew and Scoop
    make release
    ```
 
@@ -83,13 +81,17 @@ Actions only runs CI. Pushing a tag does not start any workflow.
    - the tree is clean
    - HEAD has a `v*` tag that origin has at the same commit
    - the changelog section is dated
-   - the tokens are set
+   - GitHub credentials are available and can push to the tap and bucket
    - the signing identity and the notary profile work
 
    It then builds a preview: signed, not notarized, nothing published. It
    prints every asset and repository the release will touch and waits for
    `y`. Then it runs `goreleaser release --clean` with notarization on. The
    notary service usually answers within a few minutes.
+
+   Every release publishes `Casks/keepalive.rb` to `stigoleg/homebrew-tap`
+   and `keepalive.json` to `stigoleg/scoop-bucket`. No opt-in flag is needed.
+   Snapshot builds generate both files locally without publishing them.
 
 6. Do the checks under Verification on the published assets.
 
@@ -123,7 +125,8 @@ To see why notarization was rejected:
 | `KEEPALIVE_SIGN_IDENTITY` | another codesign identity |
 | `KEEPALIVE_NOTARIZE=1` | notarize (set by `make release`; `make snapshot` forces 0) |
 | `KEEPALIVE_NOTARY_PROFILE` | notarytool keychain profile, default `keepalive-notary` |
-| `PUBLISH_PACKAGE_MANAGERS`, `GH_PAT` | push the Homebrew cask and the Scoop manifest |
+| `GITHUB_TOKEN` | release token; defaults to `gh auth token` |
+| `GH_PAT` | optional separate Homebrew/Scoop token; defaults to `GITHUB_TOKEN` |
 
 ## Verification
 

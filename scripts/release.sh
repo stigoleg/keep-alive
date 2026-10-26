@@ -3,15 +3,16 @@
 #
 # 1. Refuses unless the tree is clean, HEAD carries a v* tag that origin
 #    also has, the CHANGELOG.md section for the version is dated,
-#    GITHUB_TOKEN is set, and the signing identity and notary profile work.
+#    GitHub credentials can update the release, tap and bucket, and the
+#    signing identity and notary profile work.
 # 2. Builds a preview of the release (signed, not notarized, nothing
 #    published) and prints exactly what the release will publish.
 # 3. Asks for "y" on stdin, then runs `goreleaser release --clean` with
 #    notarization on.
 #
-# Environment: GITHUB_TOKEN (required), PUBLISH_PACKAGE_MANAGERS and GH_PAT
-# (Homebrew tap and Scoop bucket), KEEPALIVE_NOTARY_PROFILE (default
-# keepalive-notary), KEEPALIVE_SIGN_IDENTITY.
+# Environment: GITHUB_TOKEN (defaults to gh auth token), GH_PAT (optional
+# separate Homebrew/Scoop token, defaults to GITHUB_TOKEN),
+# KEEPALIVE_NOTARY_PROFILE (default keepalive-notary), KEEPALIVE_SIGN_IDENTITY.
 set -eu
 
 cd "$(git rev-parse --show-toplevel)"
@@ -27,6 +28,7 @@ die() {
 
 [ "$(uname -s)" = Darwin ] || die "releases are built on macOS (signing and notarization)"
 command -v goreleaser >/dev/null 2>&1 || die "goreleaser is not installed (brew install goreleaser)"
+command -v gh >/dev/null 2>&1 || die "GitHub CLI is not installed (brew install gh)"
 
 [ -z "$(git status --porcelain)" ] || die "the working tree is not clean"
 tag=$(git describe --exact-match --tags --match 'v*' HEAD 2>/dev/null) ||
@@ -40,10 +42,20 @@ case $heading in
 *[Uu]nreleased*) die "CHANGELOG.md still says $version is Unreleased; put the release date in its heading" ;;
 esac
 
-[ -n "${GITHUB_TOKEN:-}" ] || die "GITHUB_TOKEN is not set (see RELEASING.md)"
-if [ -n "${PUBLISH_PACKAGE_MANAGERS:-}" ] && [ -z "${GH_PAT:-}" ]; then
-	die "PUBLISH_PACKAGE_MANAGERS is set but GH_PAT is not"
+if [ -z "${GITHUB_TOKEN:-}" ]; then
+	GITHUB_TOKEN=$(gh auth token 2>/dev/null) || die "GitHub credentials are unavailable (gh auth login, or set GITHUB_TOKEN)"
 fi
+[ -n "$GITHUB_TOKEN" ] || die "GitHub credentials are empty (see RELEASING.md)"
+GH_PAT=${GH_PAT:-$GITHUB_TOKEN}
+export GITHUB_TOKEN GH_PAT
+
+# Check repository access before building or publishing anything. A scoped
+# release token may need a separate GH_PAT for the tap and bucket.
+for package_repo in stigoleg/homebrew-tap stigoleg/scoop-bucket; do
+	can_push=$(GH_TOKEN="$GH_PAT" gh api "repos/$package_repo" --jq '.permissions.push') ||
+		die "cannot access $package_repo; GH_PAT needs Contents read/write access"
+	[ "$can_push" = true ] || die "token cannot push to $package_repo; set GH_PAT with Contents read/write access"
+done
 
 security find-identity -v -p codesigning | grep -qF "\"$identity\"" ||
 	die "codesigning identity not in the keychain: $identity"
@@ -88,12 +100,8 @@ for a in sorted(artifacts, key=lambda a: a["name"]):
 EOF
 echo "  Release notes: the \"$heading\" section of CHANGELOG.md, then the commit list."
 echo
-if [ -n "${PUBLISH_PACKAGE_MANAGERS:-}" ]; then
-	echo "  Homebrew: Casks/keepalive.rb pushed to stigoleg/homebrew-tap"
-	echo "  Scoop:    keepalive.json pushed to stigoleg/scoop-bucket"
-else
-	echo "  Homebrew and Scoop: not updated (PUBLISH_PACKAGE_MANAGERS is not set)"
-fi
+echo "  Homebrew: Casks/keepalive.rb pushed to stigoleg/homebrew-tap"
+echo "  Scoop:    keepalive.json pushed to stigoleg/scoop-bucket"
 echo
 printf 'Publish? Type y to continue: '
 read -r answer || answer=

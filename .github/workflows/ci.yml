@@ -30,6 +30,8 @@ jobs:
         run: make fmt-check
       - name: go vet (darwin, linux, windows)
         run: make vet
+      - name: Release publishing checks
+        run: make test-release
 
   test:
     name: Test (${{ matrix.os }})
